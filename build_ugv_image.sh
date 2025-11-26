@@ -6,8 +6,14 @@ DOCKERFILE="Dockerfile"
 
 echo "🔨 Building professional UGV image: $IMAGE_NAME for ARM64..."
 
-# Ensure buildx is initialized if this is the first time running
-docker buildx create --name ugv-builder --use --bootstrap
+# Ensure buildx builder exists and is active
+if ! docker buildx inspect ugv-builder &> /dev/null; then
+    echo "Creating new buildx builder: ugv-builder"
+    docker buildx create --name ugv-builder --use --bootstrap
+else
+    echo "Using existing buildx builder: ugv-builder"
+    docker buildx use ugv-builder
+fi
 
 # Use buildx to explicitly target the ARM64 architecture (linux/arm64).
 docker buildx build \
