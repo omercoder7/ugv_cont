@@ -67,8 +67,8 @@ RUN git clone -b ros2-humble-develop https://github.com/waveshareteam/ugv_ws.git
 # --- 5. Final Build ---
 RUN echo "--> Building UGV workspace..." && \
     source /opt/ros/humble/setup.bash && \
-    # FIX: Remove conflicting rosdep configuration and update
-    rm -f /etc/ros/rosdep/sources.list.d/20-default.list && \
+    # Initialize and update rosdep
+    sudo rosdep init || true && \
     rosdep update && \
     # Install remaining dependencies required by the source packages
     rosdep install -i --from-path src --rosdistro humble -y --skip-keys "roslaunch cmake_modules catkin gazebo" && \
