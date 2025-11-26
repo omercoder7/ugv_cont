@@ -50,6 +50,9 @@ RUN groupadd --gid $USER_GID $USERNAME || true && \
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
+# Initialize rosdep as root before switching to non-root user
+RUN rosdep init || true
+
 # Switch to the non-root user for security and file ownership
 USER $USERNAME
 WORKDIR /home/$USERNAME
@@ -67,8 +70,7 @@ RUN git clone -b ros2-humble-develop https://github.com/waveshareteam/ugv_ws.git
 # --- 5. Final Build ---
 RUN echo "--> Building UGV workspace..." && \
     source /opt/ros/humble/setup.bash && \
-    # Initialize and update rosdep
-    sudo rosdep init || true && \
+    # Update rosdep (already initialized as root earlier)
     rosdep update && \
     # Install remaining dependencies required by the source packages
     rosdep install -i --from-path src --rosdistro humble -y --skip-keys "roslaunch cmake_modules catkin gazebo" && \
