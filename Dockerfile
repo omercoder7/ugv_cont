@@ -32,10 +32,8 @@ RUN echo "--> Installing core components and build tools..." && \
     # Core Libraries needed for compilation
     libeigen3-dev \
     libxml2-dev \
-    # FIX: Install correct native Ignition Gazebo packages (Version 6 is used in Humble/Jammy)
-    ignition-gazebo6 \
-    ignition-gazebo6-plugins \
-    libignition-gazebo6-dev \
+    # Install Ignition Fortress (Gazebo for ROS 2 Humble on Jammy)
+    ignition-fortress \
     # Cleanup
     && apt-get autoremove -y && apt-get clean && rm -rf /var/lib/apt/lists/*
 
