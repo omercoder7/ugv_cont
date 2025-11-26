@@ -1,0 +1,40 @@
+version: '3.8'
+
+services:
+  ugv_beast:
+    # Build using the Dockerfile in the current directory (needed for the build to run)
+    build:
+      context: .
+      dockerfile: Dockerfile
+      platform: linux/arm64
+    
+    container_name: ugv_beast_arm64
+    
+    # CRITICAL: Grant full device and network access for ROS 2 and hardware
+    privileged: true
+    network_mode: host
+    
+    # 🚨 HARDWARE ACCESS: Map physical devices to container devices
+    devices:
+      # Map the serial device used by the LiDAR/Motor Controller (ttyACM0 is common for USB serial)
+      - "/dev/ttyACM0:/dev/ttyACM0" 
+      
+    # 🖥️ GUI/RVIZ ACCESS: Pass display settings from the host (for X11 forwarding)
+    environment:
+      - DISPLAY=${DISPLAY}
+      - QT_X11_NO_MITSHM=1
+      - XAUTHORITY=/home/ros/.Xauthority
+      
+    # VOLUME MOUNTS: Share host directories with the container
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix
+      - ${XAUTHORITY:-/root/.Xauthority}:/home/ros/.Xauthority
+      - ./ugv_data:/home/ros/ugv_ws/ugv_data 
+      
+    # Use the custom Entrypoint script defined earlier
+    entrypoint: /usr/local/bin/entrypoint.sh
+    command: /bin/bash
+    
+    tty: true
+    stdin_open: true
+    restart: unless-stopped
