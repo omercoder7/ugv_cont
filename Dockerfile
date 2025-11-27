@@ -27,6 +27,7 @@ RUN echo "--> Installing core components and build tools..." && \
     # Install full desktop/Rviz, build tools, and Python dependencies
     apt-get install -y --no-install-recommends \
     ros-humble-desktop \
+    ros-humble-navigation2 \
     python3-pip \
     python3-rosdep \
     # Core Libraries needed for compilation
