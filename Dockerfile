@@ -29,6 +29,7 @@ RUN echo "--> Installing core components and build tools..." && \
     ros-humble-desktop \
     ros-humble-navigation2 \
     ros-humble-joint-state-publisher-gui \
+    ros-humble-rosbridge-suite \
     python3-pip \
     python3-rosdep \
     # Core Libraries needed for compilation
