@@ -76,7 +76,7 @@ RUN echo "--> Building UGV workspace..." && \
     # Update rosdep (already initialized as root earlier)
     rosdep update && \
     # Install remaining dependencies required by the source packages
-    rosdep install -i --from-path src --rosdistro humble -y --skip-keys "roslaunch cmake_modules catkin gazebo python3-flask ros-humble-libg2o" && \
+    rosdep install -i --from-path src --rosdistro humble -y --skip-keys "roslaunch cmake_modules catkin gazebo python3-flask libg2o ros-humble-libg2o" && \
     # Build the entire workspace
     colcon build --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=Release
 
