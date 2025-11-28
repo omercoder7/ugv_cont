@@ -24,6 +24,7 @@ if docker buildx version &> /dev/null; then
         --platform linux/arm64 \
         --pull \
         --load \
+        --no-cache \
         -t $IMAGE_NAME \
         -f $DOCKERFILE \
         .
@@ -36,6 +37,7 @@ else
         echo "✓ Running on ARM64 architecture, building natively"
         docker build \
             --pull \
+            --no-cache \
             -t $IMAGE_NAME \
             -f $DOCKERFILE \
             .
