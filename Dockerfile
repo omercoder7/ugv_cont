@@ -65,7 +65,7 @@ WORKDIR ${UGV_WS_DIR}
 COPY requirements.txt ./
 RUN git clone -b ros2-humble-develop https://github.com/waveshareteam/ugv_ws.git src/ugv_ws_original && \
     python3 -m pip install -U pip && \
-    python3 -m pip install -r requirements.txt
+    python3 -m pip install --ignore-installed -r requirements.txt
 
 # --- 5. Final Build ---
 RUN echo "--> Building UGV workspace..." && \
