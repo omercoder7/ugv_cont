@@ -12,13 +12,22 @@ ENV LC_ALL=C.UTF-8
 ENV UGV_WS_DIR=/root/ugv_ws
 
 # --- 1. Repository Setup and Dependencies ---
+# Install base tools, then add OSRF repository for Ignition Gazebo
 RUN echo "--> Setting up OSRF repositories and dependencies..." && \
-    apt-get update && apt-get install -y --no-install-recommends \
-    curl gnupg2 lsb-release wget sudo software-properties-common git build-essential cmake \
-    # Add the OSRF (Ignition Gazebo) repository key
-    && curl -sSL https://packages.osrfoundation.org/gazebo.gpg -o /usr/share/keyrings/pkg-osrfoundation-archive-keyring.gpg && \
-    # Add OSRF repository source for Ignition packages (native binaries)
-    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/pkg-osrfoundation-archive-keyring.gpg] http://packages.osrfoundation.org/gazebo/ubuntu-stable $(lsb_release -cs) main" | tee /etc/apt/sources.list.d/gazebo-stable.list > /dev/null
+    apt-get update && \
+    apt-get install -y --no-install-recommends \
+        apt-utils \
+        curl \
+        gnupg2 \
+        lsb-release \
+        wget \
+        sudo \
+        software-properties-common \
+        git \
+        build-essential \
+        cmake \
+    && curl -sSL https://packages.osrfoundation.org/gazebo.gpg -o /usr/share/keyrings/pkg-osrfoundation-archive-keyring.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/pkg-osrfoundation-archive-keyring.gpg] http://packages.osrfoundation.org/gazebo/ubuntu-stable $(lsb_release -cs) main" | tee /etc/apt/sources.list.d/gazebo-stable.list > /dev/null
 
 # --- 2. Core ROS/System Installation ---
 # Install ROS desktop, navigation, build tools, colcon, and Ignition Fortress
