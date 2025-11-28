@@ -8,7 +8,7 @@ services:
       dockerfile: Dockerfile
       platform: linux/arm64
     
-    container_name: ugv_beast_arm64
+    container_name: ugv_rpi_ros_humble
     
     # CRITICAL: Grant full device and network access for ROS 2 and hardware
     privileged: true
