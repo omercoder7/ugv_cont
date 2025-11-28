@@ -4,7 +4,17 @@
 IMAGE_NAME="ugv_beast_arm64:humble"
 DOCKERFILE="Dockerfile"
 
+# Set to "true" to disable cache, "false" to use cache (faster rebuilds)
+NO_CACHE="false"
+
+if [ "$NO_CACHE" = "true" ]; then
+    CACHE_FLAG="--no-cache"
+else
+    CACHE_FLAG=""
+fi
+
 echo "🔨 Building professional UGV image: $IMAGE_NAME for ARM64..."
+echo "   Cache: $([ "$NO_CACHE" = "true" ] && echo "disabled" || echo "enabled")"
 
 # Check if docker buildx is available
 if docker buildx version &> /dev/null; then
@@ -24,7 +34,7 @@ if docker buildx version &> /dev/null; then
         --platform linux/arm64 \
         --pull \
         --load \
-        --no-cache \
+        $CACHE_FLAG \
         -t $IMAGE_NAME \
         -f $DOCKERFILE \
         .
@@ -37,7 +47,7 @@ else
         echo "✓ Running on ARM64 architecture, building natively"
         docker build \
             --pull \
-            --no-cache \
+            $CACHE_FLAG \
             -t $IMAGE_NAME \
             -f $DOCKERFILE \
             .
