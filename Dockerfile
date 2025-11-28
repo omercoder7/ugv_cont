@@ -32,6 +32,7 @@ RUN echo "--> Installing core components and build tools..." && \
     ros-humble-rosbridge-suite \
     python3-pip \
     python3-rosdep \
+    python3-colcon-common-extensions \
     # Core Libraries needed for compilation
     libeigen3-dev \
     libxml2-dev \
@@ -67,7 +68,7 @@ WORKDIR ${UGV_WS_DIR}
 # Clone repository and install Python dependencies
 COPY requirements.txt ./
 RUN git clone -b ros2-humble-develop https://github.com/waveshareteam/ugv_ws.git src/ugv_ws_original && \
-    python3 -m pip install -U pip setuptools && \
+    python3 -m pip install -U pip "setuptools<81" && \
     python3 -m pip install -r requirements.txt
 
 # --- 5. Final Build ---
