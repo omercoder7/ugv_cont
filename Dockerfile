@@ -8,11 +8,8 @@ ENV UCF_FORCE_CONFFOLD=1
 ENV LANG=C.UTF-8
 ENV LC_ALL=C.UTF-8
 
-# Define non-root user and workspace path
-ARG USERNAME=ros
-ARG USER_UID=1000
-ARG USER_GID=$USER_UID
-ENV UGV_WS_DIR=/home/${USERNAME}/ugv_ws
+# Define workspace path (running as root)
+ENV UGV_WS_DIR=/root/ugv_ws
 
 # --- 1. Repository Setup and Dependencies ---
 RUN echo "--> Setting up OSRF repositories and dependencies..." && \
@@ -40,25 +37,16 @@ RUN echo "--> Installing core components and build tools..." && \
         ignition-fortress \
     && apt-get autoremove -y && apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# --- 3. User Setup and Entrypoint ---
-# Create non-root user 'ros' to match ownership on host machine (UID 1000 is default)
-RUN groupadd --gid $USER_GID $USERNAME || true && \
-    useradd -s /bin/bash --uid $USER_UID --gid $USER_GID -m $USERNAME && \
-    usermod -aG sudo $USERNAME && \
-    # Ensure user can use APT for rosdep installation later if needed
-    echo $USERNAME ALL=\(root\) NOPASSWD: /usr/bin/apt-get > /etc/sudoers.d/$USERNAME && \
-    chmod 0440 /etc/sudoers.d/$USERNAME
-
+# --- 3. Entrypoint Setup ---
 # Copy entrypoint and make executable
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
-# Initialize rosdep as root before switching to non-root user
+# Initialize rosdep
 RUN rosdep init || true
 
-# Switch to the non-root user for security and file ownership
-USER $USERNAME
-WORKDIR /home/$USERNAME
+# Run as root for hardware access
+WORKDIR /root
 
 # --- 4. Workspace Preparation ---
 RUN mkdir -p ${UGV_WS_DIR}/src
