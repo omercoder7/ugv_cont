@@ -5,6 +5,8 @@ FROM ros:humble-ros-core-jammy
 SHELL ["/bin/bash", "-c"]
 ENV DEBIAN_FRONTEND=noninteractive
 ENV UCF_FORCE_CONFFOLD=1
+ENV LANG=C.UTF-8
+ENV LC_ALL=C.UTF-8
 
 # Define non-root user and workspace path
 ARG USERNAME=ros
