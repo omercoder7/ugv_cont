@@ -8,20 +8,26 @@ ENV UCF_FORCE_CONFFOLD=1
 ENV LANG=C.UTF-8
 ENV LC_ALL=C.UTF-8
 
-# Define non-root user and workspace path
-ARG USERNAME=ros
-ARG USER_UID=1000
-ARG USER_GID=$USER_UID
-ENV UGV_WS_DIR=/home/${USERNAME}/ugv_ws
+# Define workspace path (running as root)
+ENV UGV_WS_DIR=/root/ugv_ws
 
 # --- 1. Repository Setup and Dependencies ---
+# Install base tools, then add OSRF repository for Ignition Gazebo
 RUN echo "--> Setting up OSRF repositories and dependencies..." && \
-    apt-get update && apt-get install -y --no-install-recommends \
-    curl gnupg2 lsb-release wget sudo software-properties-common git build-essential cmake \
-    # Add the OSRF (Ignition Gazebo) repository key
-    && curl -sSL https://packages.osrfoundation.org/gazebo.gpg -o /usr/share/keyrings/pkg-osrfoundation-archive-keyring.gpg && \
-    # Add OSRF repository source for Ignition packages (native binaries)
-    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/pkg-osrfoundation-archive-keyring.gpg] http://packages.osrfoundation.org/gazebo/ubuntu-stable $(lsb_release -cs) main" | tee /etc/apt/sources.list.d/gazebo-stable.list > /dev/null
+    apt-get update && \
+    apt-get install -y --no-install-recommends \
+        apt-utils \
+        curl \
+        gnupg2 \
+        lsb-release \
+        wget \
+        sudo \
+        software-properties-common \
+        git \
+        build-essential \
+        cmake \
+    && curl -sSL https://packages.osrfoundation.org/gazebo.gpg -o /usr/share/keyrings/pkg-osrfoundation-archive-keyring.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/pkg-osrfoundation-archive-keyring.gpg] http://packages.osrfoundation.org/gazebo/ubuntu-stable $(lsb_release -cs) main" | tee /etc/apt/sources.list.d/gazebo-stable.list > /dev/null
 
 # --- 2. Core ROS/System Installation ---
 # Install ROS desktop, navigation, build tools, colcon, and Ignition Fortress
@@ -40,25 +46,16 @@ RUN echo "--> Installing core components and build tools..." && \
         ignition-fortress \
     && apt-get autoremove -y && apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# --- 3. User Setup and Entrypoint ---
-# Create non-root user 'ros' to match ownership on host machine (UID 1000 is default)
-RUN groupadd --gid $USER_GID $USERNAME || true && \
-    useradd -s /bin/bash --uid $USER_UID --gid $USER_GID -m $USERNAME && \
-    usermod -aG sudo $USERNAME && \
-    # Ensure user can use APT for rosdep installation later if needed
-    echo $USERNAME ALL=\(root\) NOPASSWD: /usr/bin/apt-get > /etc/sudoers.d/$USERNAME && \
-    chmod 0440 /etc/sudoers.d/$USERNAME
-
+# --- 3. Entrypoint Setup ---
 # Copy entrypoint and make executable
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
-# Initialize rosdep as root before switching to non-root user
+# Initialize rosdep
 RUN rosdep init || true
 
-# Switch to the non-root user for security and file ownership
-USER $USERNAME
-WORKDIR /home/$USERNAME
+# Run as root for hardware access
+WORKDIR /root
 
 # --- 4. Workspace Preparation ---
 RUN mkdir -p ${UGV_WS_DIR}/src
