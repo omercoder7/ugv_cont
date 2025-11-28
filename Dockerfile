@@ -22,23 +22,20 @@ RUN echo "--> Setting up OSRF repositories and dependencies..." && \
     echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/pkg-osrfoundation-archive-keyring.gpg] http://packages.osrfoundation.org/gazebo/ubuntu-stable $(lsb_release -cs) main" | tee /etc/apt/sources.list.d/gazebo-stable.list > /dev/null
 
 # --- 2. Core ROS/System Installation ---
+# Install ROS desktop, navigation, build tools, colcon, and Ignition Fortress
 RUN echo "--> Installing core components and build tools..." && \
     apt-get update && \
-    # Install full desktop/Rviz, build tools, and Python dependencies
     apt-get install -y --no-install-recommends \
-    ros-humble-desktop \
-    ros-humble-navigation2 \
-    ros-humble-joint-state-publisher-gui \
-    ros-humble-rosbridge-suite \
-    python3-pip \
-    python3-rosdep \
-    python3-colcon-common-extensions \
-    # Core Libraries needed for compilation
-    libeigen3-dev \
-    libxml2-dev \
-    # Install Ignition Fortress (Gazebo for ROS 2 Humble on Jammy)
-    ignition-fortress \
-    # Cleanup
+        ros-humble-desktop \
+        ros-humble-navigation2 \
+        ros-humble-joint-state-publisher-gui \
+        ros-humble-rosbridge-suite \
+        python3-pip \
+        python3-rosdep \
+        python3-colcon-common-extensions \
+        libeigen3-dev \
+        libxml2-dev \
+        ignition-fortress \
     && apt-get autoremove -y && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # --- 3. User Setup and Entrypoint ---
