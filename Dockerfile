@@ -9,7 +9,9 @@ ENV LANG=C.UTF-8
 ENV LC_ALL=C.UTF-8
 
 # Define workspace path (running as root)
-ENV UGV_WS_DIR=/root/ugv_ws
+ENV UGV_WS_DIR=/home/ws/ugv_ws
+ENV UGV_MODEL=ugv_beast
+ENV LDLIDAR_MODEL=ld19
 
 # --- 1. Repository Setup and Dependencies ---
 # Install base tools, then add OSRF repository for Ignition Gazebo
@@ -39,11 +41,13 @@ RUN echo "--> Installing core components and build tools..." && \
         ros-humble-nav2-bringup \
         ros-humble-joint-state-publisher-gui \
         ros-humble-rosbridge-suite \
+        ros-humble-libg2o \
         python3-pip \
         python3-rosdep \
         python3-colcon-common-extensions \
         libeigen3-dev \
         libxml2-dev \
+        libsuitesparse-dev \
         ignition-fortress \
     && apt-get autoremove -y && apt-get clean && rm -rf /var/lib/apt/lists/*
 
