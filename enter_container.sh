@@ -13,13 +13,16 @@ fi
 echo "🔗 Connecting to running container '${CONTAINER_NAME}'..."
 
 # 2. Execute bash inside the container with ROS2 environment loaded and UGV environment variables set
+# Note: Running as root is required for hardware access (serial ports, GPIO)
 docker exec -it ${CONTAINER_NAME} /bin/bash -c "
 source /opt/ros/humble/setup.bash && \
 source /root/ugv_ws/install/setup.bash && \
 export UGV_WS_DIR=/home/ws/ugv_ws && \
 export UGV_MODEL=ugv_beast && \
 export LDLIDAR_MODEL=ld19 && \
-exec /bin/bash
+export PS1='🤖 ugv_ros2:\w\$ ' && \
+cd /root/ugv_ws && \
+exec /bin/bash --norc
 "
 
 echo "✅ Exited container."
