@@ -43,6 +43,7 @@ docker run -d \
   --name ${CONTAINER_NAME} \
   --privileged \
   --network host \
+  --device /dev/ttyAMA0:/dev/ttyAMA0 \
   --device /dev/ttyACM0:/dev/ttyACM0 2>/dev/null \
   -e DISPLAY=${DISPLAY} \
   -e QT_X11_NO_MITSHM=1 \
