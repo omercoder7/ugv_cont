@@ -304,16 +304,17 @@ rclpy.shutdown()
         # Front is blocked - need to turn towards clearest path
         elif clearest_dist >= self.min_distance:
             # Turn towards the clearest sector
+            # Sectors: 0=FRONT, 1-5=LEFT side, 6-11=RIGHT side
             if clearest == 0:
-                # Shouldn't happen, but just in case
+                # Front is clearest but blocked? Shouldn't happen, turn right
                 linear = 0.0
-                angular = self.turn_speed
-            elif clearest <= NUM_SECTORS // 2:
-                # Turn left
+                angular = -self.turn_speed
+            elif clearest <= 5:
+                # Sectors 1-5 are on LEFT side -> Turn left (positive angular)
                 linear = 0.0
                 angular = self.turn_speed
             else:
-                # Turn right
+                # Sectors 6-11 are on RIGHT side -> Turn right (negative angular)
                 linear = 0.0
                 angular = -self.turn_speed
             self.total_rotations += 1
