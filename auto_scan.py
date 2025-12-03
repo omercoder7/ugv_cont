@@ -333,6 +333,7 @@ rclpy.shutdown()
         2. Speed reduction when turning
         3. Previous direction weight to reduce oscillation
         4. Smooth transitions between states
+        5. Backward motion when too close to obstacles
         """
         front_dist = self.sector_distances[0]
         front_left = self.sector_distances[1] if self.sector_distances[1] > 0.01 else 0
@@ -351,7 +352,28 @@ rclpy.shutdown()
                           front_left >= self.min_distance or
                           front_right >= self.min_distance)
 
-        if front_dist >= self.min_distance:
+        # Danger zone threshold - back up if anything is closer than this
+        DANGER_DISTANCE = 0.3  # 30cm - too close!
+
+        # Check minimum distance in front arc
+        front_arc_min = min(
+            front_dist if front_dist > 0.01 else 10.0,
+            front_left if front_left > 0.01 else 10.0,
+            front_right if front_right > 0.01 else 10.0
+        )
+
+        if front_arc_min < DANGER_DISTANCE:
+            # TOO CLOSE! Back up while turning away
+            linear = -self.linear_speed * 0.6
+            # Turn away from the closest obstacle
+            if front_left < front_right:
+                angular = -self.turn_speed  # Obstacle on left, turn right
+            else:
+                angular = self.turn_speed   # Obstacle on right, turn left
+            self.obstacles_avoided += 1
+            status = f"[DANGER] {front_arc_min:.2f}m! backing up"
+
+        elif front_dist >= self.min_distance:
             # Front is clear - drive forward with slight steering adjustment
             linear = self.linear_speed
 
@@ -378,7 +400,11 @@ rclpy.shutdown()
 
         elif best_dist >= self.min_distance:
             # Need to turn in place towards clear direction
-            linear = 0.0
+            # Back up slightly while turning if front is very close
+            if front_dist < self.min_distance * 0.8:
+                linear = -self.linear_speed * 0.3  # Gentle backward
+            else:
+                linear = 0.0
             # Turn at fixed rate towards best sector
             if best_sector <= 6:
                 angular = self.turn_speed  # Turn left
