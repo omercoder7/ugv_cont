@@ -260,75 +260,145 @@ rclpy.shutdown()
             lidar_sector = self.robot_to_lidar_sector(robot_sector)
             self.sector_distances[robot_sector] = lidar_distances[lidar_sector]
 
-    def find_clearest_sector(self) -> int:
-        """Find the sector with the most clearance"""
-        # Score each sector by distance (prefer front if equal)
+    def sector_to_angle(self, sector: int) -> float:
+        """Convert sector number to angle in radians (0 = front, positive = left)"""
+        # Sector 0 = front (0°), sectors go counterclockwise
+        # Sector 6 = back (180°)
+        if sector <= 6:
+            return sector * (math.pi / 6)  # 0 to π
+        else:
+            return (sector - 12) * (math.pi / 6)  # -π to 0
+
+    def find_best_direction(self) -> Tuple[int, float]:
+        """
+        VFH-inspired algorithm: Find the best direction using a cost function.
+
+        Cost = target_weight * target_cost
+             + current_weight * current_cost
+             + previous_weight * previous_cost
+
+        Returns (best_sector, best_score)
+        """
+        # Weights (inspired by VFH)
+        TARGET_WEIGHT = 3.0      # Prefer forward direction
+        CLEARANCE_WEIGHT = 2.0   # Prefer clear paths
+        PREVIOUS_WEIGHT = 1.0    # Smooth trajectory (reduce oscillation)
+
         best_sector = 0
-        best_score = -1
+        best_score = -999
 
         for sector in range(NUM_SECTORS):
             dist = self.sector_distances[sector]
-            if dist < 0.01:  # Skip blind spots
+
+            # Skip blind spots and blocked sectors
+            if dist < self.min_distance:
                 continue
 
-            # Prefer front (sector 0) by giving it a small bonus
-            # Rotation cost: 0 for front, increases as we go around
-            if sector <= NUM_SECTORS // 2:
-                rotation_cost = sector * 0.1  # 0 to 0.6
-            else:
-                rotation_cost = (NUM_SECTORS - sector) * 0.1  # 0.5 to 0.1
+            # Calculate angle from front (0 = front, ±π = back)
+            angle = abs(self.sector_to_angle(sector))
 
-            score = dist - rotation_cost
+            # Target cost: prefer front direction (angle = 0)
+            target_cost = 1.0 - (angle / math.pi)  # 1.0 at front, 0.0 at back
+
+            # Clearance cost: prefer more clearance
+            clearance_cost = min(dist / 2.0, 1.0)  # Normalize to 0-1
+
+            # Previous direction cost: prefer continuing in same direction
+            if hasattr(self, 'previous_sector'):
+                prev_angle = abs(self.sector_to_angle(self.previous_sector))
+                curr_angle = abs(self.sector_to_angle(sector))
+                # Smaller difference = higher score
+                angle_diff = abs(curr_angle - prev_angle)
+                previous_cost = 1.0 - (angle_diff / math.pi)
+            else:
+                previous_cost = 0.5  # Neutral for first iteration
+
+            # Combined score
+            score = (TARGET_WEIGHT * target_cost +
+                    CLEARANCE_WEIGHT * clearance_cost +
+                    PREVIOUS_WEIGHT * previous_cost)
+
             if score > best_score:
                 best_score = score
                 best_sector = sector
 
-        return best_sector
+        return best_sector, best_score
 
     def compute_velocity(self) -> Tuple[float, float]:
         """
-        Simple algorithm: Go towards the clearest path.
-        If front is clear enough, go straight. Otherwise, turn towards clearest sector.
+        VFH-inspired smooth obstacle avoidance.
+
+        Key improvements over simple algorithm:
+        1. Proportional steering (not just hard left/right)
+        2. Speed reduction when turning
+        3. Previous direction weight to reduce oscillation
+        4. Smooth transitions between states
         """
         front_dist = self.sector_distances[0]
+        front_left = self.sector_distances[1] if self.sector_distances[1] > 0.01 else 0
+        front_right = self.sector_distances[11] if self.sector_distances[11] > 0.01 else 0
 
-        # Find the clearest sector
-        clearest = self.find_clearest_sector()
-        clearest_dist = self.sector_distances[clearest]
+        # Find best direction using VFH-style cost function
+        best_sector, best_score = self.find_best_direction()
+        best_dist = self.sector_distances[best_sector]
 
-        # If front is clear, go straight ahead
+        # Calculate steering angle (proportional to sector offset)
+        # Sector 0 = 0°, Sector 1 = +30°, Sector 11 = -30°
+        steer_angle = self.sector_to_angle(best_sector)
+
+        # Check if front arc (sectors 11, 0, 1) is reasonably clear
+        front_arc_clear = (front_dist >= self.min_distance or
+                          front_left >= self.min_distance or
+                          front_right >= self.min_distance)
+
         if front_dist >= self.min_distance:
+            # Front is clear - drive forward with slight steering adjustment
             linear = self.linear_speed
-            angular = 0.0
-            status = f"[FORWARD] front={front_dist:.2f}m, clearest=sector{clearest}({clearest_dist:.2f}m)"
 
-        # Front is blocked - need to turn towards clearest path
-        elif clearest_dist >= self.min_distance:
-            # Turn towards the clearest sector
-            # Sectors: 0=FRONT, 1-5=LEFT side, 6-11=RIGHT side
-            if clearest == 0:
-                # Front is clearest but blocked? Shouldn't happen, turn right
-                linear = 0.0
-                angular = -self.turn_speed
-            elif clearest <= 5:
-                # Sectors 1-5 are on LEFT side -> Turn left (positive angular)
-                linear = 0.0
-                angular = self.turn_speed
+            # Apply gentle steering towards best direction if it's not straight ahead
+            if best_sector == 0:
+                angular = 0.0
+            elif best_sector <= 2 or best_sector >= 10:
+                # Best is slightly off-center - gentle correction
+                angular = steer_angle * 0.3  # Proportional, damped
             else:
-                # Sectors 6-11 are on RIGHT side -> Turn right (negative angular)
-                linear = 0.0
-                angular = -self.turn_speed
+                # Best is significantly off-center - prepare to turn
+                angular = steer_angle * 0.2
+
+            status = f"[FWD] f={front_dist:.1f}m best=s{best_sector} steer={math.degrees(angular):.0f}°"
+
+        elif front_arc_clear and best_dist >= self.min_distance:
+            # Front blocked but can steer around - drive with steering
+            # Reduce speed proportionally to how much we need to turn
+            turn_factor = abs(steer_angle) / math.pi  # 0 to 1
+            linear = self.linear_speed * (1.0 - turn_factor * 0.5)  # Slow down when turning
+            angular = steer_angle * 0.5  # Proportional steering
+
+            status = f"[STEER] f={front_dist:.1f}m -> s{best_sector} ang={math.degrees(angular):.0f}°"
+
+        elif best_dist >= self.min_distance:
+            # Need to turn in place towards clear direction
+            linear = 0.0
+            # Turn at fixed rate towards best sector
+            if best_sector <= 6:
+                angular = self.turn_speed  # Turn left
+            else:
+                angular = -self.turn_speed  # Turn right
+
             self.total_rotations += 1
-            status = f"[TURN] front={front_dist:.2f}m -> sector{clearest}({clearest_dist:.2f}m)"
+            status = f"[TURN] f={front_dist:.1f}m -> s{best_sector}({best_dist:.1f}m)"
 
         else:
-            # Everything is blocked - back up
+            # Everything blocked - back up while turning
             linear = -self.linear_speed * 0.5
-            angular = self.turn_speed  # Turn while backing up
+            angular = self.turn_speed
             self.obstacles_avoided += 1
-            status = f"[BACKUP] all blocked, best={clearest_dist:.2f}m"
+            status = f"[BACK] blocked, best=s{best_sector}({best_dist:.1f}m)"
 
-        print(f"\r{status:<65}", end="", flush=True)
+        # Remember this direction for next iteration (smooth trajectory)
+        self.previous_sector = best_sector
+
+        print(f"\r{status:<60}", end="", flush=True)
         return linear, angular
 
     def print_sector_display(self):
