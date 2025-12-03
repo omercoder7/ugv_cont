@@ -1,6 +1,9 @@
 #!/bin/bash
-# restart_ros_DEBUG.sh - Kill all ROS2 nodes and restart cleanly
-# Use this when you have duplicate nodes causing issues
+# restart_ros_DEBUG.sh - Restart container and ROS2 nodes cleanly
+# Use this when you have duplicate nodes or zombie processes causing issues
+#
+# IMPORTANT: This script restarts the Docker container to clear zombie processes.
+# Killing processes alone does NOT remove zombies - only container restart does.
 
 CONTAINER_NAME="ugv_rpi_ros_humble"
 
@@ -14,41 +17,44 @@ if ! docker ps --filter "name=${CONTAINER_NAME}" --filter "status=running" --for
 fi
 
 # Show current state
-echo "Current ROS2 nodes (before cleanup):"
+echo "Current ROS2 nodes (before restart):"
 docker exec ${CONTAINER_NAME} bash -c "source /opt/ros/humble/setup.bash && ros2 node list 2>/dev/null" | sort | uniq -c
 echo ""
 
-# Kill ALL processes
-echo "Killing all ROS2 processes..."
-docker exec ${CONTAINER_NAME} bash -c "killall -9 python3 2>/dev/null; killall -9 rviz2 2>/dev/null" 2>/dev/null
-sleep 1
-
-# Double-check with specific process names
-docker exec ${CONTAINER_NAME} pkill -9 -f "slam_toolbox" 2>/dev/null
-docker exec ${CONTAINER_NAME} pkill -9 -f "rf2o" 2>/dev/null
-docker exec ${CONTAINER_NAME} pkill -9 -f "ldlidar" 2>/dev/null
-docker exec ${CONTAINER_NAME} pkill -9 -f "base_node" 2>/dev/null
-docker exec ${CONTAINER_NAME} pkill -9 -f "robot_state" 2>/dev/null
-docker exec ${CONTAINER_NAME} pkill -9 -f "joint_state" 2>/dev/null
-docker exec ${CONTAINER_NAME} pkill -9 -f "ugv_driver" 2>/dev/null
-docker exec ${CONTAINER_NAME} pkill -9 -f "ugv_bringup" 2>/dev/null
-docker exec ${CONTAINER_NAME} pkill -9 -f "ros2" 2>/dev/null
-sleep 2
-
-# Verify cleanup
-echo ""
-echo "Nodes after cleanup:"
-NODES=$(docker exec ${CONTAINER_NAME} bash -c "source /opt/ros/humble/setup.bash && ros2 node list 2>/dev/null" | wc -l)
-echo "  Count: ${NODES}"
-
-if [ "${NODES}" -gt 0 ]; then
-    echo "  Warning: Some nodes still running:"
-    docker exec ${CONTAINER_NAME} bash -c "source /opt/ros/humble/setup.bash && ros2 node list 2>/dev/null"
+# Check for zombie processes
+echo "Checking for zombie processes..."
+ZOMBIES=$(docker exec ${CONTAINER_NAME} ps aux 2>/dev/null | grep "<defunct>" || true)
+if [ -n "${ZOMBIES}" ]; then
+    echo "  Found zombie processes:"
+    echo "${ZOMBIES}" | head -10
+    ZOMBIE_COUNT=$(echo "${ZOMBIES}" | wc -l)
+    echo "  Total: ${ZOMBIE_COUNT} zombies"
     echo ""
-    echo "Attempting more aggressive cleanup..."
-    docker exec ${CONTAINER_NAME} bash -c "ps aux | grep -E 'ros2|python3' | grep -v grep | awk '{print \$2}' | xargs -r kill -9" 2>/dev/null
-    sleep 2
+    echo "  NOTE: Zombies cause odometry drift (Eigensolver errors)."
+    echo "  Container restart is required to clear them."
+else
+    echo "  No zombies found."
 fi
+echo ""
+
+# Restart container to clear ALL processes including zombies
+echo "Restarting container to clear all processes and zombies..."
+docker restart ${CONTAINER_NAME}
+sleep 5
+
+# Verify zombies are cleared
+echo ""
+echo "Verifying clean state..."
+ZOMBIES_AFTER=$(docker exec ${CONTAINER_NAME} bash -c "ps aux | grep -c '<defunct>'" 2>/dev/null || echo "0")
+if [ "${ZOMBIES_AFTER}" -gt 0 ]; then
+    echo "  WARNING: Still ${ZOMBIES_AFTER} zombies (unexpected)"
+else
+    echo "  Clean - no zombie processes!"
+fi
+
+# Copy configs
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+docker cp "${SCRIPT_DIR}/slam_toolbox_optimized.yaml" ${CONTAINER_NAME}:/tmp/slam_toolbox_optimized.yaml 2>/dev/null
 
 # Start bringup
 echo ""
@@ -71,12 +77,19 @@ else
     echo "  Bringup: FAILED - check /tmp/bringup.log inside container"
 fi
 
+# Check odometry
+echo ""
+echo "Checking odometry..."
+ODOM=$(docker exec ${CONTAINER_NAME} bash -c "source /opt/ros/humble/setup.bash && timeout 5 ros2 topic echo /odom --once 2>/dev/null | grep -A3 'position:'" 2>/dev/null)
+if [ -n "${ODOM}" ]; then
+    echo "${ODOM}"
+else
+    echo "  Waiting for odometry topic..."
+fi
+
 # Start SLAM
 echo ""
 echo "Starting SLAM..."
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-docker cp "${SCRIPT_DIR}/slam_toolbox_optimized.yaml" ${CONTAINER_NAME}:/tmp/slam_toolbox_optimized.yaml 2>/dev/null
-
 docker exec -d ${CONTAINER_NAME} /bin/bash -c "
 source /opt/ros/humble/setup.bash && \
 source /root/ugv_ws/install/setup.bash && \

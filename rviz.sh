@@ -232,40 +232,46 @@ case "${MODE}" in
         docker cp "${SCRIPT_DIR}/slam_toolbox_optimized.yaml" ${CONTAINER_NAME}:/tmp/slam_toolbox_optimized.yaml
         docker cp "${SCRIPT_DIR}/view_slam_2d.rviz" ${CONTAINER_NAME}:/tmp/view_slam_2d.rviz 2>/dev/null
 
-        # Handle new_map option - kill existing SLAM and reset odometry
+        # Handle new_map option - restart container to clear zombie processes
         if [ "${NEW_MAP}" = "new_map" ] || [ "${NEW_MAP}" = "new" ] || [ "${NEW_MAP}" = "--new-map" ]; then
             echo ""
-            echo "*** NEW MAP MODE - Resetting SLAM and odometry ***"
+            echo "*** NEW MAP MODE - Restarting container for clean slate ***"
+            echo ""
+            echo "This restarts the container to clear zombie processes that cause drift."
             echo ""
 
-            # Kill ALL ROS2 related processes to get a clean slate
-            # Using killall -9 for more reliable cleanup
-            echo "Stopping all ROS2 nodes..."
-            docker exec ${CONTAINER_NAME} bash -c "killall -9 python3 2>/dev/null; killall -9 rviz2 2>/dev/null" 2>/dev/null
-            sleep 2
+            # Restart the container - this is the ONLY way to clear zombie processes
+            # Killing processes leaves zombies which accumulate and cause odometry drift
+            echo "Restarting container (clears all zombie processes)..."
+            docker restart ${CONTAINER_NAME}
 
-            # Double-check with pkill for any remaining processes
-            docker exec ${CONTAINER_NAME} pkill -9 -f "slam_toolbox" 2>/dev/null
-            docker exec ${CONTAINER_NAME} pkill -9 -f "rf2o" 2>/dev/null
-            docker exec ${CONTAINER_NAME} pkill -9 -f "ldlidar" 2>/dev/null
-            docker exec ${CONTAINER_NAME} pkill -9 -f "base_node" 2>/dev/null
-            docker exec ${CONTAINER_NAME} pkill -9 -f "robot_state" 2>/dev/null
-            docker exec ${CONTAINER_NAME} pkill -9 -f "joint_state" 2>/dev/null
-            docker exec ${CONTAINER_NAME} pkill -9 -f "ugv_driver" 2>/dev/null
-            sleep 2
+            # Wait for container to be fully up
+            echo "Waiting for container to start..."
+            sleep 5
 
-            echo "All nodes stopped."
+            # Re-copy configs after restart
+            docker cp "${SCRIPT_DIR}/slam_toolbox_optimized.yaml" ${CONTAINER_NAME}:/tmp/slam_toolbox_optimized.yaml
+            docker cp "${SCRIPT_DIR}/view_slam_2d.rviz" ${CONTAINER_NAME}:/tmp/view_slam_2d.rviz 2>/dev/null
 
             # Start fresh bringup
-            echo "Starting robot bringup..."
+            echo "Starting robot bringup with fresh odometry..."
             docker exec -d ${CONTAINER_NAME} /bin/bash -c "
             source /opt/ros/humble/setup.bash && \
             source /root/ugv_ws/install/setup.bash && \
             export UGV_MODEL=ugv_beast && \
             export LDLIDAR_MODEL=ld19 && \
-            ros2 launch ugv_bringup bringup_lidar.launch.py pub_odom_tf:=true
+            ros2 launch ugv_bringup bringup_lidar.launch.py pub_odom_tf:=true 2>&1 | tee /tmp/bringup.log
             " 2>/dev/null
-            sleep 5
+            sleep 6
+
+            # Verify odometry is near zero
+            echo "Checking odometry reset..."
+            ODOM_CHECK=$(docker exec ${CONTAINER_NAME} bash -c "source /opt/ros/humble/setup.bash && timeout 5 ros2 topic echo /odom --once 2>/dev/null | grep -A2 'position:' | grep 'x:' | awk '{print \$2}'" 2>/dev/null)
+            if [ -n "${ODOM_CHECK}" ]; then
+                echo "  Odometry X: ${ODOM_CHECK}"
+            else
+                echo "  Odometry: waiting for topics..."
+            fi
 
             # Start fresh SLAM
             echo "Starting fresh SLAM with optimized config..."
@@ -274,10 +280,19 @@ case "${MODE}" in
             source /root/ugv_ws/install/setup.bash && \
             ros2 launch slam_toolbox online_async_launch.py \
               use_sim_time:=false \
-              slam_params_file:=/tmp/slam_toolbox_optimized.yaml
+              slam_params_file:=/tmp/slam_toolbox_optimized.yaml 2>&1 | tee /tmp/slam.log
             " 2>/dev/null
             sleep 3
 
+            # Verify no zombie processes
+            ZOMBIES=$(docker exec ${CONTAINER_NAME} ps aux 2>/dev/null | grep -c "<defunct>" || echo "0")
+            if [ "${ZOMBIES}" -gt 0 ]; then
+                echo "Warning: ${ZOMBIES} zombie processes found (unexpected after restart)"
+            else
+                echo "Clean start - no zombie processes!"
+            fi
+
+            echo ""
             echo "Fresh map started!"
         else
             # Normal mode - check if already running
