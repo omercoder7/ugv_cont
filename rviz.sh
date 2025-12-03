@@ -254,33 +254,24 @@ case "${MODE}" in
             docker cp "${SCRIPT_DIR}/view_slam_2d.rviz" ${CONTAINER_NAME}:/tmp/view_slam_2d.rviz 2>/dev/null
             docker cp "${SCRIPT_DIR}/ekf_lidar_imu.yaml" ${CONTAINER_NAME}:/tmp/ekf_lidar_imu.yaml 2>/dev/null
 
-            # Start fresh bringup (EKF will publish TF)
+            # Start fresh bringup (rf2o publishes TF directly)
             echo "Starting robot bringup..."
             docker exec -d ${CONTAINER_NAME} /bin/bash -c "
             source /opt/ros/humble/setup.bash && \
             source /root/ugv_ws/install/setup.bash && \
             export UGV_MODEL=ugv_beast && \
             export LDLIDAR_MODEL=ld19 && \
-            ros2 launch ugv_bringup bringup_lidar.launch.py pub_odom_tf:=false 2>&1 | tee /tmp/bringup.log
-            " 2>/dev/null
+            ros2 launch ugv_bringup bringup_lidar.launch.py pub_odom_tf:=true > /tmp/bringup.log 2>&1
+            "
             sleep 6
-
-            # Start EKF for sensor fusion (fuses laser odometry + IMU for better accuracy)
-            echo "Starting EKF sensor fusion..."
-            docker exec -d ${CONTAINER_NAME} /bin/bash -c "
-            source /opt/ros/humble/setup.bash && \
-            source /root/ugv_ws/install/setup.bash && \
-            ros2 run robot_localization ekf_node --ros-args --params-file /tmp/ekf_lidar_imu.yaml 2>&1 | tee /tmp/ekf.log
-            " 2>/dev/null
-            sleep 2
 
             # Verify odometry is near zero
             echo "Checking odometry reset..."
-            ODOM_CHECK=$(docker exec ${CONTAINER_NAME} bash -c "source /opt/ros/humble/setup.bash && timeout 5 ros2 topic echo /odometry/filtered --once 2>/dev/null | grep -A2 'position:' | grep 'x:' | awk '{print \$2}'" 2>/dev/null)
+            ODOM_CHECK=$(docker exec ${CONTAINER_NAME} bash -c "source /opt/ros/humble/setup.bash && timeout 5 ros2 topic echo /odom --once 2>/dev/null | grep -A2 'position:' | grep 'x:' | awk '{print \$2}'" 2>/dev/null)
             if [ -n "${ODOM_CHECK}" ]; then
-                echo "  EKF Odometry X: ${ODOM_CHECK}"
+                echo "  Odometry X: ${ODOM_CHECK}"
             else
-                echo "  Odometry: waiting for EKF..."
+                echo "  Odometry: waiting..."
             fi
 
             # Start fresh SLAM
@@ -290,8 +281,8 @@ case "${MODE}" in
             source /root/ugv_ws/install/setup.bash && \
             ros2 launch slam_toolbox online_async_launch.py \
               use_sim_time:=false \
-              slam_params_file:=/tmp/slam_toolbox_optimized.yaml 2>&1 | tee /tmp/slam.log
-            " 2>/dev/null
+              slam_params_file:=/tmp/slam_toolbox_optimized.yaml > /tmp/slam.log 2>&1
+            "
             sleep 3
 
             # Verify no zombie processes
@@ -314,25 +305,11 @@ case "${MODE}" in
                 source /root/ugv_ws/install/setup.bash && \
                 export UGV_MODEL=ugv_beast && \
                 export LDLIDAR_MODEL=ld19 && \
-                ros2 launch ugv_bringup bringup_lidar.launch.py pub_odom_tf:=false
-                " 2>/dev/null
+                ros2 launch ugv_bringup bringup_lidar.launch.py pub_odom_tf:=true > /tmp/bringup.log 2>&1
+                "
                 sleep 5
             else
                 echo "Bringup already running, skipping..."
-            fi
-
-            # Check if EKF is already running
-            if ! docker exec ${CONTAINER_NAME} pgrep -f "ekf_node" > /dev/null 2>&1; then
-                echo "Starting EKF sensor fusion..."
-                docker cp "${SCRIPT_DIR}/ekf_lidar_imu.yaml" ${CONTAINER_NAME}:/tmp/ekf_lidar_imu.yaml 2>/dev/null
-                docker exec -d ${CONTAINER_NAME} /bin/bash -c "
-                source /opt/ros/humble/setup.bash && \
-                source /root/ugv_ws/install/setup.bash && \
-                ros2 run robot_localization ekf_node --ros-args --params-file /tmp/ekf_lidar_imu.yaml
-                " 2>/dev/null
-                sleep 2
-            else
-                echo "EKF already running, skipping..."
             fi
 
             # Check if SLAM is already running
@@ -343,8 +320,8 @@ case "${MODE}" in
                 source /root/ugv_ws/install/setup.bash && \
                 ros2 launch slam_toolbox online_async_launch.py \
                   use_sim_time:=false \
-                  slam_params_file:=/tmp/slam_toolbox_optimized.yaml
-                " 2>/dev/null
+                  slam_params_file:=/tmp/slam_toolbox_optimized.yaml > /tmp/slam.log 2>&1
+                "
                 sleep 3
             else
                 echo "SLAM already running, skipping..."

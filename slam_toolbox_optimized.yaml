@@ -34,8 +34,8 @@ slam_toolbox:
     max_laser_range: 12.0          # LD19 effective range ~12m
 
     # Transform settings
-    transform_timeout: 0.5         # Increased from 0.2 for better stability
-    tf_buffer_duration: 30.0       # TF buffer size
+    transform_timeout: 1.0         # Increased for EKF latency
+    tf_buffer_duration: 60.0       # TF buffer size - increased for startup
 
     # Memory allocation
     stack_size_to_use: 40000000    # 40MB stack
