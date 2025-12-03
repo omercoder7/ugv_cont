@@ -85,6 +85,7 @@ show_help() {
     echo "  ekf         - Start EKF sensor fusion (LiDAR + IMU) without SLAM"
     echo "  slam        - Full SLAM+Nav2 using manufacturer's launch"
     echo "  slam-opt    - OPTIMIZED SLAM with better parameters (RECOMMENDED)"
+    echo "                Use 'slam-opt new_map' to start with a fresh map"
     echo "  slam-simple - Simple SLAM without Nav2 (requires bringup running)"
     echo "  slam3d      - SLAM+Nav2 with 3D visualization"
     echo "  nav         - Navigation view (2D)"
@@ -96,9 +97,11 @@ show_help() {
     echo "  custom      - Custom .rviz file (provide path as 2nd arg)"
     echo ""
     echo "Examples:"
-    echo "  ./rviz.sh lidar        # Just view LiDAR"
-    echo "  ./rviz.sh slam         # Full SLAM with proper odometry"
-    echo "  ./rviz.sh slam-simple  # Simple SLAM (if bringup already running)"
+    echo "  ./rviz.sh lidar            # Just view LiDAR"
+    echo "  ./rviz.sh slam             # Full SLAM with proper odometry"
+    echo "  ./rviz.sh slam-opt         # Optimized SLAM (continues existing map)"
+    echo "  ./rviz.sh slam-opt new_map # Optimized SLAM with fresh map"
+    echo "  ./rviz.sh slam-simple      # Simple SLAM (if bringup already running)"
     echo "  ./rviz.sh custom /path/to/my_config.rviz"
 }
 
@@ -218,6 +221,8 @@ case "${MODE}" in
         launch_rviz "${RVIZ_SLAM_2D}"
         ;;
     slam-opt|slam-optimized)
+        NEW_MAP="$2"
+
         echo "Starting OPTIMIZED SLAM with improved parameters..."
         echo ""
         echo "Using DISPLAY=${DISPLAY}"
@@ -227,8 +232,31 @@ case "${MODE}" in
         docker cp "${SCRIPT_DIR}/slam_toolbox_optimized.yaml" ${CONTAINER_NAME}:/tmp/slam_toolbox_optimized.yaml
         docker cp "${SCRIPT_DIR}/view_slam_2d.rviz" ${CONTAINER_NAME}:/tmp/view_slam_2d.rviz 2>/dev/null
 
-        # Check if bringup is already running
-        if ! docker exec ${CONTAINER_NAME} pgrep -f "bringup_lidar" > /dev/null 2>&1; then
+        # Handle new_map option - kill existing SLAM and reset odometry
+        if [ "${NEW_MAP}" = "new_map" ] || [ "${NEW_MAP}" = "new" ] || [ "${NEW_MAP}" = "--new-map" ]; then
+            echo ""
+            echo "*** NEW MAP MODE - Resetting SLAM and odometry ***"
+            echo ""
+
+            # Kill ALL ROS2 related processes to get a clean slate
+            # Using killall -9 for more reliable cleanup
+            echo "Stopping all ROS2 nodes..."
+            docker exec ${CONTAINER_NAME} bash -c "killall -9 python3 2>/dev/null; killall -9 rviz2 2>/dev/null" 2>/dev/null
+            sleep 2
+
+            # Double-check with pkill for any remaining processes
+            docker exec ${CONTAINER_NAME} pkill -9 -f "slam_toolbox" 2>/dev/null
+            docker exec ${CONTAINER_NAME} pkill -9 -f "rf2o" 2>/dev/null
+            docker exec ${CONTAINER_NAME} pkill -9 -f "ldlidar" 2>/dev/null
+            docker exec ${CONTAINER_NAME} pkill -9 -f "base_node" 2>/dev/null
+            docker exec ${CONTAINER_NAME} pkill -9 -f "robot_state" 2>/dev/null
+            docker exec ${CONTAINER_NAME} pkill -9 -f "joint_state" 2>/dev/null
+            docker exec ${CONTAINER_NAME} pkill -9 -f "ugv_driver" 2>/dev/null
+            sleep 2
+
+            echo "All nodes stopped."
+
+            # Start fresh bringup
             echo "Starting robot bringup..."
             docker exec -d ${CONTAINER_NAME} /bin/bash -c "
             source /opt/ros/humble/setup.bash && \
@@ -238,13 +266,9 @@ case "${MODE}" in
             ros2 launch ugv_bringup bringup_lidar.launch.py pub_odom_tf:=true
             " 2>/dev/null
             sleep 5
-        else
-            echo "Bringup already running, skipping..."
-        fi
 
-        # Check if SLAM is already running
-        if ! docker exec ${CONTAINER_NAME} pgrep -f "slam_toolbox" > /dev/null 2>&1; then
-            echo "Starting SLAM with optimized config..."
+            # Start fresh SLAM
+            echo "Starting fresh SLAM with optimized config..."
             docker exec -d ${CONTAINER_NAME} /bin/bash -c "
             source /opt/ros/humble/setup.bash && \
             source /root/ugv_ws/install/setup.bash && \
@@ -253,8 +277,39 @@ case "${MODE}" in
               slam_params_file:=/tmp/slam_toolbox_optimized.yaml
             " 2>/dev/null
             sleep 3
+
+            echo "Fresh map started!"
         else
-            echo "SLAM already running, skipping..."
+            # Normal mode - check if already running
+            # Check if bringup is already running
+            if ! docker exec ${CONTAINER_NAME} pgrep -f "bringup_lidar" > /dev/null 2>&1; then
+                echo "Starting robot bringup..."
+                docker exec -d ${CONTAINER_NAME} /bin/bash -c "
+                source /opt/ros/humble/setup.bash && \
+                source /root/ugv_ws/install/setup.bash && \
+                export UGV_MODEL=ugv_beast && \
+                export LDLIDAR_MODEL=ld19 && \
+                ros2 launch ugv_bringup bringup_lidar.launch.py pub_odom_tf:=true
+                " 2>/dev/null
+                sleep 5
+            else
+                echo "Bringup already running, skipping..."
+            fi
+
+            # Check if SLAM is already running
+            if ! docker exec ${CONTAINER_NAME} pgrep -f "slam_toolbox" > /dev/null 2>&1; then
+                echo "Starting SLAM with optimized config..."
+                docker exec -d ${CONTAINER_NAME} /bin/bash -c "
+                source /opt/ros/humble/setup.bash && \
+                source /root/ugv_ws/install/setup.bash && \
+                ros2 launch slam_toolbox online_async_launch.py \
+                  use_sim_time:=false \
+                  slam_params_file:=/tmp/slam_toolbox_optimized.yaml
+                " 2>/dev/null
+                sleep 3
+            else
+                echo "SLAM already running, skipping..."
+            fi
         fi
 
         echo "Launching RViz with manufacturer's SLAM config..."

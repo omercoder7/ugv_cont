@@ -335,6 +335,8 @@ print('Published virtual obstacle at {x:.2f}, {y:.2f}')
         """
         Check if robot is stuck (driving but not moving).
         Returns True if stuck is detected.
+
+        Uses faster detection (0.5s window) and more sensitive thresholds.
         """
         if not is_driving:
             # Not trying to move, so can't be stuck
@@ -357,9 +359,9 @@ print('Published virtual obstacle at {x:.2f}, {y:.2f}')
             self.last_position_time = current_time
             return False
 
-        # Check movement over last ~1 second (5 iterations at 0.2s each)
+        # Check movement over last 0.5 seconds (faster detection)
         time_diff = current_time - self.last_position_time
-        if time_diff < 1.0:
+        if time_diff < 0.5:
             return False
 
         # Calculate distance moved
@@ -367,8 +369,10 @@ print('Published virtual obstacle at {x:.2f}, {y:.2f}')
         dy = current_pos[1] - self.last_position[1]
         distance = math.sqrt(dx*dx + dy*dy)
 
-        # Expected distance at current speed (with some margin)
-        expected_distance = self.linear_speed * time_diff * 0.3  # 30% of expected
+        # Expected distance at current speed
+        # If moving at 0.10 m/s for 0.5s, expect ~0.05m movement
+        # Use 20% threshold (very sensitive) - if moving less than 20% expected, we're stuck
+        expected_distance = self.linear_speed * time_diff * 0.20
 
         # Update position tracking
         self.last_position = current_pos
@@ -377,16 +381,22 @@ print('Published virtual obstacle at {x:.2f}, {y:.2f}')
         if distance < expected_distance:
             # Not moving as expected
             self.stuck_counter += 1
-            if self.stuck_counter >= 2:  # Stuck for 2+ checks (~2 seconds)
+            # Faster trigger: stuck after just 2 checks (~1 second total)
+            if self.stuck_counter >= 2:
                 # Store the stuck position for obstacle marking
                 self.stuck_position = current_pos
                 return True
         else:
             # Moving fine, reset counter and clear blocked sectors gradually
             self.stuck_counter = 0
-            if self.blocked_sectors and time_diff > 5.0:
-                # Clear one blocked sector after moving well for a while
-                self.blocked_sectors.pop() if self.blocked_sectors else None
+            # Clear blocked sectors after 10 seconds of good movement
+            if self.blocked_sectors and hasattr(self, 'last_clear_time'):
+                if current_time - self.last_clear_time > 10.0:
+                    if self.blocked_sectors:
+                        self.blocked_sectors.pop()
+                    self.last_clear_time = current_time
+            else:
+                self.last_clear_time = current_time
 
         return False
 
@@ -585,13 +595,16 @@ rclpy.shutdown()
 
         if front_arc_min < DANGER_DISTANCE:
             # TOO CLOSE! Back up while turning towards best clear direction
-            linear = -self.linear_speed * 0.6
+            # Use proportional backup speed based on how close obstacle is
+            backup_urgency = 1.0 - (front_arc_min / DANGER_DISTANCE)  # 0-1, higher = closer
+            linear = -self.linear_speed * (0.4 + 0.3 * backup_urgency)  # 0.4-0.7x speed
+
             # Turn towards the best clear direction (using VFH cost function)
             # This ensures we back up AND orient towards where we want to go
             if best_sector <= 5:
-                angular = self.turn_speed   # Best is on left side, turn left
+                angular = self.turn_speed * 0.7  # Best is on left side, turn left
             else:
-                angular = -self.turn_speed  # Best is on right side, turn right
+                angular = -self.turn_speed * 0.7  # Best is on right side, turn right
             self.obstacles_avoided += 1
             status = f"[DANGER] {front_arc_min:.2f}m! backing -> s{best_sector}"
 
@@ -736,19 +749,27 @@ rclpy.shutdown()
                     print(f"\n*** STUCK DETECTED! Blocking sectors: {self.blocked_sectors} ***")
                     self.obstacles_avoided += 1
                     self.stuck_counter = 0
-                    self.stuck_cooldown = 10  # Wait 10 iterations before checking again
+                    self.stuck_cooldown = 5  # Wait 5 iterations before checking again
 
                     # Publish virtual obstacle marker at stuck position (visible in RViz)
                     if hasattr(self, 'stuck_position') and self.stuck_position:
-                        # Calculate obstacle position slightly ahead of where we got stuck
-                        # (the obstacle is in front of us, not at our position)
                         stuck_x, stuck_y = self.stuck_position
                         self.publish_virtual_obstacle(stuck_x, stuck_y)
 
-                    # Back up and turn
-                    for _ in range(10):  # Back up for ~2 seconds
-                        self.send_cmd(-self.linear_speed * 0.5, self.turn_speed)
+                    # Dynamic backup: back up until front is clear enough to maneuver
+                    # Max 8 iterations (~1.6s) to prevent infinite backup
+                    for backup_iter in range(8):
+                        self.send_cmd(-self.linear_speed * 0.6, self.turn_speed * 0.5)
                         time.sleep(0.2)
+
+                        # Check if we have clearance now
+                        if self.update_scan():
+                            front_clear = self.sector_distances[0] > self.min_distance
+                            side_clear = (self.sector_distances[1] > self.min_distance or
+                                         self.sector_distances[11] > self.min_distance)
+                            if front_clear or side_clear:
+                                print(f" (cleared after {backup_iter+1} steps)")
+                                break
                     self.stop()
 
                     # Reset position tracking after recovery maneuver
