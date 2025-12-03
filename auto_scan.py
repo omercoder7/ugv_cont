@@ -274,6 +274,63 @@ rclpy.shutdown()
         except:
             return None
 
+    def publish_virtual_obstacle(self, x: float, y: float):
+        """
+        Publish a virtual obstacle marker at the given position.
+        This helps SLAM know there's an invisible obstacle (low object, narrow gap, etc.)
+        """
+        try:
+            # Publish a PointCloud2 with a single point at the obstacle location
+            # This will be picked up by the costmap and marked as an obstacle
+            subprocess.run(
+                ['docker', 'exec', CONTAINER_NAME, 'bash', '-c',
+                 f'''source /opt/ros/humble/setup.bash && python3 -c "
+import rclpy
+from rclpy.node import Node
+from visualization_msgs.msg import Marker
+from geometry_msgs.msg import Point
+
+rclpy.init()
+node = rclpy.create_node('virtual_obstacle_pub')
+
+# Publish visualization marker (visible in RViz)
+marker_pub = node.create_publisher(Marker, '/virtual_obstacles', 10)
+
+marker = Marker()
+marker.header.frame_id = 'odom'
+marker.header.stamp = node.get_clock().now().to_msg()
+marker.ns = 'stuck_obstacles'
+marker.id = int({x}*1000 + {y}*100) % 10000
+marker.type = Marker.CYLINDER
+marker.action = Marker.ADD
+marker.pose.position.x = {x}
+marker.pose.position.y = {y}
+marker.pose.position.z = 0.1
+marker.pose.orientation.w = 1.0
+marker.scale.x = 0.3  # 30cm diameter
+marker.scale.y = 0.3
+marker.scale.z = 0.2  # 20cm tall
+marker.color.r = 1.0
+marker.color.g = 0.0
+marker.color.b = 0.0
+marker.color.a = 0.8
+marker.lifetime.sec = 300  # Keep for 5 minutes
+
+# Publish multiple times to ensure delivery
+for _ in range(3):
+    marker_pub.publish(marker)
+    rclpy.spin_once(node, timeout_sec=0.1)
+
+node.destroy_node()
+rclpy.shutdown()
+print('Published virtual obstacle at {x:.2f}, {y:.2f}')
+"'''],
+                capture_output=True, text=True, timeout=5
+            )
+            print(f"\n[OBSTACLE] Marked virtual obstacle at ({x:.2f}, {y:.2f})")
+        except Exception as e:
+            print(f"\nFailed to publish virtual obstacle: {e}")
+
     def check_if_stuck(self, is_driving: bool) -> bool:
         """
         Check if robot is stuck (driving but not moving).
@@ -321,6 +378,8 @@ rclpy.shutdown()
             # Not moving as expected
             self.stuck_counter += 1
             if self.stuck_counter >= 2:  # Stuck for 2+ checks (~2 seconds)
+                # Store the stuck position for obstacle marking
+                self.stuck_position = current_pos
                 return True
         else:
             # Moving fine, reset counter and clear blocked sectors gradually
@@ -678,6 +737,13 @@ rclpy.shutdown()
                     self.obstacles_avoided += 1
                     self.stuck_counter = 0
                     self.stuck_cooldown = 10  # Wait 10 iterations before checking again
+
+                    # Publish virtual obstacle marker at stuck position (visible in RViz)
+                    if hasattr(self, 'stuck_position') and self.stuck_position:
+                        # Calculate obstacle position slightly ahead of where we got stuck
+                        # (the obstacle is in front of us, not at our position)
+                        stuck_x, stuck_y = self.stuck_position
+                        self.publish_virtual_obstacle(stuck_x, stuck_y)
 
                     # Back up and turn
                     for _ in range(10):  # Back up for ~2 seconds
