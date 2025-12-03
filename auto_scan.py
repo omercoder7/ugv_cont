@@ -138,6 +138,13 @@ class SectorObstacleAvoider:
         self.obstacles_avoided = 0
         self.total_rotations = 0
 
+        # Stuck detection
+        self.last_position = None  # (x, y) from odometry
+        self.last_position_time = 0
+        self.stuck_counter = 0
+        self.blocked_sectors = set()  # Sectors that led to being stuck
+        self.stuck_cooldown = 0  # Cooldown after recovering from stuck
+
     def send_cmd(self, linear_x: float, angular_z: float):
         """Send velocity command directly to serial port (bypasses ROS2)"""
         # Convert to robot's expected format: {"T":"13","X":linear,"Z":angular}
@@ -172,6 +179,93 @@ class SectorObstacleAvoider:
                           capture_output=True, cwd='/home/ws/ugv_cont')
         except:
             pass
+
+    def get_odometry(self) -> Optional[Tuple[float, float]]:
+        """Get current position from odometry"""
+        try:
+            result = subprocess.run(
+                ['docker', 'exec', CONTAINER_NAME, 'bash', '-c',
+                 '''source /opt/ros/humble/setup.bash && python3 -c "
+import rclpy
+from nav_msgs.msg import Odometry
+rclpy.init()
+node = rclpy.create_node('odom_reader')
+msg = None
+def cb(m): global msg; msg = m
+sub = node.create_subscription(Odometry, '/odom', cb, 1)
+for _ in range(20):
+    rclpy.spin_once(node, timeout_sec=0.05)
+    if msg: break
+if msg:
+    print(f'{msg.pose.pose.position.x:.4f},{msg.pose.pose.position.y:.4f}')
+node.destroy_node()
+rclpy.shutdown()
+"'''],
+                capture_output=True, text=True, timeout=3
+            )
+            if result.stdout.strip():
+                parts = result.stdout.strip().split(',')
+                return (float(parts[0]), float(parts[1]))
+            return None
+        except:
+            return None
+
+    def check_if_stuck(self, is_driving: bool) -> bool:
+        """
+        Check if robot is stuck (driving but not moving).
+        Returns True if stuck is detected.
+        """
+        if not is_driving:
+            # Not trying to move, so can't be stuck
+            self.stuck_counter = 0
+            return False
+
+        # Decrease cooldown
+        if self.stuck_cooldown > 0:
+            self.stuck_cooldown -= 1
+            return False
+
+        current_pos = self.get_odometry()
+        current_time = time.time()
+
+        if current_pos is None:
+            return False
+
+        if self.last_position is None:
+            self.last_position = current_pos
+            self.last_position_time = current_time
+            return False
+
+        # Check movement over last ~1 second (5 iterations at 0.2s each)
+        time_diff = current_time - self.last_position_time
+        if time_diff < 1.0:
+            return False
+
+        # Calculate distance moved
+        dx = current_pos[0] - self.last_position[0]
+        dy = current_pos[1] - self.last_position[1]
+        distance = math.sqrt(dx*dx + dy*dy)
+
+        # Expected distance at current speed (with some margin)
+        expected_distance = self.linear_speed * time_diff * 0.3  # 30% of expected
+
+        # Update position tracking
+        self.last_position = current_pos
+        self.last_position_time = current_time
+
+        if distance < expected_distance:
+            # Not moving as expected
+            self.stuck_counter += 1
+            if self.stuck_counter >= 2:  # Stuck for 2+ checks (~2 seconds)
+                return True
+        else:
+            # Moving fine, reset counter and clear blocked sectors gradually
+            self.stuck_counter = 0
+            if self.blocked_sectors and time_diff > 5.0:
+                # Clear one blocked sector after moving well for a while
+                self.blocked_sectors.pop() if self.blocked_sectors else None
+
+        return False
 
     def update_scan(self) -> bool:
         """Fetch latest LiDAR scan and compute sector distances"""
@@ -292,6 +386,10 @@ rclpy.shutdown()
 
             # Skip blind spots and blocked sectors
             if dist < self.min_distance:
+                continue
+
+            # Skip sectors that led to being stuck (invisible obstacles)
+            if sector in self.blocked_sectors:
                 continue
 
             # Calculate angle from front (0 = front, ±π = back)
@@ -460,6 +558,7 @@ rclpy.shutdown()
         print(f"Scan duration:   {'unlimited' if self.duration == 0 else f'{self.duration}s'}")
         print(f"Sectors:         {NUM_SECTORS} ({self.sector_degrees}° each)")
         print(f"LiDAR rotation:  90° (corrected in software)")
+        print(f"Stuck detection: Enabled (uses odometry)")
         print("-"*60)
         print("Controls:")
         print("  SPACE/s  - Emergency stop")
@@ -498,6 +597,33 @@ rclpy.shutdown()
 
                 # Compute and send velocity
                 linear, angular = self.compute_velocity()
+
+                # Check if stuck (driving but not moving)
+                is_driving = abs(linear) > 0.01
+                if self.check_if_stuck(is_driving):
+                    # Robot is stuck on invisible obstacle!
+                    # Mark current direction as blocked and back up
+                    if hasattr(self, 'previous_sector'):
+                        self.blocked_sectors.add(self.previous_sector)
+                        # Also block adjacent sectors
+                        self.blocked_sectors.add((self.previous_sector + 1) % NUM_SECTORS)
+                        self.blocked_sectors.add((self.previous_sector - 1) % NUM_SECTORS)
+
+                    print(f"\n*** STUCK DETECTED! Blocking sectors: {self.blocked_sectors} ***")
+                    self.obstacles_avoided += 1
+                    self.stuck_counter = 0
+                    self.stuck_cooldown = 10  # Wait 10 iterations before checking again
+
+                    # Back up and turn
+                    for _ in range(10):  # Back up for ~2 seconds
+                        self.send_cmd(-self.linear_speed * 0.5, self.turn_speed)
+                        time.sleep(0.2)
+                    self.stop()
+
+                    # Reset position tracking after recovery maneuver
+                    self.last_position = None
+                    continue
+
                 self.send_cmd(linear, angular)
 
                 # Print detailed status periodically
@@ -524,6 +650,7 @@ rclpy.shutdown()
             print(f"Total time:         {total_time:.1f}s")
             print(f"Obstacles avoided:  {self.obstacles_avoided}")
             print(f"Direction changes:  {self.total_rotations}")
+            print(f"Stuck detections:   {len(self.blocked_sectors) // 3}")  # Approx, since we block 3 at a time
             print("="*60)
 
 
