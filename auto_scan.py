@@ -143,7 +143,8 @@ class SectorObstacleAvoider:
         # Convert to robot's expected format: {"T":"13","X":linear,"Z":angular}
         # Scale: linear is in m/s, angular in rad/s
         # The robot expects values roughly in range -1 to 1
-        x_val = max(-1.0, min(1.0, linear_x / 0.3))  # Scale to -1 to 1
+        # NOTE: Linear is INVERTED - positive X in our code = negative X to motors
+        x_val = max(-1.0, min(1.0, -linear_x / 0.3))  # INVERTED + Scale to -1 to 1
         z_val = max(-1.0, min(1.0, angular_z / 1.0))  # Scale to -1 to 1
 
         serial_cmd = f'{{"T":"13","X":{x_val:.2f},"Z":{z_val:.2f}}}'
