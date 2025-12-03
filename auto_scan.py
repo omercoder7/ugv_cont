@@ -363,15 +363,16 @@ rclpy.shutdown()
         )
 
         if front_arc_min < DANGER_DISTANCE:
-            # TOO CLOSE! Back up while turning away
+            # TOO CLOSE! Back up while turning towards best clear direction
             linear = -self.linear_speed * 0.6
-            # Turn away from the closest obstacle
-            if front_left < front_right:
-                angular = -self.turn_speed  # Obstacle on left, turn right
+            # Turn towards the best clear direction (using VFH cost function)
+            # This ensures we back up AND orient towards where we want to go
+            if best_sector <= 5:
+                angular = self.turn_speed   # Best is on left side, turn left
             else:
-                angular = self.turn_speed   # Obstacle on right, turn left
+                angular = -self.turn_speed  # Best is on right side, turn right
             self.obstacles_avoided += 1
-            status = f"[DANGER] {front_arc_min:.2f}m! backing up"
+            status = f"[DANGER] {front_arc_min:.2f}m! backing -> s{best_sector}"
 
         elif front_dist >= self.min_distance:
             # Front is clear - drive forward with slight steering adjustment
