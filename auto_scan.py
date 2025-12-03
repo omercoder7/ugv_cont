@@ -145,6 +145,62 @@ class SectorObstacleAvoider:
         self.blocked_sectors = set()  # Sectors that led to being stuck
         self.stuck_cooldown = 0  # Cooldown after recovering from stuck
 
+        # Smoothing parameters (based on DWA/VFH research)
+        # Exponential Moving Average for velocity smoothing
+        self.ema_alpha = 0.3  # Lower = smoother but slower response (0.2-0.4 typical)
+        self.last_linear = 0.0
+        self.last_angular = 0.0
+
+        # Acceleration limits (m/s² and rad/s²)
+        self.max_linear_accel = 0.15  # Max change in linear velocity per second
+        self.max_angular_accel = 0.8  # Max change in angular velocity per second
+        self.last_cmd_time = time.time()
+
+        # State hysteresis to prevent rapid state switching
+        self.current_state = "FWD"
+        self.state_hold_counter = 0
+        self.min_state_hold = 2  # Hold state for at least N iterations
+
+    def smooth_velocity(self, target_linear: float, target_angular: float) -> Tuple[float, float]:
+        """
+        Apply smoothing to velocity commands using:
+        1. Exponential Moving Average (EMA) for smooth transitions
+        2. Acceleration limiting to prevent jerky motion
+
+        Based on DWA/VFH research for smooth robot motion.
+        """
+        current_time = time.time()
+        dt = current_time - self.last_cmd_time
+        self.last_cmd_time = current_time
+
+        # Clamp dt to reasonable range
+        dt = max(0.05, min(dt, 0.5))
+
+        # 1. Apply acceleration limits
+        max_linear_change = self.max_linear_accel * dt
+        max_angular_change = self.max_angular_accel * dt
+
+        # Limit linear velocity change
+        linear_diff = target_linear - self.last_linear
+        if abs(linear_diff) > max_linear_change:
+            target_linear = self.last_linear + math.copysign(max_linear_change, linear_diff)
+
+        # Limit angular velocity change
+        angular_diff = target_angular - self.last_angular
+        if abs(angular_diff) > max_angular_change:
+            target_angular = self.last_angular + math.copysign(max_angular_change, angular_diff)
+
+        # 2. Apply Exponential Moving Average (EMA) smoothing
+        # smoothed = alpha * new + (1 - alpha) * old
+        smoothed_linear = self.ema_alpha * target_linear + (1 - self.ema_alpha) * self.last_linear
+        smoothed_angular = self.ema_alpha * target_angular + (1 - self.ema_alpha) * self.last_angular
+
+        # Update last values
+        self.last_linear = smoothed_linear
+        self.last_angular = smoothed_angular
+
+        return smoothed_linear, smoothed_angular
+
     def send_cmd(self, linear_x: float, angular_z: float):
         """Send velocity command directly to serial port (bypasses ROS2)"""
         # Convert to robot's expected format: {"T":"13","X":linear,"Z":angular}
@@ -165,8 +221,16 @@ class SectorObstacleAvoider:
         except:
             pass
 
+    def send_smoothed_cmd(self, linear_x: float, angular_z: float):
+        """Send velocity command with smoothing applied"""
+        smoothed_linear, smoothed_angular = self.smooth_velocity(linear_x, angular_z)
+        self.send_cmd(smoothed_linear, smoothed_angular)
+
     def stop(self):
         """Stop the robot"""
+        # Reset smoothing state for clean stop
+        self.last_linear = 0.0
+        self.last_angular = 0.0
         for _ in range(3):
             self.send_cmd(0.0, 0.0)
             time.sleep(0.05)
@@ -559,6 +623,7 @@ rclpy.shutdown()
         print(f"Sectors:         {NUM_SECTORS} ({self.sector_degrees}° each)")
         print(f"LiDAR rotation:  90° (corrected in software)")
         print(f"Stuck detection: Enabled (uses odometry)")
+        print(f"Motion smooth:   EMA(α={self.ema_alpha}) + accel limits")
         print("-"*60)
         print("Controls:")
         print("  SPACE/s  - Emergency stop")
@@ -624,7 +689,8 @@ rclpy.shutdown()
                     self.last_position = None
                     continue
 
-                self.send_cmd(linear, angular)
+                # Send smoothed velocity command
+                self.send_smoothed_cmd(linear, angular)
 
                 # Print detailed status periodically
                 if time.time() - last_status_time > 10:
