@@ -35,22 +35,18 @@ CONTAINER_NAME = "ugv_rpi_ros_humble"
 NUM_SECTORS = 12  # 360° / 12 = 30° per sector
 
 # LiDAR is mounted rotated 90° (1.571 rad) in URDF
-# BUT the LiDAR driver crops angles 225°-315° (rear) AND there's a blind spot at 60°-120°
 # Based on actual scan analysis:
-#   LiDAR sector 0-1 (0°-60°): CLEAR - actual readings
-#   LiDAR sector 2-3 (60°-120°): NO DATA - blind spot/cropped
-#   LiDAR sector 4-8 (120°-270°): CLEAR - actual readings
-#   LiDAR sector 9-11 (270°-360°): CLEAR - close obstacles
+#   LiDAR sector 2-3 (60°-120°): NO DATA - blind spot
+#   Other sectors: have data
 #
 # The robot should drive towards sectors WITH DATA, not blind spots!
-# After 90° TF rotation:
-#   Robot FRONT = LiDAR ~270° (sector 9) - has data
-#   Robot BACK = LiDAR ~90° (sector 3) - NO DATA (blind spot)
-#   Robot LEFT = LiDAR ~180° (sector 6) - has data
-#   Robot RIGHT = LiDAR ~0° (sector 0) - has data
+# Mapping: Robot FRONT = LiDAR sector 9 (270°)
+#          Robot BACK = LiDAR sector 3 (90°) - blind spot
 #
-# So robot_sector = (lidar_sector + 9) % 12  (270° offset, not 90°)
-LIDAR_ROTATION_SECTORS = 9  # LiDAR 270° = Robot front
+# To convert: robot_sector = (lidar_sector + 3) % 12
+#   - lidar sector 9 (robot front) -> robot sector 0
+#   - lidar sector 3 (blind) -> robot sector 6 (back)
+LIDAR_ROTATION_SECTORS = 3  # Add 3 to lidar sector to get robot sector
 
 
 class KeyboardMonitor:
@@ -128,7 +124,6 @@ class SectorObstacleAvoider:
         # Motion parameters
         self.turn_speed = 0.35  # Slower turning
         self.sector_degrees = 360 // NUM_SECTORS  # 30°
-        self.side_clearance = 0.4  # Require clearance on sides too
 
         # State
         self.scan_ranges: List[float] = []
@@ -264,112 +259,74 @@ rclpy.shutdown()
             lidar_sector = self.robot_to_lidar_sector(robot_sector)
             self.sector_distances[robot_sector] = lidar_distances[lidar_sector]
 
-    def is_sector_safe(self, sector: int) -> bool:
-        """Check if a sector and its neighbors are safe (not a narrow passage)"""
-        dist = self.sector_distances[sector]
-        if dist < self.min_distance:
-            return False
+    def find_clearest_sector(self) -> int:
+        """Find the sector with the most clearance"""
+        # Score each sector by distance (prefer front if equal)
+        best_sector = 0
+        best_score = -1
 
-        # Also check adjacent sectors to avoid narrow passages (like closets)
-        left_neighbor = (sector + 1) % NUM_SECTORS
-        right_neighbor = (sector - 1) % NUM_SECTORS
+        for sector in range(NUM_SECTORS):
+            dist = self.sector_distances[sector]
+            if dist < 0.01:  # Skip blind spots
+                continue
 
-        # Require some clearance on sides too
-        left_dist = self.sector_distances[left_neighbor]
-        right_dist = self.sector_distances[right_neighbor]
+            # Prefer front (sector 0) by giving it a small bonus
+            # Rotation cost: 0 for front, increases as we go around
+            if sector <= NUM_SECTORS // 2:
+                rotation_cost = sector * 0.1  # 0 to 0.6
+            else:
+                rotation_cost = (NUM_SECTORS - sector) * 0.1  # 0.5 to 0.1
 
-        # If going into a narrow corridor (both sides close), avoid it
-        if left_dist < self.side_clearance and right_dist < self.side_clearance:
-            return False
+            score = dist - rotation_cost
+            if score > best_score:
+                best_score = score
+                best_sector = sector
 
-        return True
-
-    def find_best_direction(self) -> Tuple[int, float]:
-        """
-        Find the best direction (sector) to move.
-
-        Returns:
-            (sector_index, angular_velocity)
-            sector_index: 0 = front, 6 = back
-            angular_velocity: positive = left, negative = right
-        """
-        # Find all safe sectors (distance > threshold AND not narrow passage)
-        clear_sectors = []
-        for i in range(NUM_SECTORS):
-            if self.is_sector_safe(i):
-                clear_sectors.append(i)
-
-        if not clear_sectors:
-            # No safe path - find widest opening (max distance with best side clearance)
-            def opening_score(sector):
-                dist = self.sector_distances[sector]
-                left = self.sector_distances[(sector + 1) % NUM_SECTORS]
-                right = self.sector_distances[(sector - 1) % NUM_SECTORS]
-                return dist + (left + right) * 0.3  # Prefer wider openings
-
-            best_sector = max(range(NUM_SECTORS), key=opening_score)
-            self.obstacles_avoided += 1
-        else:
-            # Find clear sector requiring minimal rotation from front (sector 0)
-            # Sector 0 = front, sectors 1-5 = left, sectors 7-11 = right, 6 = back
-            def rotation_cost(sector):
-                if sector <= NUM_SECTORS // 2:
-                    return sector  # Left turn
-                else:
-                    return NUM_SECTORS - sector  # Right turn
-
-            best_sector = min(clear_sectors, key=rotation_cost)
-
-        # Calculate angular velocity to face the chosen sector
-        if best_sector == 0:
-            # Already facing the best direction
-            return 0, 0.0
-        elif best_sector <= NUM_SECTORS // 2:
-            # Turn left (positive angular velocity)
-            return best_sector, self.turn_speed
-        else:
-            # Turn right (negative angular velocity)
-            return best_sector, -self.turn_speed
+        return best_sector
 
     def compute_velocity(self) -> Tuple[float, float]:
-        """Compute velocity command based on current scan"""
+        """
+        Simple algorithm: Go towards the clearest path.
+        If front is clear enough, go straight. Otherwise, turn towards clearest sector.
+        """
         front_dist = self.sector_distances[0]
-        front_left_dist = self.sector_distances[1]
-        front_right_dist = self.sector_distances[NUM_SECTORS - 1]
 
-        best_sector, turn_angular = self.find_best_direction()
+        # Find the clearest sector
+        clearest = self.find_clearest_sector()
+        clearest_dist = self.sector_distances[clearest]
 
-        # Determine linear and angular velocity
-        if front_dist < self.min_distance:
-            # Obstacle directly ahead - stop and rotate towards clear sector
-            linear = 0.0
-            angular = turn_angular if turn_angular != 0 else self.turn_speed
-            self.obstacles_avoided += 1
-            status = f"[BLOCKED] Front={front_dist:.2f}m -> sector {best_sector}"
-        elif front_dist < self.min_distance * 1.5:
-            # Slow down and turn towards clearer path
-            linear = self.linear_speed * 0.5
-            angular = turn_angular * 0.7  # Turn while moving slowly
-            self.total_rotations += 1 if turn_angular != 0 else 0
-            status = f"[SLOW+TURN] Front={front_dist:.2f}m -> sector {best_sector}"
-        elif best_sector != 0:
-            # Need to rotate to face clearer direction
-            linear = self.linear_speed * 0.5
-            angular = turn_angular
-            self.total_rotations += 1
-            status = f"[ROTATE] -> sector {best_sector} ({self.sector_distances[best_sector]:.2f}m)"
-        else:
-            # Path is clear - full speed with slight wandering
+        # If front is clear, go straight ahead
+        if front_dist >= self.min_distance:
             linear = self.linear_speed
-            if front_left_dist > front_right_dist + 0.3:
-                angular = 0.1  # Wander slightly left
-            elif front_right_dist > front_left_dist + 0.3:
-                angular = -0.1  # Wander slightly right
-            else:
-                angular = 0.0
-            status = f"[SCAN] Clear, front={front_dist:.2f}m"
+            angular = 0.0
+            status = f"[FORWARD] front={front_dist:.2f}m, clearest=sector{clearest}({clearest_dist:.2f}m)"
 
-        print(f"\r{status:<60}", end="", flush=True)
+        # Front is blocked - need to turn towards clearest path
+        elif clearest_dist >= self.min_distance:
+            # Turn towards the clearest sector
+            if clearest == 0:
+                # Shouldn't happen, but just in case
+                linear = 0.0
+                angular = self.turn_speed
+            elif clearest <= NUM_SECTORS // 2:
+                # Turn left
+                linear = 0.0
+                angular = self.turn_speed
+            else:
+                # Turn right
+                linear = 0.0
+                angular = -self.turn_speed
+            self.total_rotations += 1
+            status = f"[TURN] front={front_dist:.2f}m -> sector{clearest}({clearest_dist:.2f}m)"
+
+        else:
+            # Everything is blocked - back up
+            linear = -self.linear_speed * 0.5
+            angular = self.turn_speed  # Turn while backing up
+            self.obstacles_avoided += 1
+            status = f"[BACKUP] all blocked, best={clearest_dist:.2f}m"
+
+        print(f"\r{status:<65}", end="", flush=True)
         return linear, angular
 
     def print_sector_display(self):
@@ -530,54 +487,17 @@ def start_driver():
         return False
 
 
-def start_slam_rviz():
-    """Start SLAM and RViz using rviz.sh slam-opt"""
-    import os
-
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    rviz_script = os.path.join(script_dir, 'rviz.sh')
-
-    if not os.path.exists(rviz_script):
-        print(f"Warning: rviz.sh not found at {rviz_script}")
-        return None
-
-    # Get DISPLAY from environment or use default
-    display = os.environ.get('DISPLAY', '192.168.0.81:0.0')
-    os.environ['DISPLAY'] = display
-
-    print(f"Starting SLAM with RViz (DISPLAY={display})...")
-    print("This will open RViz in a separate process...")
-
-    # Start rviz.sh slam-opt in background
-    env = os.environ.copy()
-    env['DISPLAY'] = display
-
-    proc = subprocess.Popen(
-        ['bash', rviz_script, 'slam-opt'],
-        env=env,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        start_new_session=True  # Detach from parent - keeps running after script ends
-    )
-
-    print("Waiting for SLAM and RViz to initialize...")
-    time.sleep(12)  # Give time for bringup + SLAM + RViz
-
-    return proc
-
-
 def main():
     parser = argparse.ArgumentParser(
         description='Autonomous scanning with sector-based obstacle avoidance',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  ./auto_scan.py                      # Default: 60s at 0.10 m/s with SLAM
+  ./auto_scan.py                      # Default: 60s at 0.10 m/s
   ./auto_scan.py --duration 120       # 2 minute scan
   ./auto_scan.py --duration 0         # Unlimited
   ./auto_scan.py --speed 0.08         # Slower scanning
   ./auto_scan.py --min-dist 0.5       # More cautious
-  ./auto_scan.py --no-slam            # Skip SLAM/RViz startup
 
 Algorithm:
   Divides 360° LiDAR scan into 12 sectors (30° each).
@@ -591,18 +511,7 @@ Algorithm:
                         help='Min obstacle distance m (default: 0.5)')
     parser.add_argument('--duration', '-d', type=float, default=60,
                         help='Scan duration seconds, 0=unlimited (default: 60)')
-    parser.add_argument('--no-slam', action='store_true',
-                        help='Skip automatic SLAM/RViz startup')
     args = parser.parse_args()
-
-    # Start SLAM and RViz first (unless --no-slam)
-    rviz_proc = None
-    if not args.no_slam:
-        rviz_proc = start_slam_rviz()
-        if rviz_proc:
-            print("SLAM and RViz started. RViz will remain open after scan completes.")
-        else:
-            print("Warning: Could not start SLAM/RViz. Continuing without visualization.")
 
     if not check_prerequisites():
         sys.exit(1)
