@@ -220,42 +220,45 @@ case "${MODE}" in
     slam-opt|slam-optimized)
         echo "Starting OPTIMIZED SLAM with improved parameters..."
         echo ""
-        echo "Improvements over default:"
-        echo "  - scan_buffer_size: 10 (was 3)"
-        echo "  - loop_match_minimum_chain_size: 10 (was 3)"
-        echo "  - min_laser_range: 0.2m (filters robot body)"
-        echo "  - Better motion thresholds for more frequent updates"
-        echo ""
         echo "Using DISPLAY=${DISPLAY}"
 
-        # Copy optimized config to container
+        # Copy configs to container
         SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
         docker cp "${SCRIPT_DIR}/slam_toolbox_optimized.yaml" ${CONTAINER_NAME}:/tmp/slam_toolbox_optimized.yaml
+        docker cp "${SCRIPT_DIR}/view_slam_2d.rviz" ${CONTAINER_NAME}:/tmp/view_slam_2d.rviz 2>/dev/null
 
-        # Start bringup first (LiDAR + odometry + TF)
-        echo "Starting robot bringup..."
-        docker exec -d ${CONTAINER_NAME} /bin/bash -c "
-        source /opt/ros/humble/setup.bash && \
-        source /root/ugv_ws/install/setup.bash && \
-        export UGV_MODEL=ugv_beast && \
-        export LDLIDAR_MODEL=ld19 && \
-        ros2 launch ugv_bringup bringup_lidar.launch.py pub_odom_tf:=true
-        " 2>/dev/null
-        sleep 5
+        # Check if bringup is already running
+        if ! docker exec ${CONTAINER_NAME} pgrep -f "bringup_lidar" > /dev/null 2>&1; then
+            echo "Starting robot bringup..."
+            docker exec -d ${CONTAINER_NAME} /bin/bash -c "
+            source /opt/ros/humble/setup.bash && \
+            source /root/ugv_ws/install/setup.bash && \
+            export UGV_MODEL=ugv_beast && \
+            export LDLIDAR_MODEL=ld19 && \
+            ros2 launch ugv_bringup bringup_lidar.launch.py pub_odom_tf:=true
+            " 2>/dev/null
+            sleep 5
+        else
+            echo "Bringup already running, skipping..."
+        fi
 
-        # Start slam_toolbox with optimized config
-        echo "Starting SLAM with optimized config..."
-        docker exec -d ${CONTAINER_NAME} /bin/bash -c "
-        source /opt/ros/humble/setup.bash && \
-        source /root/ugv_ws/install/setup.bash && \
-        ros2 launch slam_toolbox online_async_launch.py \
-          use_sim_time:=false \
-          slam_params_file:=/tmp/slam_toolbox_optimized.yaml
-        " 2>/dev/null
-        sleep 3
+        # Check if SLAM is already running
+        if ! docker exec ${CONTAINER_NAME} pgrep -f "slam_toolbox" > /dev/null 2>&1; then
+            echo "Starting SLAM with optimized config..."
+            docker exec -d ${CONTAINER_NAME} /bin/bash -c "
+            source /opt/ros/humble/setup.bash && \
+            source /root/ugv_ws/install/setup.bash && \
+            ros2 launch slam_toolbox online_async_launch.py \
+              use_sim_time:=false \
+              slam_params_file:=/tmp/slam_toolbox_optimized.yaml
+            " 2>/dev/null
+            sleep 3
+        else
+            echo "SLAM already running, skipping..."
+        fi
 
-        echo "Launching RViz..."
-        launch_rviz "${RVIZ_SLAM_2D}"
+        echo "Launching RViz with manufacturer's SLAM config..."
+        launch_rviz "/tmp/view_slam_2d.rviz"
         ;;
     slam3d)
         echo "Starting SLAM 3D using manufacturer's Nav2 launch..."
