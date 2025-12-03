@@ -34,19 +34,15 @@ from typing import List, Tuple, Optional
 CONTAINER_NAME = "ugv_rpi_ros_humble"
 NUM_SECTORS = 12  # 360° / 12 = 30° per sector
 
-# LiDAR is mounted rotated 90° (1.571 rad) in URDF
+# LiDAR is mounted rotated -90° (-1.5708 rad) in URDF
+# This was changed from +90° to fix mirrored map display
+#
 # Based on actual scan analysis:
-#   LiDAR sector 2-3 (60°-120°): NO DATA - blind spot
-#   Other sectors: have data
+#   LiDAR has a blind spot from ~225° to ~315° (angle_crop in ld19.launch.py)
 #
-# The robot should drive towards sectors WITH DATA, not blind spots!
-# Mapping: Robot FRONT = LiDAR sector 9 (270°)
-#          Robot BACK = LiDAR sector 3 (90°) - blind spot
-#
-# To convert: robot_sector = (lidar_sector + 3) % 12
-#   - lidar sector 9 (robot front) -> robot sector 0
-#   - lidar sector 3 (blind) -> robot sector 6 (back)
-LIDAR_ROTATION_SECTORS = 3  # Add 3 to lidar sector to get robot sector
+# To convert: robot_sector = (lidar_sector + 9) % 12
+# This accounts for the -90° rotation (-3 sectors = +9 sectors mod 12)
+LIDAR_ROTATION_SECTORS = 9  # Add 9 to lidar sector to get robot sector
 
 
 class KeyboardMonitor:
@@ -114,9 +110,11 @@ class SectorObstacleAvoider:
     5. Rotate towards that direction, then move forward
     """
 
-    def __init__(self, linear_speed: float = 0.10, min_distance: float = 0.5,
+    def __init__(self, linear_speed: float = 0.06, min_distance: float = 0.5,
                  duration: float = 60.0):
-        self.linear_speed = min(linear_speed, 0.12)  # Cap max speed at 0.12 m/s
+        # Cap max speed at 0.08 m/s - rf2o odometry overestimates at higher speeds
+        # causing mismatch between RViz display and actual robot position
+        self.linear_speed = min(linear_speed, 0.08)
         self.min_distance = max(min_distance, 0.5)   # Min safe distance 0.5m
         self.duration = duration
         self.running = False
@@ -872,7 +870,7 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  ./auto_scan.py                      # Default: 60s at 0.10 m/s
+  ./auto_scan.py                      # Default: 60s at 0.06 m/s
   ./auto_scan.py --duration 120       # 2 minute scan
   ./auto_scan.py --duration 0         # Unlimited
   ./auto_scan.py --speed 0.08         # Slower scanning
@@ -884,8 +882,8 @@ Algorithm:
   Based on: github.com/Rad-hi/Obstacle-Avoidance-ROS
         """
     )
-    parser.add_argument('--speed', '-s', type=float, default=0.10,
-                        help='Linear speed m/s (default: 0.10, max: 0.12)')
+    parser.add_argument('--speed', '-s', type=float, default=0.06,
+                        help='Linear speed m/s (default: 0.06, max: 0.08)')
     parser.add_argument('--min-dist', '-m', type=float, default=0.5,
                         help='Min obstacle distance m (default: 0.5)')
     parser.add_argument('--duration', '-d', type=float, default=60,

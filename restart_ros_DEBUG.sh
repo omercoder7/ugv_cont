@@ -55,8 +55,9 @@ fi
 # Copy configs
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 docker cp "${SCRIPT_DIR}/slam_toolbox_optimized.yaml" ${CONTAINER_NAME}:/tmp/slam_toolbox_optimized.yaml 2>/dev/null
+docker cp "${SCRIPT_DIR}/ekf_lidar_imu.yaml" ${CONTAINER_NAME}:/tmp/ekf_lidar_imu.yaml 2>/dev/null
 
-# Start bringup
+# Start bringup (without TF publishing - EKF will handle it)
 echo ""
 echo "Starting robot bringup..."
 docker exec -d ${CONTAINER_NAME} /bin/bash -c "
@@ -64,9 +65,19 @@ source /opt/ros/humble/setup.bash && \
 source /root/ugv_ws/install/setup.bash && \
 export UGV_MODEL=ugv_beast && \
 export LDLIDAR_MODEL=ld19 && \
-ros2 launch ugv_bringup bringup_lidar.launch.py pub_odom_tf:=true 2>&1 | tee /tmp/bringup.log
+ros2 launch ugv_bringup bringup_lidar.launch.py pub_odom_tf:=false 2>&1 | tee /tmp/bringup.log
 "
 sleep 6
+
+# Start EKF for sensor fusion (fuses laser odometry + IMU)
+echo ""
+echo "Starting EKF sensor fusion..."
+docker exec -d ${CONTAINER_NAME} /bin/bash -c "
+source /opt/ros/humble/setup.bash && \
+source /root/ugv_ws/install/setup.bash && \
+ros2 run robot_localization ekf_node --ros-args --params-file /tmp/ekf_lidar_imu.yaml 2>&1 | tee /tmp/ekf.log
+"
+sleep 2
 
 # Check if bringup started
 echo ""

@@ -252,25 +252,35 @@ case "${MODE}" in
             # Re-copy configs after restart
             docker cp "${SCRIPT_DIR}/slam_toolbox_optimized.yaml" ${CONTAINER_NAME}:/tmp/slam_toolbox_optimized.yaml
             docker cp "${SCRIPT_DIR}/view_slam_2d.rviz" ${CONTAINER_NAME}:/tmp/view_slam_2d.rviz 2>/dev/null
+            docker cp "${SCRIPT_DIR}/ekf_lidar_imu.yaml" ${CONTAINER_NAME}:/tmp/ekf_lidar_imu.yaml 2>/dev/null
 
-            # Start fresh bringup
-            echo "Starting robot bringup with fresh odometry..."
+            # Start fresh bringup (EKF will publish TF)
+            echo "Starting robot bringup..."
             docker exec -d ${CONTAINER_NAME} /bin/bash -c "
             source /opt/ros/humble/setup.bash && \
             source /root/ugv_ws/install/setup.bash && \
             export UGV_MODEL=ugv_beast && \
             export LDLIDAR_MODEL=ld19 && \
-            ros2 launch ugv_bringup bringup_lidar.launch.py pub_odom_tf:=true 2>&1 | tee /tmp/bringup.log
+            ros2 launch ugv_bringup bringup_lidar.launch.py pub_odom_tf:=false 2>&1 | tee /tmp/bringup.log
             " 2>/dev/null
             sleep 6
 
+            # Start EKF for sensor fusion (fuses laser odometry + IMU for better accuracy)
+            echo "Starting EKF sensor fusion..."
+            docker exec -d ${CONTAINER_NAME} /bin/bash -c "
+            source /opt/ros/humble/setup.bash && \
+            source /root/ugv_ws/install/setup.bash && \
+            ros2 run robot_localization ekf_node --ros-args --params-file /tmp/ekf_lidar_imu.yaml 2>&1 | tee /tmp/ekf.log
+            " 2>/dev/null
+            sleep 2
+
             # Verify odometry is near zero
             echo "Checking odometry reset..."
-            ODOM_CHECK=$(docker exec ${CONTAINER_NAME} bash -c "source /opt/ros/humble/setup.bash && timeout 5 ros2 topic echo /odom --once 2>/dev/null | grep -A2 'position:' | grep 'x:' | awk '{print \$2}'" 2>/dev/null)
+            ODOM_CHECK=$(docker exec ${CONTAINER_NAME} bash -c "source /opt/ros/humble/setup.bash && timeout 5 ros2 topic echo /odometry/filtered --once 2>/dev/null | grep -A2 'position:' | grep 'x:' | awk '{print \$2}'" 2>/dev/null)
             if [ -n "${ODOM_CHECK}" ]; then
-                echo "  Odometry X: ${ODOM_CHECK}"
+                echo "  EKF Odometry X: ${ODOM_CHECK}"
             else
-                echo "  Odometry: waiting for topics..."
+                echo "  Odometry: waiting for EKF..."
             fi
 
             # Start fresh SLAM
@@ -304,11 +314,25 @@ case "${MODE}" in
                 source /root/ugv_ws/install/setup.bash && \
                 export UGV_MODEL=ugv_beast && \
                 export LDLIDAR_MODEL=ld19 && \
-                ros2 launch ugv_bringup bringup_lidar.launch.py pub_odom_tf:=true
+                ros2 launch ugv_bringup bringup_lidar.launch.py pub_odom_tf:=false
                 " 2>/dev/null
                 sleep 5
             else
                 echo "Bringup already running, skipping..."
+            fi
+
+            # Check if EKF is already running
+            if ! docker exec ${CONTAINER_NAME} pgrep -f "ekf_node" > /dev/null 2>&1; then
+                echo "Starting EKF sensor fusion..."
+                docker cp "${SCRIPT_DIR}/ekf_lidar_imu.yaml" ${CONTAINER_NAME}:/tmp/ekf_lidar_imu.yaml 2>/dev/null
+                docker exec -d ${CONTAINER_NAME} /bin/bash -c "
+                source /opt/ros/humble/setup.bash && \
+                source /root/ugv_ws/install/setup.bash && \
+                ros2 run robot_localization ekf_node --ros-args --params-file /tmp/ekf_lidar_imu.yaml
+                " 2>/dev/null
+                sleep 2
+            else
+                echo "EKF already running, skipping..."
             fi
 
             # Check if SLAM is already running

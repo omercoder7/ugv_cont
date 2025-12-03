@@ -1,14 +1,17 @@
 ### EKF config for LiDAR odometry + IMU fusion ###
+# Optimized for UGV Beast - trust IMU more for velocity to reduce drift
+# when robot is physically slower than laser odometry estimates
+
 ekf_filter_node:
     ros__parameters:
         use_sim_time: false
-        frequency: 30.0
-        sensor_timeout: 0.1
+        frequency: 50.0           # Higher frequency for smoother output
+        sensor_timeout: 0.2       # Increased timeout for sensor delays
         two_d_mode: true
         transform_time_offset: 0.0
         transform_timeout: 0.5
         print_diagnostics: false
-        publish_tf: true
+        publish_tf: true          # EKF publishes odom->base_footprint TF
         publish_acceleration: false
         reset_on_time_jump: true
 
@@ -16,43 +19,66 @@ ekf_filter_node:
         base_link_frame: base_footprint
         world_frame: odom
 
-        # Use laser odometry from rf2o
+        # Laser odometry from rf2o
+        # Trust position (x, y) and yaw, but with HIGH covariance
+        # because rf2o overestimates movement when robot is stuck
         odom0: /odom_rf2o
-        odom0_config: [true, true, false,
-                       false, false, true,
-                       true, false, false,
-                       false, false, true,
-                       false, false, false]
-        odom0_queue_size: 10
-        odom0_nodelay: false
-        odom0_differential: false
+        odom0_config: [true, true, false,    # x, y, z position
+                       false, false, true,    # roll, pitch, yaw orientation
+                       false, false, false,   # vx, vy, vz velocity (DON'T trust rf2o velocity)
+                       false, false, false,   # roll_rate, pitch_rate, yaw_rate
+                       false, false, false]   # ax, ay, az acceleration
+        odom0_queue_size: 5
+        odom0_nodelay: true
+        odom0_differential: true   # Use differential mode - less drift accumulation
         odom0_relative: false
 
-        # Use IMU for orientation
+        # IMU for orientation and angular velocity
+        # Trust IMU more for rotation detection - it measures actual movement
         imu0: /imu/data
-        imu0_config: [false, false, false,
-                      false, false, true,
-                      false, false, false,
-                      false, false, true,
-                      false, false, false]
-        imu0_nodelay: false
+        imu0_config: [false, false, false,   # x, y, z position (IMU doesn't provide)
+                      false, false, true,     # roll, pitch, yaw - trust IMU yaw
+                      false, false, false,    # vx, vy, vz velocity
+                      false, false, true,     # yaw_rate - trust IMU angular velocity
+                      true, true, false]      # ax, ay - use IMU acceleration
+        imu0_nodelay: true
         imu0_differential: false
-        imu0_relative: true
+        imu0_relative: false       # Use absolute orientation from IMU
         imu0_queue_size: 10
-        imu0_remove_gravitational_acceleration: false
+        imu0_remove_gravitational_acceleration: true
 
+        # Process noise covariance - how much the robot state changes between updates
+        # Lower = trust predictions more, Higher = trust measurements more
+        # 15x15 matrix: [x, y, z, roll, pitch, yaw, vx, vy, vz, roll_rate, pitch_rate, yaw_rate, ax, ay, az]
         process_noise_covariance: [0.05,   0.0,    0.0,    0.0,    0.0,    0.0,    0.0,     0.0,     0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,
                                    0.0,    0.05,   0.0,    0.0,    0.0,    0.0,    0.0,     0.0,     0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,
                                    0.0,    0.0,    0.06,   0.0,    0.0,    0.0,    0.0,     0.0,     0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,
                                    0.0,    0.0,    0.0,    0.03,   0.0,    0.0,    0.0,     0.0,     0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,
                                    0.0,    0.0,    0.0,    0.0,    0.03,   0.0,    0.0,     0.0,     0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,
-                                   0.0,    0.0,    0.0,    0.0,    0.0,    0.06,   0.0,     0.0,     0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,
-                                   0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.025,   0.0,     0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,
-                                   0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,     0.025,   0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,
+                                   0.0,    0.0,    0.0,    0.0,    0.0,    0.03,   0.0,     0.0,     0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,
+                                   0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.1,     0.0,     0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,
+                                   0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,     0.1,     0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,
                                    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,     0.0,     0.04,   0.0,    0.0,    0.0,    0.0,    0.0,    0.0,
                                    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,     0.0,     0.0,    0.01,   0.0,    0.0,    0.0,    0.0,    0.0,
                                    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,     0.0,     0.0,    0.0,    0.01,   0.0,    0.0,    0.0,    0.0,
-                                   0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,     0.0,     0.0,    0.0,    0.0,    0.02,   0.0,    0.0,    0.0,
+                                   0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,     0.0,     0.0,    0.0,    0.0,    0.01,   0.0,    0.0,    0.0,
                                    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,     0.0,     0.0,    0.0,    0.0,    0.0,    0.01,   0.0,    0.0,
                                    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,     0.0,     0.0,    0.0,    0.0,    0.0,    0.0,    0.01,   0.0,
                                    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,     0.0,     0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.015]
+
+        # Initial estimate covariance - how uncertain we are about initial state
+        initial_estimate_covariance: [1.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,     0.0,     0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,
+                                      0.0,    1.0,    0.0,    0.0,    0.0,    0.0,    0.0,     0.0,     0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,
+                                      0.0,    0.0,    1.0,    0.0,    0.0,    0.0,    0.0,     0.0,     0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,
+                                      0.0,    0.0,    0.0,    1.0,    0.0,    0.0,    0.0,     0.0,     0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,
+                                      0.0,    0.0,    0.0,    0.0,    1.0,    0.0,    0.0,     0.0,     0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,
+                                      0.0,    0.0,    0.0,    0.0,    0.0,    1.0,    0.0,     0.0,     0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,
+                                      0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    1.0,     0.0,     0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,
+                                      0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,     1.0,     0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,
+                                      0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,     0.0,     1.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,
+                                      0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,     0.0,     0.0,    1.0,    0.0,    0.0,    0.0,    0.0,    0.0,
+                                      0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,     0.0,     0.0,    0.0,    1.0,    0.0,    0.0,    0.0,    0.0,
+                                      0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,     0.0,     0.0,    0.0,    0.0,    1.0,    0.0,    0.0,    0.0,
+                                      0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,     0.0,     0.0,    0.0,    0.0,    0.0,    1.0,    0.0,    0.0,
+                                      0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,     0.0,     0.0,    0.0,    0.0,    0.0,    0.0,    1.0,    0.0,
+                                      0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,     0.0,     0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    1.0]
