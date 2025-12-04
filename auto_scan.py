@@ -136,13 +136,14 @@ class SectorObstacleAvoider:
         self.obstacles_avoided = 0
         self.total_rotations = 0
 
-        # Stuck detection
-        self.last_position = None  # (x, y) from odometry
+        # Stuck detection (LiDAR-based, NOT odometry-based)
+        self.last_position = None  # (x, y) from odometry (for virtual obstacle marking only)
         self.last_position_time = 0
         self.stuck_counter = 0
         self.blocked_sectors = set()  # Sectors that led to being stuck
         self.stuck_cooldown = 0  # Cooldown after recovering from stuck
         self.driving_into_obstacle_time = 0  # Time spent driving toward unchanging obstacle
+        self.scan_unchanged_time = 0  # Time LiDAR scan hasn't changed while driving
 
         # Smoothing parameters (based on DWA/VFH research)
         # Exponential Moving Average for velocity smoothing
@@ -368,14 +369,18 @@ rclpy.shutdown()
         Returns True if stuck is detected.
 
         Uses multiple detection methods:
-        1. Odometry-based: check if position changed
-        2. IMU-based: check if there's movement vibration
-        3. Time-based: if driving forward into obstacle for too long
+        1. LIDAR scan consistency: if scan doesn't change while driving, we're stuck
+        2. Front distance monitoring: if close to obstacle and distance constant
+        3. Time-based: if driving toward obstacle for too long
+
+        NOTE: We do NOT trust odometry for stuck detection because rf2o
+        reports false movement when robot is physically stuck.
         """
         if not is_driving:
             # Not trying to move, so can't be stuck
             self.stuck_counter = 0
             self.driving_into_obstacle_time = 0
+            self.scan_unchanged_time = 0
             return False
 
         # Decrease cooldown
@@ -385,7 +390,41 @@ rclpy.shutdown()
 
         current_time = time.time()
 
-        # Method 1: Check if front distance isn't changing while driving forward
+        # Method 1: Check if LiDAR scan is NOT changing while we're driving
+        # If we're moving, the scan MUST change. If scan is constant, we're stuck.
+        if hasattr(self, 'last_scan_signature') and hasattr(self, 'last_scan_check_time'):
+            time_since_check = current_time - self.last_scan_check_time
+
+            if time_since_check > 0.4:  # Check every 0.4s
+                # Create a signature from front sectors (where we should see change)
+                # Use sectors 10, 11, 0, 1, 2 (front arc)
+                front_sectors = [self.sector_distances[i] for i in [10, 11, 0, 1, 2]]
+                current_signature = sum(front_sectors)
+
+                signature_change = abs(current_signature - self.last_scan_signature)
+
+                # If scan barely changed (< 5cm total across front sectors), might be stuck
+                if signature_change < 0.05:
+                    self.scan_unchanged_time += time_since_check
+                    # If scan unchanged for 1.5 seconds while driving, we're stuck
+                    if self.scan_unchanged_time > 1.5:
+                        print(f"\n[STUCK] LiDAR scan not changing! (change={signature_change:.3f}m)")
+                        self.stuck_position = self.get_odometry()
+                        self.scan_unchanged_time = 0
+                        return True
+                else:
+                    # Scan is changing, we're moving
+                    self.scan_unchanged_time = 0
+
+                self.last_scan_signature = current_signature
+                self.last_scan_check_time = current_time
+        else:
+            front_sectors = [self.sector_distances[i] for i in [10, 11, 0, 1, 2]]
+            self.last_scan_signature = sum(front_sectors)
+            self.last_scan_check_time = current_time
+            self.scan_unchanged_time = 0
+
+        # Method 2: Check if front distance isn't changing while driving forward
         # If we're driving toward obstacle but distance doesn't decrease, we're stuck
         if hasattr(self, 'last_front_dist') and hasattr(self, 'last_front_check_time'):
             front_dist = self.sector_distances[0]
@@ -393,12 +432,12 @@ rclpy.shutdown()
 
             if time_since_check > 0.3:  # Check every 0.3s
                 # If front is close AND distance hasn't changed much, might be stuck
-                if front_dist < self.min_distance * 1.5:
+                if front_dist < self.min_distance * 1.2:  # Within 20% of min distance
                     dist_change = abs(front_dist - self.last_front_dist)
-                    if dist_change < 0.02:  # Less than 2cm change
+                    if dist_change < 0.015:  # Less than 1.5cm change (tighter threshold)
                         self.driving_into_obstacle_time += time_since_check
-                        if self.driving_into_obstacle_time > 1.5:  # 1.5 seconds stuck
-                            print(f"\n[STUCK] Front distance not changing ({front_dist:.2f}m)")
+                        if self.driving_into_obstacle_time > 1.0:  # 1 second stuck (faster)
+                            print(f"\n[STUCK] Front blocked at {front_dist:.2f}m (no change)")
                             self.stuck_position = self.get_odometry()
                             self.driving_into_obstacle_time = 0
                             return True
@@ -414,53 +453,19 @@ rclpy.shutdown()
             self.last_front_check_time = current_time
             self.driving_into_obstacle_time = 0
 
-        # Method 2: Odometry-based detection (backup method)
-        current_pos = self.get_odometry()
-
-        if current_pos is None:
-            return False
-
-        if self.last_position is None:
-            self.last_position = current_pos
-            self.last_position_time = current_time
-            return False
-
-        # Check movement over last 0.5 seconds
-        time_diff = current_time - self.last_position_time
-        if time_diff < 0.5:
-            return False
-
-        # Calculate distance moved
-        dx = current_pos[0] - self.last_position[0]
-        dy = current_pos[1] - self.last_position[1]
-        distance = math.sqrt(dx*dx + dy*dy)
-
-        # Expected distance at current speed
-        # Use 15% threshold (very sensitive) - if moving less than 15% expected, we're stuck
-        expected_distance = self.linear_speed * time_diff * 0.15
-
-        # Update position tracking
-        self.last_position = current_pos
-        self.last_position_time = current_time
-
-        if distance < expected_distance:
-            # Not moving as expected
-            self.stuck_counter += 1
-            # Trigger after 2 checks (~1 second)
-            if self.stuck_counter >= 2:
-                self.stuck_position = current_pos
+        # Method 3: Absolute proximity check - if too close to obstacle, stop immediately
+        front_dist = self.sector_distances[0]
+        if front_dist < 0.25 and front_dist > 0.01:  # Less than 25cm and not blind
+            # Very close! Check if we've been this close for a while
+            if not hasattr(self, 'too_close_start_time'):
+                self.too_close_start_time = current_time
+            elif current_time - self.too_close_start_time > 0.8:  # 0.8 seconds too close
+                print(f"\n[STUCK] Too close to obstacle ({front_dist:.2f}m) for too long!")
+                self.stuck_position = self.get_odometry()
+                self.too_close_start_time = None
                 return True
         else:
-            # Moving fine, reset counter
-            self.stuck_counter = 0
-            # Clear blocked sectors after 10 seconds of good movement
-            if self.blocked_sectors and hasattr(self, 'last_clear_time'):
-                if current_time - self.last_clear_time > 10.0:
-                    if self.blocked_sectors:
-                        self.blocked_sectors.pop()
-                    self.last_clear_time = current_time
-            else:
-                self.last_clear_time = current_time
+            self.too_close_start_time = None
 
         return False
 
