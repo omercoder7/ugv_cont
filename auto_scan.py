@@ -140,10 +140,12 @@ class SectorObstacleAvoider:
         self.last_position = None  # (x, y) from odometry (for virtual obstacle marking only)
         self.last_position_time = 0
         self.stuck_counter = 0
+        self.stuck_time_counter = 0  # Counter for stuck detection
         self.blocked_sectors = set()  # Sectors that led to being stuck
         self.stuck_cooldown = 0  # Cooldown after recovering from stuck
         self.driving_into_obstacle_time = 0  # Time spent driving toward unchanging obstacle
         self.scan_unchanged_time = 0  # Time LiDAR scan hasn't changed while driving
+        self.emergency_maneuver = False  # True when in danger/backing up mode
 
         # Smoothing parameters (based on DWA/VFH research)
         # Exponential Moving Average for velocity smoothing
@@ -365,115 +367,54 @@ rclpy.shutdown()
 
     def check_if_stuck(self, is_driving: bool, commanded_linear: float = 0.0) -> bool:
         """
-        Check if robot is stuck (driving but not moving).
+        Check if robot is stuck by detecting unchanging LiDAR distance.
         Returns True if stuck is detected.
 
-        KEY INSIGHT: If we command FORWARD motion, the front distance MUST DECREASE.
-        If we command BACKWARD motion, the front distance MUST INCREASE.
-        If distance doesn't change as expected, we're stuck.
-
-        NOTE: We do NOT trust odometry (rf2o reports phantom movement when stuck).
+        Simple approach: If we're driving forward but front distance isn't
+        decreasing, we're stuck. LiDAR directly measures obstacle distance -
+        trust it over odometry!
         """
-        if not is_driving:
-            # Not trying to move, so can't be stuck
-            self.driving_into_obstacle_time = 0
-            self.distance_not_changing_time = 0
+        if not is_driving or commanded_linear <= 0.01:
+            # Not driving forward, reset
+            self.stuck_time_counter = 0
             return False
 
-        # Decrease cooldown
         if self.stuck_cooldown > 0:
             self.stuck_cooldown -= 1
             return False
 
-        current_time = time.time()
-        front_dist = self.sector_distances[0]
+        # Get minimum distance in EXTENDED front arc (±60°)
+        # LiDAR has blind spot in sectors 0 and 11, so we need wider arc!
+        # Sectors: 9 (R-F), 10 (F-R), 11 (FRONT-R), 0 (FRONT), 1 (F-L), 2 (LEFT)
+        extended_front = [
+            self.sector_distances[9],
+            self.sector_distances[10],
+            self.sector_distances[11],
+            self.sector_distances[0],
+            self.sector_distances[1],
+            self.sector_distances[2],
+        ]
 
-        # Initialize tracking
-        if not hasattr(self, 'front_dist_history'):
-            self.front_dist_history = []
-            self.front_dist_history_time = current_time
-            self.distance_not_changing_time = 0
+        # Use minimum non-blind distance
+        front_min = 999
+        for d in extended_front:
+            if d > 0.01:  # Valid reading (not blind)
+                front_min = min(front_min, d)
 
-        # CRITICAL METHOD: Physics-based stuck detection
-        # If commanding forward (linear > 0) toward an obstacle, distance MUST decrease
-        # If commanding backward (linear < 0), distance MUST increase
-        # If distance doesn't change appropriately, we're STUCK
+        # If there's a very close obstacle we're driving into, that's stuck
+        # Note: front_min could be very small (< 0.18m) for objects touching robot
+        if front_min < 0.40:  # No lower bound - even 0.05m is a real obstacle!
+            self.stuck_time_counter += 1
 
-        time_since_history_start = current_time - self.front_dist_history_time
-
-        # Add current reading to history
-        if front_dist > 0.01:  # Valid reading (not blind spot)
-            self.front_dist_history.append((current_time, front_dist, commanded_linear))
-
-        # Keep only last 2 seconds of history
-        cutoff = current_time - 2.0
-        self.front_dist_history = [(t, d, l) for t, d, l in self.front_dist_history if t > cutoff]
-
-        # Need at least 1 second of data
-        if len(self.front_dist_history) >= 3 and time_since_history_start > 1.0:
-            oldest_time, oldest_dist, _ = self.front_dist_history[0]
-            newest_time, newest_dist, _ = self.front_dist_history[-1]
-            time_span = newest_time - oldest_time
-
-            if time_span > 0.8:  # At least 0.8 seconds of data
-                distance_change = newest_dist - oldest_dist  # Positive = increased, Negative = decreased
-
-                # Calculate average commanded velocity over this period
-                avg_linear = sum(l for _, _, l in self.front_dist_history) / len(self.front_dist_history)
-
-                # Expected distance change based on velocity
-                # If moving forward at 0.06 m/s for 1s, expect ~6cm decrease in front distance
-                expected_change = -avg_linear * time_span  # Negative because forward = distance decrease
-
-                # If front is within range where we'd expect to see change
-                if front_dist < 2.0:  # Only check when obstacle is visible
-                    # Check if distance changed in the WRONG direction or not at all
-                    if avg_linear > 0.02:  # Commanding forward
-                        # Expect distance to DECREASE (negative change)
-                        # If distance stayed same or increased, we're stuck
-                        if distance_change > -0.02:  # Didn't decrease by at least 2cm
-                            self.distance_not_changing_time += 0.2  # Increment by loop period
-                            if self.distance_not_changing_time > 1.0:
-                                print(f"\n[STUCK-PHYSICS] Commanding forward but distance not decreasing!")
-                                print(f"  Front: {oldest_dist:.2f}m -> {newest_dist:.2f}m (Δ={distance_change:+.3f}m)")
-                                print(f"  Expected Δ ≈ {expected_change:.3f}m over {time_span:.1f}s")
-                                self.stuck_position = self.get_odometry()
-                                self.front_dist_history = []
-                                self.front_dist_history_time = current_time
-                                self.distance_not_changing_time = 0
-                                return True
-                        else:
-                            self.distance_not_changing_time = 0
-
-                    elif avg_linear < -0.02:  # Commanding backward
-                        # Expect distance to INCREASE (positive change)
-                        if distance_change < 0.02:  # Didn't increase by at least 2cm
-                            self.distance_not_changing_time += 0.2
-                            if self.distance_not_changing_time > 1.0:
-                                print(f"\n[STUCK-PHYSICS] Commanding backward but distance not increasing!")
-                                print(f"  Front: {oldest_dist:.2f}m -> {newest_dist:.2f}m (Δ={distance_change:+.3f}m)")
-                                self.stuck_position = self.get_odometry()
-                                self.front_dist_history = []
-                                self.front_dist_history_time = current_time
-                                self.distance_not_changing_time = 0
-                                return True
-                        else:
-                            self.distance_not_changing_time = 0
-                    else:
-                        self.distance_not_changing_time = 0
-
-        # BACKUP METHOD: Absolute proximity timeout
-        # If very close to obstacle for too long while driving, we're stuck
-        if front_dist < 0.35 and front_dist > 0.01 and commanded_linear > 0.01:
-            if not hasattr(self, 'too_close_start_time') or self.too_close_start_time is None:
-                self.too_close_start_time = current_time
-            elif current_time - self.too_close_start_time > 1.5:
-                print(f"\n[STUCK-PROXIMITY] Close to obstacle ({front_dist:.2f}m) for {current_time - self.too_close_start_time:.1f}s while driving forward!")
+            # 3 iterations = ~0.6s of driving into close obstacle = stuck
+            if self.stuck_time_counter >= 3:
+                print(f"\n[STUCK] Driving into obstacle at {front_min:.2f}m!")
+                print(f"  Extended front arc: s9={extended_front[0]:.2f} s10={extended_front[1]:.2f} s11={extended_front[2]:.2f} s0={extended_front[3]:.2f} s1={extended_front[4]:.2f} s2={extended_front[5]:.2f}")
                 self.stuck_position = self.get_odometry()
-                self.too_close_start_time = None
+                self.stuck_time_counter = 0
                 return True
         else:
-            self.too_close_start_time = None
+            self.stuck_time_counter = 0
 
         return False
 
@@ -549,13 +490,19 @@ rclpy.shutdown()
             if valid:
                 lidar_distances[lidar_sector] = min(valid)
             else:
+                # Check for very close obstacles (closer than robot radius)
                 any_reading = [r for r in sector_ranges if 0.02 < r < 10.0]
-                if any_reading and min(any_reading) < ROBOT_RADIUS:
-                    # Only robot body detected - mark as blocked (can't drive through body)
-                    lidar_distances[lidar_sector] = 0.0
+                if any_reading:
+                    min_reading = min(any_reading)
+                    if min_reading < ROBOT_RADIUS:
+                        # Very close obstacle! Use actual distance, not 0
+                        # This is critical for stuck detection
+                        lidar_distances[lidar_sector] = min_reading
+                    else:
+                        # Readings exist but filtered - shouldn't happen
+                        lidar_distances[lidar_sector] = 0.0
                 else:
-                    # No readings (nan/cropped) - BLIND SPOT - mark as BLOCKED!
-                    # Don't drive into areas we can't see!
+                    # No readings (nan/cropped) - BLIND SPOT
                     lidar_distances[lidar_sector] = 0.0
 
         # Convert to robot frame (rotate by 90°)
@@ -655,39 +602,57 @@ rclpy.shutdown()
         # Sector 0 = 0°, Sector 1 = +30°, Sector 11 = -30°
         steer_angle = self.sector_to_angle(best_sector)
 
+        # IMPORTANT: LiDAR has blind spot in sectors 0 and 11 (robot front)!
+        # We need to use a WIDER arc that includes sectors with valid data
+        # Extended front arc: sectors 9, 10, 11, 0, 1, 2 (±60° from front)
+        extended_front = [
+            self.sector_distances[9],   # R-F (60° right)
+            self.sector_distances[10],  # F-R (30° right)
+            self.sector_distances[11],  # FRONT-R (blind usually)
+            self.sector_distances[0],   # FRONT (blind usually)
+            self.sector_distances[1],   # F-L (30° left)
+            self.sector_distances[2],   # LEFT (60° left)
+        ]
+
         # Check if front arc (sectors 11, 0, 1) is reasonably clear
         front_arc_clear = (front_dist >= self.min_distance or
                           front_left >= self.min_distance or
                           front_right >= self.min_distance)
 
         # Danger zone threshold - back up if anything is closer than this
-        DANGER_DISTANCE = 0.3  # 30cm - too close!
+        # Set to 90% of min_distance so we react BEFORE hitting threshold
+        DANGER_DISTANCE = self.min_distance * 0.9  # ~0.45m for default 0.5m
 
-        # Check minimum distance in front arc
-        front_arc_min = min(
-            front_dist if front_dist > 0.01 else 10.0,
-            front_left if front_left > 0.01 else 10.0,
-            front_right if front_right > 0.01 else 10.0
-        )
+        # Check minimum distance in EXTENDED front arc (±60°)
+        # Any positive distance is real - even 0.05m means obstacle!
+        # Only 0.0 means blind spot (no LiDAR data)
+        front_arc_min = 10.0
+        for d in extended_front:
+            if d > 0.001:  # Valid reading (not blind)
+                front_arc_min = min(front_arc_min, d)
 
         if front_arc_min < DANGER_DISTANCE:
             # TOO CLOSE! Back up while turning towards best clear direction
             # Use proportional backup speed based on how close obstacle is
             backup_urgency = 1.0 - (front_arc_min / DANGER_DISTANCE)  # 0-1, higher = closer
-            linear = -self.linear_speed * (0.4 + 0.3 * backup_urgency)  # 0.4-0.7x speed
+            linear = -self.linear_speed * (0.5 + 0.4 * backup_urgency)  # 0.5-0.9x speed backward
 
             # Turn towards the best clear direction (using VFH cost function)
             # This ensures we back up AND orient towards where we want to go
             if best_sector <= 5:
-                angular = self.turn_speed * 0.7  # Best is on left side, turn left
+                angular = self.turn_speed * 0.8  # Best is on left side, turn left
             else:
-                angular = -self.turn_speed * 0.7  # Best is on right side, turn right
+                angular = -self.turn_speed * 0.8  # Best is on right side, turn right
             self.obstacles_avoided += 1
+
+            # Mark as emergency - main loop will bypass smoothing
+            self.emergency_maneuver = True
             status = f"[DANGER] {front_arc_min:.2f}m! backing -> s{best_sector}"
 
         elif front_dist >= self.min_distance:
             # Front is clear - drive forward with slight steering adjustment
             linear = self.linear_speed
+            self.emergency_maneuver = False
 
             # Apply gentle steering towards best direction if it's not straight ahead
             if best_sector == 0:
@@ -707,6 +672,7 @@ rclpy.shutdown()
             turn_factor = abs(steer_angle) / math.pi  # 0 to 1
             linear = self.linear_speed * (1.0 - turn_factor * 0.5)  # Slow down when turning
             angular = steer_angle * 0.5  # Proportional steering
+            self.emergency_maneuver = False
 
             status = f"[STEER] f={front_dist:.1f}m -> s{best_sector} ang={math.degrees(angular):.0f}°"
 
@@ -722,15 +688,17 @@ rclpy.shutdown()
                 angular = self.turn_speed  # Turn left
             else:
                 angular = -self.turn_speed  # Turn right
+            self.emergency_maneuver = False
 
             self.total_rotations += 1
             status = f"[TURN] f={front_dist:.1f}m -> s{best_sector}({best_dist:.1f}m)"
 
         else:
-            # Everything blocked - back up while turning
-            linear = -self.linear_speed * 0.5
+            # Everything blocked - back up while turning (emergency!)
+            linear = -self.linear_speed * 0.6
             angular = self.turn_speed
             self.obstacles_avoided += 1
+            self.emergency_maneuver = True  # Bypass smoothing for blocked
             status = f"[BACK] blocked, best=s{best_sector}({best_dist:.1f}m)"
 
         # Remember this direction for next iteration (smooth trajectory)
@@ -813,15 +781,7 @@ rclpy.shutdown()
                 linear, angular = self.compute_velocity()
 
                 # Check if stuck (driving but not moving)
-                is_driving = abs(linear) > 0.01
-                # Debug: show stuck detection status every few seconds
-                if hasattr(self, '_last_stuck_debug') and time.time() - self._last_stuck_debug > 3:
-                    front = self.sector_distances[0]
-                    dist_not_chg = getattr(self, 'distance_not_changing_time', 0)
-                    print(f"\n[DEBUG] linear={linear:.2f} front={front:.2f}m dist_stuck_time={dist_not_chg:.1f}s")
-                    self._last_stuck_debug = time.time()
-                elif not hasattr(self, '_last_stuck_debug'):
-                    self._last_stuck_debug = time.time()
+                is_driving = linear > 0.01  # Only forward motion can be "stuck"
 
                 if self.check_if_stuck(is_driving, linear):
                     # Robot is stuck on invisible obstacle!
@@ -862,8 +822,15 @@ rclpy.shutdown()
                     self.last_position = None
                     continue
 
-                # Send smoothed velocity command
-                self.send_smoothed_cmd(linear, angular)
+                # Send velocity command
+                # During emergency maneuvers, bypass smoothing for faster response
+                if self.emergency_maneuver:
+                    # Reset smoothing state and send direct command
+                    self.last_linear = linear
+                    self.last_angular = angular
+                    self.send_cmd(linear, angular)
+                else:
+                    self.send_smoothed_cmd(linear, angular)
 
                 # Print detailed status periodically
                 if time.time() - last_status_time > 10:
