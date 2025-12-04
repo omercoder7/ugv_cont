@@ -363,24 +363,21 @@ rclpy.shutdown()
         except:
             return None
 
-    def check_if_stuck(self, is_driving: bool) -> bool:
+    def check_if_stuck(self, is_driving: bool, commanded_linear: float = 0.0) -> bool:
         """
         Check if robot is stuck (driving but not moving).
         Returns True if stuck is detected.
 
-        Uses multiple detection methods:
-        1. LIDAR scan consistency: if scan doesn't change while driving, we're stuck
-        2. Front distance monitoring: if close to obstacle and distance constant
-        3. Time-based: if driving toward obstacle for too long
+        KEY INSIGHT: If we command FORWARD motion, the front distance MUST DECREASE.
+        If we command BACKWARD motion, the front distance MUST INCREASE.
+        If distance doesn't change as expected, we're stuck.
 
-        NOTE: We do NOT trust odometry for stuck detection because rf2o
-        reports false movement when robot is physically stuck.
+        NOTE: We do NOT trust odometry (rf2o reports phantom movement when stuck).
         """
         if not is_driving:
             # Not trying to move, so can't be stuck
-            self.stuck_counter = 0
             self.driving_into_obstacle_time = 0
-            self.scan_unchanged_time = 0
+            self.distance_not_changing_time = 0
             return False
 
         # Decrease cooldown
@@ -389,80 +386,89 @@ rclpy.shutdown()
             return False
 
         current_time = time.time()
-
-        # Method 1: Check if LiDAR scan is NOT changing while we're driving
-        # If we're moving, the scan MUST change. If scan is constant, we're stuck.
-        # Only use sectors that have actual readings (> 0.1m), ignore blind spots
-        if hasattr(self, 'last_scan_signature') and hasattr(self, 'last_scan_check_time'):
-            time_since_check = current_time - self.last_scan_check_time
-
-            if time_since_check > 0.4:  # Check every 0.4s
-                # Create a signature from ALL sectors that have readings
-                # Filter out blind spots (value < 0.1m)
-                valid_sectors = [d for d in self.sector_distances if d > 0.1]
-                if len(valid_sectors) >= 3:  # Need at least 3 valid sectors
-                    current_signature = sum(valid_sectors)
-                    signature_change = abs(current_signature - self.last_scan_signature)
-
-                    # If scan barely changed (< 3cm per valid sector), might be stuck
-                    threshold = 0.03 * len(valid_sectors)
-                    if signature_change < threshold:
-                        self.scan_unchanged_time += time_since_check
-                        # If scan unchanged for 1.2 seconds while driving, we're stuck
-                        if self.scan_unchanged_time > 1.2:
-                            print(f"\n[STUCK] LiDAR scan not changing! (change={signature_change:.3f}m, {len(valid_sectors)} sectors)")
-                            self.stuck_position = self.get_odometry()
-                            self.scan_unchanged_time = 0
-                            return True
-                    else:
-                        # Scan is changing, we're moving
-                        self.scan_unchanged_time = 0
-
-                    self.last_scan_signature = current_signature
-                self.last_scan_check_time = current_time
-        else:
-            valid_sectors = [d for d in self.sector_distances if d > 0.1]
-            self.last_scan_signature = sum(valid_sectors) if valid_sectors else 0
-            self.last_scan_check_time = current_time
-            self.scan_unchanged_time = 0
-
-        # Method 2: Check if front distance isn't changing while driving forward
-        # If we're driving toward obstacle but distance doesn't decrease, we're stuck
-        if hasattr(self, 'last_front_dist') and hasattr(self, 'last_front_check_time'):
-            front_dist = self.sector_distances[0]
-            time_since_check = current_time - self.last_front_check_time
-
-            if time_since_check > 0.3:  # Check every 0.3s
-                # If front is close AND distance hasn't changed much, might be stuck
-                if front_dist < self.min_distance * 1.2:  # Within 20% of min distance
-                    dist_change = abs(front_dist - self.last_front_dist)
-                    if dist_change < 0.015:  # Less than 1.5cm change (tighter threshold)
-                        self.driving_into_obstacle_time += time_since_check
-                        if self.driving_into_obstacle_time > 1.0:  # 1 second stuck (faster)
-                            print(f"\n[STUCK] Front blocked at {front_dist:.2f}m (no change)")
-                            self.stuck_position = self.get_odometry()
-                            self.driving_into_obstacle_time = 0
-                            return True
-                    else:
-                        self.driving_into_obstacle_time = 0
-                else:
-                    self.driving_into_obstacle_time = 0
-
-                self.last_front_dist = front_dist
-                self.last_front_check_time = current_time
-        else:
-            self.last_front_dist = self.sector_distances[0]
-            self.last_front_check_time = current_time
-            self.driving_into_obstacle_time = 0
-
-        # Method 3: Absolute proximity check - if too close to obstacle, stop immediately
         front_dist = self.sector_distances[0]
-        if front_dist < 0.25 and front_dist > 0.01:  # Less than 25cm and not blind
-            # Very close! Check if we've been this close for a while
-            if not hasattr(self, 'too_close_start_time'):
+
+        # Initialize tracking
+        if not hasattr(self, 'front_dist_history'):
+            self.front_dist_history = []
+            self.front_dist_history_time = current_time
+            self.distance_not_changing_time = 0
+
+        # CRITICAL METHOD: Physics-based stuck detection
+        # If commanding forward (linear > 0) toward an obstacle, distance MUST decrease
+        # If commanding backward (linear < 0), distance MUST increase
+        # If distance doesn't change appropriately, we're STUCK
+
+        time_since_history_start = current_time - self.front_dist_history_time
+
+        # Add current reading to history
+        if front_dist > 0.01:  # Valid reading (not blind spot)
+            self.front_dist_history.append((current_time, front_dist, commanded_linear))
+
+        # Keep only last 2 seconds of history
+        cutoff = current_time - 2.0
+        self.front_dist_history = [(t, d, l) for t, d, l in self.front_dist_history if t > cutoff]
+
+        # Need at least 1 second of data
+        if len(self.front_dist_history) >= 3 and time_since_history_start > 1.0:
+            oldest_time, oldest_dist, _ = self.front_dist_history[0]
+            newest_time, newest_dist, _ = self.front_dist_history[-1]
+            time_span = newest_time - oldest_time
+
+            if time_span > 0.8:  # At least 0.8 seconds of data
+                distance_change = newest_dist - oldest_dist  # Positive = increased, Negative = decreased
+
+                # Calculate average commanded velocity over this period
+                avg_linear = sum(l for _, _, l in self.front_dist_history) / len(self.front_dist_history)
+
+                # Expected distance change based on velocity
+                # If moving forward at 0.06 m/s for 1s, expect ~6cm decrease in front distance
+                expected_change = -avg_linear * time_span  # Negative because forward = distance decrease
+
+                # If front is within range where we'd expect to see change
+                if front_dist < 2.0:  # Only check when obstacle is visible
+                    # Check if distance changed in the WRONG direction or not at all
+                    if avg_linear > 0.02:  # Commanding forward
+                        # Expect distance to DECREASE (negative change)
+                        # If distance stayed same or increased, we're stuck
+                        if distance_change > -0.02:  # Didn't decrease by at least 2cm
+                            self.distance_not_changing_time += 0.2  # Increment by loop period
+                            if self.distance_not_changing_time > 1.0:
+                                print(f"\n[STUCK-PHYSICS] Commanding forward but distance not decreasing!")
+                                print(f"  Front: {oldest_dist:.2f}m -> {newest_dist:.2f}m (Δ={distance_change:+.3f}m)")
+                                print(f"  Expected Δ ≈ {expected_change:.3f}m over {time_span:.1f}s")
+                                self.stuck_position = self.get_odometry()
+                                self.front_dist_history = []
+                                self.front_dist_history_time = current_time
+                                self.distance_not_changing_time = 0
+                                return True
+                        else:
+                            self.distance_not_changing_time = 0
+
+                    elif avg_linear < -0.02:  # Commanding backward
+                        # Expect distance to INCREASE (positive change)
+                        if distance_change < 0.02:  # Didn't increase by at least 2cm
+                            self.distance_not_changing_time += 0.2
+                            if self.distance_not_changing_time > 1.0:
+                                print(f"\n[STUCK-PHYSICS] Commanding backward but distance not increasing!")
+                                print(f"  Front: {oldest_dist:.2f}m -> {newest_dist:.2f}m (Δ={distance_change:+.3f}m)")
+                                self.stuck_position = self.get_odometry()
+                                self.front_dist_history = []
+                                self.front_dist_history_time = current_time
+                                self.distance_not_changing_time = 0
+                                return True
+                        else:
+                            self.distance_not_changing_time = 0
+                    else:
+                        self.distance_not_changing_time = 0
+
+        # BACKUP METHOD: Absolute proximity timeout
+        # If very close to obstacle for too long while driving, we're stuck
+        if front_dist < 0.35 and front_dist > 0.01 and commanded_linear > 0.01:
+            if not hasattr(self, 'too_close_start_time') or self.too_close_start_time is None:
                 self.too_close_start_time = current_time
-            elif current_time - self.too_close_start_time > 0.8:  # 0.8 seconds too close
-                print(f"\n[STUCK] Too close to obstacle ({front_dist:.2f}m) for too long!")
+            elif current_time - self.too_close_start_time > 1.5:
+                print(f"\n[STUCK-PROXIMITY] Close to obstacle ({front_dist:.2f}m) for {current_time - self.too_close_start_time:.1f}s while driving forward!")
                 self.stuck_position = self.get_odometry()
                 self.too_close_start_time = None
                 return True
@@ -811,12 +817,13 @@ rclpy.shutdown()
                 # Debug: show stuck detection status every few seconds
                 if hasattr(self, '_last_stuck_debug') and time.time() - self._last_stuck_debug > 3:
                     front = self.sector_distances[0]
-                    print(f"\n[DEBUG] is_driving={is_driving} linear={linear:.2f} front={front:.2f}m scan_unchanged={getattr(self, 'scan_unchanged_time', 0):.1f}s driving_into={getattr(self, 'driving_into_obstacle_time', 0):.1f}s")
+                    dist_not_chg = getattr(self, 'distance_not_changing_time', 0)
+                    print(f"\n[DEBUG] linear={linear:.2f} front={front:.2f}m dist_stuck_time={dist_not_chg:.1f}s")
                     self._last_stuck_debug = time.time()
                 elif not hasattr(self, '_last_stuck_debug'):
                     self._last_stuck_debug = time.time()
 
-                if self.check_if_stuck(is_driving):
+                if self.check_if_stuck(is_driving, linear):
                     # Robot is stuck on invisible obstacle!
                     # Mark current direction as blocked and back up
                     if hasattr(self, 'previous_sector'):
