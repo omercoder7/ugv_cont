@@ -142,6 +142,7 @@ class SectorObstacleAvoider:
         self.stuck_counter = 0
         self.blocked_sectors = set()  # Sectors that led to being stuck
         self.stuck_cooldown = 0  # Cooldown after recovering from stuck
+        self.driving_into_obstacle_time = 0  # Time spent driving toward unchanging obstacle
 
         # Smoothing parameters (based on DWA/VFH research)
         # Exponential Moving Average for velocity smoothing
@@ -329,16 +330,52 @@ print('Published virtual obstacle at {x:.2f}, {y:.2f}')
         except Exception as e:
             print(f"\nFailed to publish virtual obstacle: {e}")
 
+    def get_imu_acceleration(self) -> Optional[float]:
+        """Get current linear acceleration magnitude from IMU"""
+        try:
+            result = subprocess.run(
+                ['docker', 'exec', CONTAINER_NAME, 'bash', '-c',
+                 '''source /opt/ros/humble/setup.bash && python3 -c "
+import rclpy
+from sensor_msgs.msg import Imu
+rclpy.init()
+node = rclpy.create_node('imu_reader')
+msg = None
+def cb(m): global msg; msg = m
+sub = node.create_subscription(Imu, '/imu/data', cb, 1)
+for _ in range(10):
+    rclpy.spin_once(node, timeout_sec=0.05)
+    if msg: break
+if msg:
+    # Linear acceleration magnitude (excluding gravity on z)
+    ax, ay = msg.linear_acceleration.x, msg.linear_acceleration.y
+    import math
+    print(f'{math.sqrt(ax*ax + ay*ay):.4f}')
+node.destroy_node()
+rclpy.shutdown()
+"'''],
+                capture_output=True, text=True, timeout=2
+            )
+            if result.stdout.strip():
+                return float(result.stdout.strip())
+            return None
+        except:
+            return None
+
     def check_if_stuck(self, is_driving: bool) -> bool:
         """
         Check if robot is stuck (driving but not moving).
         Returns True if stuck is detected.
 
-        Uses faster detection (0.5s window) and more sensitive thresholds.
+        Uses multiple detection methods:
+        1. Odometry-based: check if position changed
+        2. IMU-based: check if there's movement vibration
+        3. Time-based: if driving forward into obstacle for too long
         """
         if not is_driving:
             # Not trying to move, so can't be stuck
             self.stuck_counter = 0
+            self.driving_into_obstacle_time = 0
             return False
 
         # Decrease cooldown
@@ -346,8 +383,39 @@ print('Published virtual obstacle at {x:.2f}, {y:.2f}')
             self.stuck_cooldown -= 1
             return False
 
-        current_pos = self.get_odometry()
         current_time = time.time()
+
+        # Method 1: Check if front distance isn't changing while driving forward
+        # If we're driving toward obstacle but distance doesn't decrease, we're stuck
+        if hasattr(self, 'last_front_dist') and hasattr(self, 'last_front_check_time'):
+            front_dist = self.sector_distances[0]
+            time_since_check = current_time - self.last_front_check_time
+
+            if time_since_check > 0.3:  # Check every 0.3s
+                # If front is close AND distance hasn't changed much, might be stuck
+                if front_dist < self.min_distance * 1.5:
+                    dist_change = abs(front_dist - self.last_front_dist)
+                    if dist_change < 0.02:  # Less than 2cm change
+                        self.driving_into_obstacle_time += time_since_check
+                        if self.driving_into_obstacle_time > 1.5:  # 1.5 seconds stuck
+                            print(f"\n[STUCK] Front distance not changing ({front_dist:.2f}m)")
+                            self.stuck_position = self.get_odometry()
+                            self.driving_into_obstacle_time = 0
+                            return True
+                    else:
+                        self.driving_into_obstacle_time = 0
+                else:
+                    self.driving_into_obstacle_time = 0
+
+                self.last_front_dist = front_dist
+                self.last_front_check_time = current_time
+        else:
+            self.last_front_dist = self.sector_distances[0]
+            self.last_front_check_time = current_time
+            self.driving_into_obstacle_time = 0
+
+        # Method 2: Odometry-based detection (backup method)
+        current_pos = self.get_odometry()
 
         if current_pos is None:
             return False
@@ -357,7 +425,7 @@ print('Published virtual obstacle at {x:.2f}, {y:.2f}')
             self.last_position_time = current_time
             return False
 
-        # Check movement over last 0.5 seconds (faster detection)
+        # Check movement over last 0.5 seconds
         time_diff = current_time - self.last_position_time
         if time_diff < 0.5:
             return False
@@ -368,9 +436,8 @@ print('Published virtual obstacle at {x:.2f}, {y:.2f}')
         distance = math.sqrt(dx*dx + dy*dy)
 
         # Expected distance at current speed
-        # If moving at 0.10 m/s for 0.5s, expect ~0.05m movement
-        # Use 20% threshold (very sensitive) - if moving less than 20% expected, we're stuck
-        expected_distance = self.linear_speed * time_diff * 0.20
+        # Use 15% threshold (very sensitive) - if moving less than 15% expected, we're stuck
+        expected_distance = self.linear_speed * time_diff * 0.15
 
         # Update position tracking
         self.last_position = current_pos
@@ -379,13 +446,12 @@ print('Published virtual obstacle at {x:.2f}, {y:.2f}')
         if distance < expected_distance:
             # Not moving as expected
             self.stuck_counter += 1
-            # Faster trigger: stuck after just 2 checks (~1 second total)
+            # Trigger after 2 checks (~1 second)
             if self.stuck_counter >= 2:
-                # Store the stuck position for obstacle marking
                 self.stuck_position = current_pos
                 return True
         else:
-            # Moving fine, reset counter and clear blocked sectors gradually
+            # Moving fine, reset counter
             self.stuck_counter = 0
             # Clear blocked sectors after 10 seconds of good movement
             if self.blocked_sectors and hasattr(self, 'last_clear_time'):
