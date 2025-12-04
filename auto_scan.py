@@ -392,35 +392,37 @@ rclpy.shutdown()
 
         # Method 1: Check if LiDAR scan is NOT changing while we're driving
         # If we're moving, the scan MUST change. If scan is constant, we're stuck.
+        # Only use sectors that have actual readings (> 0.1m), ignore blind spots
         if hasattr(self, 'last_scan_signature') and hasattr(self, 'last_scan_check_time'):
             time_since_check = current_time - self.last_scan_check_time
 
             if time_since_check > 0.4:  # Check every 0.4s
-                # Create a signature from front sectors (where we should see change)
-                # Use sectors 10, 11, 0, 1, 2 (front arc)
-                front_sectors = [self.sector_distances[i] for i in [10, 11, 0, 1, 2]]
-                current_signature = sum(front_sectors)
+                # Create a signature from ALL sectors that have readings
+                # Filter out blind spots (value < 0.1m)
+                valid_sectors = [d for d in self.sector_distances if d > 0.1]
+                if len(valid_sectors) >= 3:  # Need at least 3 valid sectors
+                    current_signature = sum(valid_sectors)
+                    signature_change = abs(current_signature - self.last_scan_signature)
 
-                signature_change = abs(current_signature - self.last_scan_signature)
-
-                # If scan barely changed (< 5cm total across front sectors), might be stuck
-                if signature_change < 0.05:
-                    self.scan_unchanged_time += time_since_check
-                    # If scan unchanged for 1.5 seconds while driving, we're stuck
-                    if self.scan_unchanged_time > 1.5:
-                        print(f"\n[STUCK] LiDAR scan not changing! (change={signature_change:.3f}m)")
-                        self.stuck_position = self.get_odometry()
+                    # If scan barely changed (< 3cm per valid sector), might be stuck
+                    threshold = 0.03 * len(valid_sectors)
+                    if signature_change < threshold:
+                        self.scan_unchanged_time += time_since_check
+                        # If scan unchanged for 1.2 seconds while driving, we're stuck
+                        if self.scan_unchanged_time > 1.2:
+                            print(f"\n[STUCK] LiDAR scan not changing! (change={signature_change:.3f}m, {len(valid_sectors)} sectors)")
+                            self.stuck_position = self.get_odometry()
+                            self.scan_unchanged_time = 0
+                            return True
+                    else:
+                        # Scan is changing, we're moving
                         self.scan_unchanged_time = 0
-                        return True
-                else:
-                    # Scan is changing, we're moving
-                    self.scan_unchanged_time = 0
 
-                self.last_scan_signature = current_signature
+                    self.last_scan_signature = current_signature
                 self.last_scan_check_time = current_time
         else:
-            front_sectors = [self.sector_distances[i] for i in [10, 11, 0, 1, 2]]
-            self.last_scan_signature = sum(front_sectors)
+            valid_sectors = [d for d in self.sector_distances if d > 0.1]
+            self.last_scan_signature = sum(valid_sectors) if valid_sectors else 0
             self.last_scan_check_time = current_time
             self.scan_unchanged_time = 0
 
@@ -806,6 +808,14 @@ rclpy.shutdown()
 
                 # Check if stuck (driving but not moving)
                 is_driving = abs(linear) > 0.01
+                # Debug: show stuck detection status every few seconds
+                if hasattr(self, '_last_stuck_debug') and time.time() - self._last_stuck_debug > 3:
+                    front = self.sector_distances[0]
+                    print(f"\n[DEBUG] is_driving={is_driving} linear={linear:.2f} front={front:.2f}m scan_unchanged={getattr(self, 'scan_unchanged_time', 0):.1f}s driving_into={getattr(self, 'driving_into_obstacle_time', 0):.1f}s")
+                    self._last_stuck_debug = time.time()
+                elif not hasattr(self, '_last_stuck_debug'):
+                    self._last_stuck_debug = time.time()
+
                 if self.check_if_stuck(is_driving):
                     # Robot is stuck on invisible obstacle!
                     # Mark current direction as blocked and back up
