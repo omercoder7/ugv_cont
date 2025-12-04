@@ -34,15 +34,20 @@ from typing import List, Tuple, Optional
 CONTAINER_NAME = "ugv_rpi_ros_humble"
 NUM_SECTORS = 12  # 360° / 12 = 30° per sector
 
-# LiDAR is mounted rotated -90° (-1.5708 rad) in URDF
-# This was changed from +90° to fix mirrored map display
+# Calibration: Robot actual turn rate at Z=1.0 command
+# Measured: 6.5s command gave ~110° instead of 90°, adjusted from 0.24
+ACTUAL_MAX_ANGULAR_VEL = 0.29  # rad/s at Z=1.0
+
+# LiDAR orientation calibration:
+# Run calibrate_lidar.py with robot FRONT facing clear space to determine this value.
 #
-# Based on actual scan analysis:
-#   LiDAR has a blind spot from ~225° to ~315° (angle_crop in ld19.launch.py)
+# Physical mounting: LiDAR 0° is offset from robot chassis front by ~150°
+# Calibration shows: Robot FRONT = LiDAR sector 5 (150°-180°)
 #
-# To convert: robot_sector = (lidar_sector + 9) % 12
-# This accounts for the -90° rotation (-3 sectors = +9 sectors mod 12)
-LIDAR_ROTATION_SECTORS = 9  # Add 9 to lidar sector to get robot sector
+# Formula: robot_sector = (lidar_sector + offset) % 12
+#          lidar_sector = (robot_sector - offset) % 12
+# With offset=7: Robot sector 0 (FRONT) <- LiDAR sector 5
+LIDAR_ROTATION_SECTORS = 7  # Calibrated 2024-12: LiDAR 150° = Robot FRONT
 
 
 class KeyboardMonitor:
@@ -56,9 +61,14 @@ class KeyboardMonitor:
         self.old_settings = None
 
     def start(self):
-        self.old_settings = termios.tcgetattr(sys.stdin)
-        self.thread = threading.Thread(target=self._monitor, daemon=True)
-        self.thread.start()
+        try:
+            self.old_settings = termios.tcgetattr(sys.stdin)
+            self.thread = threading.Thread(target=self._monitor, daemon=True)
+            self.thread.start()
+        except termios.error:
+            # Not a TTY (e.g., running in non-interactive mode)
+            print("Note: Keyboard controls disabled (non-interactive mode)")
+            self.old_settings = None
 
     def stop(self):
         self.running = False
@@ -233,6 +243,107 @@ class SectorObstacleAvoider:
         smoothed_linear, smoothed_angular = self.smooth_velocity(linear_x, angular_z)
         self.send_cmd(smoothed_linear, smoothed_angular)
 
+    def turn_in_place(self, degrees: float, speed: float = 1.0):
+        """
+        Turn the robot in place by a specific number of degrees.
+        Uses calibrated timing for accurate rotation.
+
+        Args:
+            degrees: Angle to rotate (positive = left/CCW, negative = right/CW)
+            speed: Command speed (0.1 to 1.0, default max)
+        """
+        if abs(degrees) < 5:  # Ignore tiny rotations
+            return
+
+        speed = max(0.1, min(1.0, speed))
+
+        # Calculate duration using CALIBRATED angular velocity
+        actual_vel = ACTUAL_MAX_ANGULAR_VEL * speed
+        angle_rad = abs(degrees) * (math.pi / 180)
+        duration = angle_rad / actual_vel
+
+        # Determine direction
+        angular = speed if degrees > 0 else -speed
+
+        print(f"\n[TURN] Rotating {degrees:.0f}° {'left' if degrees > 0 else 'right'} (duration: {duration:.1f}s)")
+
+        # Scale to robot's expected range (-1 to 1)
+        x_val = 0.0  # No linear motion
+        z_val = max(-1.0, min(1.0, -angular / 1.0))  # INVERTED
+
+        serial_cmd = f'{{"T":"13","X":{x_val:.2f},"Z":{z_val:.2f}}}'
+        stop_cmd = '{"T":"13","X":0.00,"Z":0.00}'
+
+        # Calculate iterations (50ms interval = 20Hz inside container)
+        iterations = int(duration / 0.05)
+
+        # Run a bash loop inside container for consistent timing
+        bash_script = f'''
+for i in $(seq 1 {iterations}); do
+    echo '{serial_cmd}' > /dev/ttyAMA0
+    sleep 0.05
+done
+echo '{stop_cmd}' > /dev/ttyAMA0
+echo '{stop_cmd}' > /dev/ttyAMA0
+'''
+
+        try:
+            subprocess.run(
+                ['docker', 'exec', CONTAINER_NAME, 'bash', '-c', bash_script],
+                timeout=duration + 5,
+                capture_output=True
+            )
+        except subprocess.TimeoutExpired:
+            print("Turn timed out, stopping...")
+            self.stop()
+        except Exception as e:
+            print(f"Turn error: {e}")
+            self.stop()
+
+        self.total_rotations += 1
+
+    def backup_then_turn(self, backup_duration: float = 0.8, turn_degrees: float = 45):
+        """
+        Execute obstacle avoidance maneuver: back up, then turn in place.
+
+        Args:
+            backup_duration: How long to back up in seconds
+            turn_degrees: How many degrees to turn (positive = left, negative = right)
+        """
+        print(f"\n[AVOID] Backing up for {backup_duration:.1f}s, then turning {turn_degrees:.0f}°")
+
+        # First: Back up
+        x_val = max(-1.0, min(1.0, self.linear_speed * 0.6 / 0.3))  # Backward (inverted)
+        serial_cmd = f'{{"T":"13","X":{x_val:.2f},"Z":0.00}}'
+        stop_cmd = '{"T":"13","X":0.00,"Z":0.00}'
+
+        iterations = int(backup_duration / 0.05)
+        bash_script = f'''
+for i in $(seq 1 {iterations}); do
+    echo '{serial_cmd}' > /dev/ttyAMA0
+    sleep 0.05
+done
+echo '{stop_cmd}' > /dev/ttyAMA0
+'''
+
+        try:
+            subprocess.run(
+                ['docker', 'exec', CONTAINER_NAME, 'bash', '-c', bash_script],
+                timeout=backup_duration + 3,
+                capture_output=True
+            )
+        except Exception as e:
+            print(f"Backup error: {e}")
+            self.stop()
+            return
+
+        time.sleep(0.1)  # Brief pause between maneuvers
+
+        # Second: Turn in place
+        self.turn_in_place(turn_degrees, speed=1.0)
+
+        self.obstacles_avoided += 1
+
     def stop(self):
         """Stop the robot"""
         # Reset smoothing state for clean stop
@@ -388,33 +499,36 @@ rclpy.shutdown()
             self.stuck_cooldown -= 1
             return False
 
-        # Get minimum distance in EXTENDED front arc (±60°)
-        # LiDAR has blind spot in sectors 0 and 11, so we need wider arc!
-        # Sectors: 9 (R-F), 10 (F-R), 11 (FRONT-R), 0 (FRONT), 1 (F-L), 2 (LEFT)
-        extended_front = [
-            self.sector_distances[9],
-            self.sector_distances[10],
-            self.sector_distances[11],
-            self.sector_distances[0],
-            self.sector_distances[1],
-            self.sector_distances[2],
+        # Robot body appears at ~0.1-0.25m in sectors 7-11
+        # Only check sectors 0, 1, 4, 5 for real obstacles (not body)
+        BODY_THRESHOLD = 0.25
+
+        narrow_front = [
+            self.sector_distances[0],   # FRONT
+            self.sector_distances[1],   # F-L
+            self.sector_distances[4],   # BACK-L (can see around)
+            self.sector_distances[5],   # BACK
         ]
 
-        # Use minimum non-blind distance
+        # Find minimum distance, filtering out body readings and blind spots
         front_min = 999
-        for d in extended_front:
-            if d > 0.01:  # Valid reading (not blind)
+        for d in narrow_front:
+            if d > BODY_THRESHOLD:  # Skip body and blind readings
                 front_min = min(front_min, d)
 
-        # If there's a very close obstacle we're driving into, that's stuck
-        # Note: front_min could be very small (< 0.18m) for objects touching robot
-        if front_min < 0.40:  # No lower bound - even 0.05m is a real obstacle!
+        # If front_min is still 999, no valid readings - don't trigger stuck
+        if front_min >= 999:
+            self.stuck_time_counter = 0
+            return False
+
+        # If there's a close obstacle we're driving into, that's stuck
+        if front_min < 0.40:
             self.stuck_time_counter += 1
 
             # 3 iterations = ~0.6s of driving into close obstacle = stuck
             if self.stuck_time_counter >= 3:
                 print(f"\n[STUCK] Driving into obstacle at {front_min:.2f}m!")
-                print(f"  Extended front arc: s9={extended_front[0]:.2f} s10={extended_front[1]:.2f} s11={extended_front[2]:.2f} s0={extended_front[3]:.2f} s1={extended_front[4]:.2f} s2={extended_front[5]:.2f}")
+                print(f"  Front sectors: s0={self.sector_distances[0]:.2f} s1={self.sector_distances[1]:.2f} s4={self.sector_distances[4]:.2f} s5={self.sector_distances[5]:.2f}")
                 self.stuck_position = self.get_odometry()
                 self.stuck_time_counter = 0
                 return True
@@ -584,16 +698,50 @@ rclpy.shutdown()
 
         return best_sector, best_score
 
+    def calculate_turn_degrees(self, obstacle_sector: int, obstacle_distance: float) -> float:
+        """
+        Calculate how many degrees to turn based on obstacle position.
+
+        Args:
+            obstacle_sector: Sector with closest obstacle (0-11)
+            obstacle_distance: Distance to obstacle in meters
+
+        Returns:
+            Degrees to turn (positive = left, negative = right)
+        """
+        # Base turn angle depends on obstacle distance
+        # Closer obstacle = bigger turn needed
+        if obstacle_distance < 0.3:
+            base_degrees = 60  # Very close - big turn
+        elif obstacle_distance < 0.4:
+            base_degrees = 45  # Close - moderate turn
+        elif obstacle_distance < 0.5:
+            base_degrees = 35  # Medium - smaller turn
+        else:
+            base_degrees = 25  # Far - gentle turn
+
+        # Adjust based on obstacle position (which sector)
+        # Sectors 0, 11 = directly ahead, need bigger turn
+        # Sectors 1, 10 = slightly off, need less turn
+        # Sectors 2, 9 = more off-center, need even less
+        if obstacle_sector in [0, 11]:  # Dead ahead
+            base_degrees *= 1.2
+        elif obstacle_sector in [1, 10]:  # Slightly off
+            base_degrees *= 1.0
+        elif obstacle_sector in [2, 9]:  # More off-center
+            base_degrees *= 0.8
+
+        return min(90, max(25, base_degrees))  # Clamp between 25-90°
+
     def compute_velocity(self) -> Tuple[float, float]:
         """
-        VFH-inspired smooth obstacle avoidance.
+        Obstacle avoidance using discrete maneuvers:
+        1. When obstacle detected: back up, then turn in place by calculated degrees
+        2. When clear: go straight
+        3. Maintain committed direction throughout avoidance
 
-        Key improvements over simple algorithm:
-        1. Proportional steering (not just hard left/right)
-        2. Speed reduction when turning
-        3. Previous direction weight to reduce oscillation
-        4. Smooth transitions between states
-        5. Backward motion when too close to obstacles
+        Returns:
+            (linear, angular) velocity command, or (None, None) if discrete maneuver was executed
         """
         front_dist = self.sector_distances[0]
         front_left = self.sector_distances[1] if self.sector_distances[1] > 0.01 else 0
@@ -603,159 +751,171 @@ rclpy.shutdown()
         best_sector, best_score = self.find_best_direction()
         best_dist = self.sector_distances[best_sector]
 
-        # Calculate steering angle (proportional to sector offset)
-        # Sector 0 = 0°, Sector 1 = +30°, Sector 11 = -30°
-        steer_angle = self.sector_to_angle(best_sector)
+        # With LIDAR_ROTATION_SECTORS=7:
+        # - Blind spots (LiDAR 60-120°) map to Robot sectors 9-10 (R-F, F-R)
+        # - Robot body/close readings in sectors 6-8 (BACK-R, R-BACK, RIGHT)
+        #
+        # Front sectors (0, 1, 11) should be reliable for obstacle detection.
+        # Use lower threshold for front (real obstacles can be close).
+        BODY_THRESHOLD_FRONT = 0.12  # Front sectors: real obstacles can be close
+        BODY_THRESHOLD_SIDE = 0.25   # Side/back sectors: may have body readings
 
-        # IMPORTANT: LiDAR has blind spot in sectors 0 and 11 (robot front)!
-        # We need to use a WIDER arc that includes sectors with valid data
-        # Extended front arc: sectors 9, 10, 11, 0, 1, 2 (±60° from front)
-        extended_front = [
-            self.sector_distances[9],   # R-F (60° right)
-            self.sector_distances[10],  # F-R (30° right)
-            self.sector_distances[11],  # FRONT-R (blind usually)
-            self.sector_distances[0],   # FRONT (blind usually)
-            self.sector_distances[1],   # F-L (30° left)
-            self.sector_distances[2],   # LEFT (60° left)
+        narrow_front = [
+            self.sector_distances[11],  # FRONT-R
+            self.sector_distances[0],   # FRONT
+            self.sector_distances[1],   # F-L
         ]
 
-        # Check if front arc (sectors 11, 0, 1) is reasonably clear
-        front_arc_clear = (front_dist >= self.min_distance or
-                          front_left >= self.min_distance or
-                          front_right >= self.min_distance)
-
-        # Danger zone threshold - back up if anything is closer than this
-        # Set to 90% of min_distance so we react BEFORE hitting threshold
-        DANGER_DISTANCE = self.min_distance * 0.9  # ~0.45m for default 0.5m
-
-        # Check minimum distance in EXTENDED front arc (±60°)
-        # Any positive distance is real - even 0.05m means obstacle!
-        # Only 0.0 means blind spot (no LiDAR data)
+        # Find minimum distance in front arc
+        # For front sectors, use lower threshold (0.12m) - real obstacles can be close
         front_arc_min = 10.0
-        for d in extended_front:
-            if d > 0.001:  # Valid reading (not blind)
-                front_arc_min = min(front_arc_min, d)
+        closest_sector = 0
+        sector_map = [11, 0, 1]
+        for i, d in enumerate(narrow_front):
+            # Skip blind spots (0) and very close body readings (< 0.12m)
+            if d > BODY_THRESHOLD_FRONT and d < front_arc_min:
+                front_arc_min = d
+                closest_sector = sector_map[i]
+
+        # If all narrow front sectors are body/blind, check wider arc
+        if front_arc_min >= 10.0:
+            # Fall back to sectors 10, 0, 1, 4 (skip 2,3 blind)
+            wider_front = [
+                (10, self.sector_distances[10]),  # F-R - use side threshold
+                (0, self.sector_distances[0]),    # FRONT - use front threshold
+                (1, self.sector_distances[1]),    # F-L - use front threshold
+                (4, self.sector_distances[4]),    # BACK-L (might see around)
+            ]
+            for sec, d in wider_front:
+                threshold = BODY_THRESHOLD_FRONT if sec in [0, 1, 11] else BODY_THRESHOLD_SIDE
+                if d > threshold and d < front_arc_min:
+                    front_arc_min = d
+                    closest_sector = sec
+
+        # Danger zone threshold - execute backup+turn maneuver if closer than this
+        # Using min_distance directly so we back up as soon as obstacle is too close
+        DANGER_DISTANCE = self.min_distance  # 0.5m - back up when obstacle is within min safe distance
+
+        # Check if path is clear enough to drive straight
+        path_clear = front_arc_min >= self.min_distance
 
         if front_arc_min < DANGER_DISTANCE:
-            # TOO CLOSE! Back up while turning
-            # Use proportional backup speed based on how close obstacle is
-            backup_urgency = 1.0 - (front_arc_min / DANGER_DISTANCE)  # 0-1, higher = closer
-            linear = -self.linear_speed * (0.5 + 0.4 * backup_urgency)  # 0.5-0.9x speed backward
-
-            current_time = time.time()
+            # OBSTACLE TOO CLOSE! Execute discrete avoidance maneuver
+            self.emergency_maneuver = True
 
             # COMMITTED DIRECTION: Once we pick left or right, stick with it!
-            # Only change direction after successfully clearing the obstacle
             if self.avoidance_direction is None:
-                # First time encountering obstacle - pick a direction based on best sector
-                if best_sector <= 5:
+                # First time encountering obstacle - pick direction based on more clearance
+                # IMPORTANT: Only use reliable sectors, not blind spots or body readings!
+                # - Sectors 2-3 are blind spots (often 0)
+                # - Sectors 9-11 may have body readings (< 0.25m)
+                # Use only: sector 1 (F-L), sector 4 (BACK-L) for left
+                #           sector 10 (F-R), sector 5 (BACK) for right
+
+                # Left: Use F-L (1) and BACK-L (4), filter body readings
+                s1 = self.sector_distances[1] if self.sector_distances[1] > BODY_THRESHOLD_FRONT else 0
+                s4 = self.sector_distances[4] if self.sector_distances[4] > BODY_THRESHOLD_SIDE else 0
+                left_clearance = max(s1, s4)
+
+                # Right: Use F-R (10) and BACK (5), filter body readings
+                s10 = self.sector_distances[10] if self.sector_distances[10] > BODY_THRESHOLD_SIDE else 0
+                s5 = self.sector_distances[5] if self.sector_distances[5] > BODY_THRESHOLD_SIDE else 0
+                right_clearance = max(s10, s5)
+
+                if left_clearance >= right_clearance:
                     self.avoidance_direction = "left"
                 else:
                     self.avoidance_direction = "right"
+
                 self.avoidance_intensity = 1.0
-                self.avoidance_start_time = current_time
-                print(f"\n[COMMIT] Chose {self.avoidance_direction} to avoid obstacle")
-            else:
-                # Already committed to a direction - increase intensity if still stuck
-                time_avoiding = current_time - self.avoidance_start_time
-                if time_avoiding > 1.0:
-                    # Increase turn intensity every second we're still in danger
-                    self.avoidance_intensity = min(2.0, 1.0 + (time_avoiding - 1.0) * 0.3)
+                self.avoidance_start_time = time.time()
+                print(f"\n[COMMIT] Chose {self.avoidance_direction} (L:{left_clearance:.2f}m R:{right_clearance:.2f}m)")
 
-            # Apply committed direction with intensity
-            if self.avoidance_direction == "left":
-                angular = self.turn_speed * 0.8 * self.avoidance_intensity
-            else:
-                angular = -self.turn_speed * 0.8 * self.avoidance_intensity
+            # Calculate turn degrees dynamically based on obstacle
+            turn_degrees = self.calculate_turn_degrees(closest_sector, front_arc_min)
 
-            self.obstacles_avoided += 1
-            self.emergency_maneuver = True
-            status = f"[DANGER] {front_arc_min:.2f}m! {self.avoidance_direction} x{self.avoidance_intensity:.1f}"
+            # Apply committed direction
+            if self.avoidance_direction == "right":
+                turn_degrees = -turn_degrees
 
-        elif front_dist >= self.min_distance:
-            # Front is clear - drive forward with slight steering adjustment
+            # Increase turn if we've been trying to avoid for a while
+            time_avoiding = time.time() - self.avoidance_start_time
+            if time_avoiding > 2.0:
+                turn_degrees *= 1.3  # 30% more turn if stuck
+                print(f"\n[STUCK] Increasing turn to {abs(turn_degrees):.0f}°")
+
+            # Execute backup + turn maneuver
+            backup_duration = 0.6 if front_arc_min > 0.3 else 1.0  # Back up more if very close
+            self.backup_then_turn(backup_duration=backup_duration, turn_degrees=turn_degrees)
+
+            # Return None to indicate maneuver was executed
+            return None, None
+
+        elif path_clear:
+            # PATH IS CLEAR - Go straight!
             linear = self.linear_speed
+            angular = 0.0
             self.emergency_maneuver = False
 
             # Clear the committed avoidance direction - we escaped!
             if self.avoidance_direction is not None:
-                print(f"\n[CLEAR] Obstacle avoided, resetting direction commitment")
+                print(f"\n[CLEAR] Path clear, resetting direction commitment")
                 self.avoidance_direction = None
                 self.avoidance_intensity = 1.0
 
-            # Apply gentle steering towards best direction if it's not straight ahead
-            if best_sector == 0:
-                angular = 0.0
-            elif best_sector <= 2 or best_sector >= 10:
-                # Best is slightly off-center - gentle correction
-                angular = steer_angle * 0.3  # Proportional, damped
-            else:
-                # Best is significantly off-center - prepare to turn
-                angular = steer_angle * 0.2
+            status = f"[FWD] clear={front_arc_min:.2f}m - going straight"
 
-            status = f"[FWD] f={front_dist:.1f}m best=s{best_sector} steer={math.degrees(angular):.0f}°"
-
-        elif front_arc_clear and best_dist >= self.min_distance:
-            # Front blocked but can steer around - drive with steering
-            # Reduce speed proportionally to how much we need to turn
-            turn_factor = abs(steer_angle) / math.pi  # 0 to 1
-            linear = self.linear_speed * (1.0 - turn_factor * 0.5)  # Slow down when turning
-
-            # Use committed direction if we have one, otherwise use best sector
-            if self.avoidance_direction == "left":
-                angular = abs(steer_angle) * 0.5  # Force left
-            elif self.avoidance_direction == "right":
-                angular = -abs(steer_angle) * 0.5  # Force right
-            else:
-                angular = steer_angle * 0.5  # Use VFH suggestion
-
-            self.emergency_maneuver = False
-            status = f"[STEER] f={front_dist:.1f}m -> s{best_sector} ang={math.degrees(angular):.0f}°"
-
-        elif best_dist >= self.min_distance:
-            # Need to turn in place towards clear direction
-            # Back up slightly while turning if front is very close
-            if front_dist < self.min_distance * 0.8:
-                linear = -self.linear_speed * 0.3  # Gentle backward
-            else:
-                linear = 0.0
+        elif best_dist >= self.min_distance and best_sector not in [0, 11, 1]:
+            # Only steer if best direction is NOT the front sectors
+            # If front is clear enough (best_sector is 0, 1, or 11), just go straight
+            steer_angle = self.sector_to_angle(best_sector)
+            turn_factor = abs(steer_angle) / math.pi
+            linear = self.linear_speed * (1.0 - turn_factor * 0.3)
 
             # Use committed direction if we have one
             if self.avoidance_direction == "left":
-                angular = self.turn_speed * self.avoidance_intensity
+                angular = abs(steer_angle) * 0.3
             elif self.avoidance_direction == "right":
-                angular = -self.turn_speed * self.avoidance_intensity
-            elif best_sector <= 6:
-                angular = self.turn_speed  # Turn left
+                angular = -abs(steer_angle) * 0.3
             else:
-                angular = -self.turn_speed  # Turn right
+                angular = steer_angle * 0.3
 
             self.emergency_maneuver = False
-            self.total_rotations += 1
-            status = f"[TURN] f={front_dist:.1f}m -> s{best_sector}({best_dist:.1f}m)"
+            status = f"[STEER] f={front_arc_min:.2f}m -> s{best_sector}"
+
+        elif best_dist >= self.min_distance:
+            # Best sector is front (0, 1, or 11) - go straight!
+            linear = self.linear_speed
+            angular = 0.0
+            self.emergency_maneuver = False
+
+            if self.avoidance_direction is not None:
+                print(f"\n[CLEAR] Front is best direction, resetting commitment")
+                self.avoidance_direction = None
+
+            status = f"[FWD] front ok={front_arc_min:.2f}m s{best_sector}"
 
         else:
-            # Everything blocked - back up while turning (emergency!)
-            linear = -self.linear_speed * 0.6
+            # All directions have obstacles - back up and turn to find clear path
+            turn_degrees = self.calculate_turn_degrees(closest_sector, front_arc_min)
 
-            # Use committed direction, increase intensity
             if self.avoidance_direction is None:
-                self.avoidance_direction = "left"  # Default to left if no choice
-                self.avoidance_intensity = 1.0
+                if best_sector <= 5:
+                    self.avoidance_direction = "left"
+                else:
+                    self.avoidance_direction = "right"
                 self.avoidance_start_time = time.time()
 
-            self.avoidance_intensity = min(2.0, self.avoidance_intensity + 0.1)
+            if self.avoidance_direction == "right":
+                turn_degrees = -turn_degrees
 
-            if self.avoidance_direction == "left":
-                angular = self.turn_speed * self.avoidance_intensity
-            else:
-                angular = -self.turn_speed * self.avoidance_intensity
+            # Always back up first, then turn (using calibrated rotation)
+            backup_duration = 0.8 if front_arc_min > 0.3 else 1.2
+            print(f"\n[BLOCKED] Backing up and turning {turn_degrees:.0f}° to find clear path")
+            self.backup_then_turn(backup_duration=backup_duration, turn_degrees=turn_degrees)
+            return None, None
 
-            self.obstacles_avoided += 1
-            self.emergency_maneuver = True
-            status = f"[BACK] blocked, {self.avoidance_direction} x{self.avoidance_intensity:.1f}"
-
-        # Remember this direction for next iteration (smooth trajectory)
+        # Remember this direction for next iteration
         self.previous_sector = best_sector
 
         print(f"\r{status:<60}", end="", flush=True)
@@ -834,12 +994,17 @@ rclpy.shutdown()
                 # Compute and send velocity
                 linear, angular = self.compute_velocity()
 
+                # If compute_velocity returned None, a discrete maneuver was executed
+                # Skip the rest of this iteration
+                if linear is None:
+                    continue
+
                 # Check if stuck (driving but not moving)
                 is_driving = linear > 0.01  # Only forward motion can be "stuck"
 
                 if self.check_if_stuck(is_driving, linear):
                     # Robot is stuck on invisible obstacle!
-                    # Mark current direction as blocked and back up
+                    # Mark current direction as blocked
                     if hasattr(self, 'previous_sector'):
                         self.blocked_sectors.add(self.previous_sector)
                         # Also block adjacent sectors
@@ -847,7 +1012,6 @@ rclpy.shutdown()
                         self.blocked_sectors.add((self.previous_sector - 1) % NUM_SECTORS)
 
                     print(f"\n*** STUCK DETECTED! Blocking sectors: {self.blocked_sectors} ***")
-                    self.obstacles_avoided += 1
                     self.stuck_counter = 0
                     self.stuck_cooldown = 5  # Wait 5 iterations before checking again
 
@@ -856,21 +1020,14 @@ rclpy.shutdown()
                         stuck_x, stuck_y = self.stuck_position
                         self.publish_virtual_obstacle(stuck_x, stuck_y)
 
-                    # Dynamic backup: back up until front is clear enough to maneuver
-                    # Max 8 iterations (~1.6s) to prevent infinite backup
-                    for backup_iter in range(8):
-                        self.send_cmd(-self.linear_speed * 0.6, self.turn_speed * 0.5)
-                        time.sleep(0.2)
+                    # Use calibrated backup + turn maneuver
+                    # Pick direction based on committed direction or default
+                    if self.avoidance_direction is None:
+                        self.avoidance_direction = "left"  # Default
+                        self.avoidance_start_time = time.time()
 
-                        # Check if we have clearance now
-                        if self.update_scan():
-                            front_clear = self.sector_distances[0] > self.min_distance
-                            side_clear = (self.sector_distances[1] > self.min_distance or
-                                         self.sector_distances[11] > self.min_distance)
-                            if front_clear or side_clear:
-                                print(f" (cleared after {backup_iter+1} steps)")
-                                break
-                    self.stop()
+                    turn_degrees = 60 if self.avoidance_direction == "left" else -60
+                    self.backup_then_turn(backup_duration=1.0, turn_degrees=turn_degrees)
 
                     # Reset position tracking after recovery maneuver
                     self.last_position = None
