@@ -54,12 +54,25 @@ fi
 echo "Using DISPLAY=${DISPLAY}"
 
 # Copy xauth cookie to container for X11 authentication
-XAUTH_COOKIE=$(xauth list "${DISPLAY}" 2>/dev/null | head -1 | awk '{print $3}')
+# Extract display number from DISPLAY (e.g., localhost:10.0 -> 10)
+DISPLAY_NUM=$(echo "${DISPLAY}" | sed 's/.*:\([0-9]*\).*/\1/')
+
+# Try multiple xauth lookup methods
+XAUTH_COOKIE=$(xauth list 2>/dev/null | grep ":${DISPLAY_NUM}" | head -1 | awk '{print $3}')
+if [ -z "${XAUTH_COOKIE}" ]; then
+    XAUTH_COOKIE=$(xauth list "${DISPLAY}" 2>/dev/null | head -1 | awk '{print $3}')
+fi
+
 if [ -n "${XAUTH_COOKIE}" ]; then
+    echo "Found X11 auth cookie for display :${DISPLAY_NUM}"
     docker exec ${CONTAINER_NAME} bash -c "
         touch /root/.Xauthority && \
-        xauth add ${DISPLAY} MIT-MAGIC-COOKIE-1 ${XAUTH_COOKIE}
+        xauth add ${DISPLAY} MIT-MAGIC-COOKIE-1 ${XAUTH_COOKIE} 2>/dev/null
+        xauth add localhost:${DISPLAY_NUM} MIT-MAGIC-COOKIE-1 ${XAUTH_COOKIE} 2>/dev/null
+        xauth add localhost:${DISPLAY_NUM}.0 MIT-MAGIC-COOKIE-1 ${XAUTH_COOKIE} 2>/dev/null
     " 2>/dev/null
+else
+    echo "Warning: Could not find X11 auth cookie"
 fi
 
 xhost +local:docker 2>/dev/null
@@ -112,9 +125,21 @@ launch_rviz() {
     echo "Launching RViz in ${MODE} mode..."
     echo "Using DISPLAY=${DISPLAY}"
 
+    # Detect if we have a TTY
+    local DOCKER_FLAGS="-i"
+    if [ -t 0 ]; then
+        DOCKER_FLAGS="-it"
+    fi
+
+    # Copy host's Xauthority file to container for X11 auth
+    if [ -f "${HOME}/.Xauthority" ]; then
+        docker cp "${HOME}/.Xauthority" ${CONTAINER_NAME}:/root/.Xauthority 2>/dev/null
+    fi
+
     # Use software rendering for X11 forwarding (required for RPi)
-    docker exec -it \
+    docker exec ${DOCKER_FLAGS} \
         -e DISPLAY=${DISPLAY} \
+        -e XAUTHORITY=/root/.Xauthority \
         -e LIBGL_ALWAYS_SOFTWARE=1 \
         -e QT_X11_NO_MITSHM=1 \
         ${CONTAINER_NAME} /bin/bash -c "
