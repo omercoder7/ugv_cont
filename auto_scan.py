@@ -163,6 +163,11 @@ class SectorObstacleAvoider:
         self.state_hold_counter = 0
         self.min_state_hold = 2  # Hold state for at least N iterations
 
+        # Committed avoidance direction - once we pick left or right, stick with it
+        self.avoidance_direction = None  # "left" or "right" or None
+        self.avoidance_intensity = 1.0   # Increases if still stuck after turning
+        self.avoidance_start_time = 0    # When we started this avoidance maneuver
+
     def smooth_velocity(self, target_linear: float, target_angular: float) -> Tuple[float, float]:
         """
         Apply smoothing to velocity commands using:
@@ -632,27 +637,51 @@ rclpy.shutdown()
                 front_arc_min = min(front_arc_min, d)
 
         if front_arc_min < DANGER_DISTANCE:
-            # TOO CLOSE! Back up while turning towards best clear direction
+            # TOO CLOSE! Back up while turning
             # Use proportional backup speed based on how close obstacle is
             backup_urgency = 1.0 - (front_arc_min / DANGER_DISTANCE)  # 0-1, higher = closer
             linear = -self.linear_speed * (0.5 + 0.4 * backup_urgency)  # 0.5-0.9x speed backward
 
-            # Turn towards the best clear direction (using VFH cost function)
-            # This ensures we back up AND orient towards where we want to go
-            if best_sector <= 5:
-                angular = self.turn_speed * 0.8  # Best is on left side, turn left
-            else:
-                angular = -self.turn_speed * 0.8  # Best is on right side, turn right
-            self.obstacles_avoided += 1
+            current_time = time.time()
 
-            # Mark as emergency - main loop will bypass smoothing
+            # COMMITTED DIRECTION: Once we pick left or right, stick with it!
+            # Only change direction after successfully clearing the obstacle
+            if self.avoidance_direction is None:
+                # First time encountering obstacle - pick a direction based on best sector
+                if best_sector <= 5:
+                    self.avoidance_direction = "left"
+                else:
+                    self.avoidance_direction = "right"
+                self.avoidance_intensity = 1.0
+                self.avoidance_start_time = current_time
+                print(f"\n[COMMIT] Chose {self.avoidance_direction} to avoid obstacle")
+            else:
+                # Already committed to a direction - increase intensity if still stuck
+                time_avoiding = current_time - self.avoidance_start_time
+                if time_avoiding > 1.0:
+                    # Increase turn intensity every second we're still in danger
+                    self.avoidance_intensity = min(2.0, 1.0 + (time_avoiding - 1.0) * 0.3)
+
+            # Apply committed direction with intensity
+            if self.avoidance_direction == "left":
+                angular = self.turn_speed * 0.8 * self.avoidance_intensity
+            else:
+                angular = -self.turn_speed * 0.8 * self.avoidance_intensity
+
+            self.obstacles_avoided += 1
             self.emergency_maneuver = True
-            status = f"[DANGER] {front_arc_min:.2f}m! backing -> s{best_sector}"
+            status = f"[DANGER] {front_arc_min:.2f}m! {self.avoidance_direction} x{self.avoidance_intensity:.1f}"
 
         elif front_dist >= self.min_distance:
             # Front is clear - drive forward with slight steering adjustment
             linear = self.linear_speed
             self.emergency_maneuver = False
+
+            # Clear the committed avoidance direction - we escaped!
+            if self.avoidance_direction is not None:
+                print(f"\n[CLEAR] Obstacle avoided, resetting direction commitment")
+                self.avoidance_direction = None
+                self.avoidance_intensity = 1.0
 
             # Apply gentle steering towards best direction if it's not straight ahead
             if best_sector == 0:
@@ -671,9 +700,16 @@ rclpy.shutdown()
             # Reduce speed proportionally to how much we need to turn
             turn_factor = abs(steer_angle) / math.pi  # 0 to 1
             linear = self.linear_speed * (1.0 - turn_factor * 0.5)  # Slow down when turning
-            angular = steer_angle * 0.5  # Proportional steering
-            self.emergency_maneuver = False
 
+            # Use committed direction if we have one, otherwise use best sector
+            if self.avoidance_direction == "left":
+                angular = abs(steer_angle) * 0.5  # Force left
+            elif self.avoidance_direction == "right":
+                angular = -abs(steer_angle) * 0.5  # Force right
+            else:
+                angular = steer_angle * 0.5  # Use VFH suggestion
+
+            self.emergency_maneuver = False
             status = f"[STEER] f={front_dist:.1f}m -> s{best_sector} ang={math.degrees(angular):.0f}°"
 
         elif best_dist >= self.min_distance:
@@ -683,23 +719,41 @@ rclpy.shutdown()
                 linear = -self.linear_speed * 0.3  # Gentle backward
             else:
                 linear = 0.0
-            # Turn at fixed rate towards best sector
-            if best_sector <= 6:
+
+            # Use committed direction if we have one
+            if self.avoidance_direction == "left":
+                angular = self.turn_speed * self.avoidance_intensity
+            elif self.avoidance_direction == "right":
+                angular = -self.turn_speed * self.avoidance_intensity
+            elif best_sector <= 6:
                 angular = self.turn_speed  # Turn left
             else:
                 angular = -self.turn_speed  # Turn right
-            self.emergency_maneuver = False
 
+            self.emergency_maneuver = False
             self.total_rotations += 1
             status = f"[TURN] f={front_dist:.1f}m -> s{best_sector}({best_dist:.1f}m)"
 
         else:
             # Everything blocked - back up while turning (emergency!)
             linear = -self.linear_speed * 0.6
-            angular = self.turn_speed
+
+            # Use committed direction, increase intensity
+            if self.avoidance_direction is None:
+                self.avoidance_direction = "left"  # Default to left if no choice
+                self.avoidance_intensity = 1.0
+                self.avoidance_start_time = time.time()
+
+            self.avoidance_intensity = min(2.0, self.avoidance_intensity + 0.1)
+
+            if self.avoidance_direction == "left":
+                angular = self.turn_speed * self.avoidance_intensity
+            else:
+                angular = -self.turn_speed * self.avoidance_intensity
+
             self.obstacles_avoided += 1
-            self.emergency_maneuver = True  # Bypass smoothing for blocked
-            status = f"[BACK] blocked, best=s{best_sector}({best_dist:.1f}m)"
+            self.emergency_maneuver = True
+            status = f"[BACK] blocked, {self.avoidance_direction} x{self.avoidance_intensity:.1f}"
 
         # Remember this direction for next iteration (smooth trajectory)
         self.previous_sector = best_sector
