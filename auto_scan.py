@@ -120,7 +120,7 @@ class SectorObstacleAvoider:
     5. Rotate towards that direction, then move forward
     """
 
-    def __init__(self, linear_speed: float = 0.06, min_distance: float = 0.5,
+    def __init__(self, linear_speed: float = 0.06, min_distance: float = 0.65,
                  duration: float = 60.0):
         # Cap max speed at 0.08 m/s - rf2o odometry overestimates at higher speeds
         # causing mismatch between RViz display and actual robot position
@@ -794,7 +794,7 @@ rclpy.shutdown()
 
         # Danger zone threshold - execute backup+turn maneuver if closer than this
         # Using min_distance directly so we back up as soon as obstacle is too close
-        DANGER_DISTANCE = self.min_distance  # 0.5m - back up when obstacle is within min safe distance
+        DANGER_DISTANCE = self.min_distance  # 0.65m - back up when obstacle is within min safe distance
 
         # Check if path is clear enough to drive straight
         path_clear = front_arc_min >= self.min_distance
@@ -1140,7 +1140,7 @@ Examples:
   ./auto_scan.py --duration 120       # 2 minute scan
   ./auto_scan.py --duration 0         # Unlimited
   ./auto_scan.py --speed 0.08         # Slower scanning
-  ./auto_scan.py --min-dist 0.5       # More cautious
+  ./auto_scan.py --min-dist 0.7       # More cautious
 
 Algorithm:
   Divides 360° LiDAR scan into 12 sectors (30° each).
@@ -1150,8 +1150,8 @@ Algorithm:
     )
     parser.add_argument('--speed', '-s', type=float, default=0.06,
                         help='Linear speed m/s (default: 0.06, max: 0.08)')
-    parser.add_argument('--min-dist', '-m', type=float, default=0.5,
-                        help='Min obstacle distance m (default: 0.5)')
+    parser.add_argument('--min-dist', '-m', type=float, default=0.65,
+                        help='Min obstacle distance m (default: 0.65)')
     parser.add_argument('--duration', '-d', type=float, default=60,
                         help='Scan duration seconds, 0=unlimited (default: 60)')
     args = parser.parse_args()
