@@ -173,72 +173,6 @@ class VisitedTracker:
         cell = self.pos_to_cell(x, y)
         return self.visit_counts.get(cell, 0)
 
-    def get_unvisited_direction(self, current_x: float, current_y: float,
-                                 sector_distances: List[float],
-                                 min_distance: float) -> Optional[int]:
-        """
-        Find a sector direction that leads to unvisited cells.
-        Returns sector number (0-11) or None if all reachable cells are visited.
-
-        Priority:
-        1. Unvisited cells that are reachable (clear path)
-        2. Less-visited cells
-        3. None if all directions lead to visited areas
-        """
-        current_cell = self.pos_to_cell(current_x, current_y)
-
-        best_sector = None
-        best_score = -999
-
-        for sector in range(NUM_SECTORS):
-            dist = sector_distances[sector]
-
-            # Skip blocked/close sectors
-            if dist < min_distance:
-                continue
-
-            # Calculate where we'd end up going this direction
-            # Sector 0 = front (0°), sector 3 = left (90°), etc.
-            angle = sector * (2 * math.pi / NUM_SECTORS)
-
-            # Look ahead by the clearance distance (capped at 2m)
-            look_ahead = min(dist, 2.0)
-            target_x = current_x + look_ahead * math.cos(angle)
-            target_y = current_y + look_ahead * math.sin(angle)
-
-            target_cell = self.pos_to_cell(target_x, target_y)
-
-            # Score based on visit count (lower = better)
-            visit_count = self.visit_counts.get(target_cell, 0)
-
-            # Prefer unvisited (visit_count=0), then less visited
-            # Also factor in clearance and prefer forward direction
-            clearance_score = min(dist / 3.0, 1.0)  # 0-1 based on clearance
-            direction_score = 1.0 - (abs(sector - 6) / 6.0) if sector <= 6 else 1.0 - (abs(sector - 6) / 6.0)
-            # Prefer front (sector 0, 1, 11)
-            if sector in [0, 1, 11]:
-                direction_score = 1.0
-            elif sector in [2, 10]:
-                direction_score = 0.7
-            else:
-                direction_score = 0.3
-
-            # Visit score: heavily penalize visited cells
-            if visit_count == 0:
-                visit_score = 10.0  # Big bonus for unvisited
-            elif visit_count == 1:
-                visit_score = 2.0   # Small bonus for visited once
-            else:
-                visit_score = -visit_count  # Penalty for revisiting
-
-            total_score = visit_score + clearance_score + direction_score
-
-            if total_score > best_score:
-                best_score = total_score
-                best_sector = sector
-
-        return best_sector
-
     def get_coverage_stats(self) -> Dict:
         """Get statistics about coverage"""
         if not self.visited_cells:
@@ -355,6 +289,11 @@ class SectorObstacleAvoider:
         self.driving_into_obstacle_time = 0  # Time spent driving toward unchanging obstacle
         self.scan_unchanged_time = 0  # Time LiDAR scan hasn't changed while driving
         self.emergency_maneuver = False  # True when in danger/backing up mode
+
+        # Distance tracking for stuck detection
+        self.prev_front_distance = None  # Previous front distance reading
+        self.front_distance_unchanged_count = 0  # How many times front distance didn't change
+        self.stuck_position = None  # Position where we got stuck (for virtual obstacle)
 
         # Smoothing parameters (based on DWA/VFH research)
         # Exponential Moving Average for velocity smoothing
@@ -844,13 +783,19 @@ rclpy.shutdown()
         Check if robot is stuck by detecting unchanging LiDAR distance.
         Returns True if stuck is detected.
 
-        Simple approach: If we're driving forward but front distance isn't
-        decreasing, we're stuck. LiDAR directly measures obstacle distance -
-        trust it over odometry!
+        Key insight: If driving forward but front distance ISN'T DECREASING,
+        we're stuck (wheels spinning but robot not moving). LiDAR directly
+        measures obstacle distance - trust it over odometry!
+
+        Two detection methods:
+        1. Close obstacle: Front distance < 0.40m while driving
+        2. Distance unchanging: Front distance not decreasing over multiple readings
         """
         if not is_driving or commanded_linear <= 0.01:
             # Not driving forward, reset
             self.stuck_time_counter = 0
+            self.front_distance_unchanged_count = 0
+            self.prev_front_distance = None
             return False
 
         if self.stuck_cooldown > 0:
@@ -862,16 +807,14 @@ rclpy.shutdown()
         BODY_THRESHOLD_FRONT = 0.12  # Front sectors: real obstacles can be close
         BODY_THRESHOLD_SIDE = 0.25   # Side/back sectors: may have body readings
 
-        # Check front and side sectors with appropriate thresholds
+        # Check front sectors only (what's in front of robot)
         sectors_to_check = [
             (0, self.sector_distances[0], BODY_THRESHOLD_FRONT),   # FRONT
             (1, self.sector_distances[1], BODY_THRESHOLD_FRONT),   # F-L
             (11, self.sector_distances[11], BODY_THRESHOLD_FRONT), # FRONT-R
-            (4, self.sector_distances[4], BODY_THRESHOLD_SIDE),    # BACK-L
-            (5, self.sector_distances[5], BODY_THRESHOLD_SIDE),    # BACK
         ]
 
-        # Find minimum distance, filtering out body readings and blind spots
+        # Find minimum distance in front, filtering out body readings
         front_min = 999
         for sector, d, threshold in sectors_to_check:
             if d > threshold:  # Skip body and blind readings
@@ -880,22 +823,56 @@ rclpy.shutdown()
         # If front_min is still 999, no valid readings - don't trigger stuck
         if front_min >= 999:
             self.stuck_time_counter = 0
+            self.front_distance_unchanged_count = 0
+            self.prev_front_distance = None
             return False
 
-        # If there's a close obstacle we're driving into, that's stuck
+        # Method 1: Close obstacle detection
         if front_min < 0.40:
             self.stuck_time_counter += 1
-
             # 2 iterations at 5Hz = ~0.4s of driving into close obstacle = stuck
-            # Faster detection since movement thread runs at 20Hz
             if self.stuck_time_counter >= 2:
                 print(f"\n[STUCK] Driving into obstacle at {front_min:.2f}m!")
-                print(f"  Front sectors: s0={self.sector_distances[0]:.2f} s1={self.sector_distances[1]:.2f} s4={self.sector_distances[4]:.2f} s5={self.sector_distances[5]:.2f}")
+                print(f"  Front sectors: s0={self.sector_distances[0]:.2f} s1={self.sector_distances[1]:.2f} s11={self.sector_distances[11]:.2f}")
                 self.stuck_position = self.get_odometry()
                 self.stuck_time_counter = 0
+                self.front_distance_unchanged_count = 0
+                self.prev_front_distance = None
                 return True
         else:
             self.stuck_time_counter = 0
+
+        # Method 2: Distance not decreasing while driving forward
+        # If driving forward at positive velocity, front distance should DECREASE
+        # (getting closer to obstacle) or INCREASE (passing obstacle)
+        # If it stays SAME, robot is stuck (wheels spinning but not moving)
+        if self.prev_front_distance is not None:
+            distance_change = front_min - self.prev_front_distance
+
+            # Expected change when driving forward at commanded speed
+            # At 5Hz main loop, 0.04 m/s should give ~0.008m change per iteration
+            # Allow some tolerance for sensor noise
+            MIN_EXPECTED_CHANGE = 0.005  # 5mm minimum change expected
+
+            # If driving forward and distance isn't changing (within noise)
+            if abs(distance_change) < MIN_EXPECTED_CHANGE and commanded_linear > 0.02:
+                self.front_distance_unchanged_count += 1
+
+                # 4 iterations at 5Hz = ~0.8s of no distance change = stuck
+                if self.front_distance_unchanged_count >= 4:
+                    print(f"\n[STUCK] Distance not changing while driving!")
+                    print(f"  Front distance: {front_min:.3f}m, prev: {self.prev_front_distance:.3f}m")
+                    print(f"  Change: {distance_change:.4f}m (expected ~{commanded_linear * 0.2:.4f}m)")
+                    self.stuck_position = self.get_odometry()
+                    self.front_distance_unchanged_count = 0
+                    self.prev_front_distance = None
+                    return True
+            else:
+                # Distance is changing, reset counter
+                self.front_distance_unchanged_count = 0
+
+        # Update previous distance
+        self.prev_front_distance = front_min
 
         return False
 
@@ -932,6 +909,122 @@ rclpy.shutdown()
         except Exception as e:
             print(f"\nScan error: {e}")
             return False
+
+    def get_map_exploration_scores(self) -> List[float]:
+        """
+        Query Cartographer/SLAM map to find unexplored areas in each sector.
+
+        Returns list of 12 scores (one per sector):
+        - 1.0 = direction has lots of unknown cells (unexplored!)
+        - 0.0 = direction is fully explored or blocked
+
+        Uses occupancy grid: -1 = unknown, 0 = free, 100 = occupied
+        """
+        try:
+            result = subprocess.run(
+                ['docker', 'exec', CONTAINER_NAME, 'bash', '-c',
+                 '''source /opt/ros/humble/setup.bash && python3 -c "
+import rclpy
+from nav_msgs.msg import OccupancyGrid
+from geometry_msgs.msg import PoseStamped
+import tf2_ros
+import math
+
+rclpy.init()
+node = rclpy.create_node('map_explorer')
+
+# Get current robot pose from TF
+tf_buffer = tf2_ros.Buffer()
+tf_listener = tf2_ros.TransformListener(tf_buffer, node)
+
+# Wait for map
+map_msg = None
+def map_cb(m): global map_msg; map_msg = m
+sub = node.create_subscription(OccupancyGrid, '/map', map_cb, 1)
+
+for _ in range(30):
+    rclpy.spin_once(node, timeout_sec=0.1)
+    if map_msg: break
+
+if not map_msg:
+    print('NO_MAP')
+    node.destroy_node()
+    rclpy.shutdown()
+    exit()
+
+# Get robot position in map frame
+try:
+    trans = tf_buffer.lookup_transform('map', 'base_footprint', rclpy.time.Time(), timeout=rclpy.duration.Duration(seconds=1.0))
+    robot_x = trans.transform.translation.x
+    robot_y = trans.transform.translation.y
+    # Get yaw from quaternion
+    q = trans.transform.rotation
+    siny_cosp = 2 * (q.w * q.z + q.x * q.y)
+    cosy_cosp = 1 - 2 * (q.y * q.y + q.z * q.z)
+    robot_yaw = math.atan2(siny_cosp, cosy_cosp)
+except:
+    print('NO_TF')
+    node.destroy_node()
+    rclpy.shutdown()
+    exit()
+
+# Map parameters
+res = map_msg.info.resolution
+origin_x = map_msg.info.origin.position.x
+origin_y = map_msg.info.origin.position.y
+width = map_msg.info.width
+height = map_msg.info.height
+data = map_msg.data
+
+# Check 12 sectors (30 deg each) for unknown cells
+# Look ahead 0.5m to 2m in each direction
+scores = []
+for sector in range(12):
+    # Sector angle in robot frame (0 = front)
+    sector_angle = sector * (math.pi / 6)
+    # Convert to map frame
+    map_angle = robot_yaw + sector_angle
+
+    unknown_count = 0
+    total_count = 0
+
+    # Sample points along ray from 0.5m to 2m
+    for dist in [0.5, 0.8, 1.0, 1.3, 1.6, 2.0]:
+        px = robot_x + dist * math.cos(map_angle)
+        py = robot_y + dist * math.sin(map_angle)
+
+        # Convert to grid cell
+        gx = int((px - origin_x) / res)
+        gy = int((py - origin_y) / res)
+
+        if 0 <= gx < width and 0 <= gy < height:
+            cell_val = data[gy * width + gx]
+            total_count += 1
+            if cell_val == -1:  # Unknown
+                unknown_count += 1
+
+    # Score: ratio of unknown cells
+    if total_count > 0:
+        scores.append(unknown_count / total_count)
+    else:
+        scores.append(0.0)
+
+print(','.join([f'{s:.2f}' for s in scores]))
+node.destroy_node()
+rclpy.shutdown()
+"'''],
+                capture_output=True, text=True, timeout=5
+            )
+
+            if result.stdout.strip() and result.stdout.strip() not in ['NO_MAP', 'NO_TF']:
+                scores = [float(x) for x in result.stdout.strip().split(',')]
+                if len(scores) == NUM_SECTORS:
+                    return scores
+
+            return [0.5] * NUM_SECTORS  # Neutral if map not available
+
+        except Exception as e:
+            return [0.5] * NUM_SECTORS  # Neutral on error
 
     def lidar_to_robot_sector(self, lidar_sector: int) -> int:
         """Convert LiDAR sector to robot-frame sector (accounting for 90° rotation)"""
@@ -1004,20 +1097,24 @@ rclpy.shutdown()
     def find_best_direction(self) -> Tuple[int, float]:
         """
         VFH-inspired algorithm: Find the best direction using a cost function.
-        Now includes visited location tracking to prefer unvisited areas.
+
+        Key insight: Prefer directions toward UNEXPLORED areas on the map.
+        Uses both LiDAR distance AND Cartographer map data to identify unexplored regions.
 
         Cost = target_weight * target_cost
-             + clearance_weight * clearance_cost
+             + openness_weight * openness_cost   # LiDAR: prefer open space
+             + map_explore_weight * map_explore_cost  # Map: prefer unknown cells
              + previous_weight * previous_cost
              + unvisited_weight * unvisited_cost
 
         Returns (best_sector, best_score)
         """
-        # Weights (inspired by VFH + exploration)
-        TARGET_WEIGHT = 2.0       # Prefer forward direction
-        CLEARANCE_WEIGHT = 2.0    # Prefer clear paths
+        # Weights (inspired by VFH + frontier exploration)
+        TARGET_WEIGHT = 1.0       # Slight preference for forward direction
+        OPENNESS_WEIGHT = 2.0     # Prefer open directions (high LiDAR distance)
+        MAP_EXPLORE_WEIGHT = 5.0  # STRONGLY prefer unexplored map areas!
         PREVIOUS_WEIGHT = 1.0     # Smooth trajectory (reduce oscillation)
-        UNVISITED_WEIGHT = 5.0    # STRONGLY prefer unvisited areas
+        UNVISITED_WEIGHT = 2.0    # Prefer unvisited areas (local tracking)
 
         best_sector = 0
         best_score = -999
@@ -1026,6 +1123,13 @@ rclpy.shutdown()
         current_x, current_y = 0.0, 0.0
         if self.current_position:
             current_x, current_y = self.current_position
+
+        # Find max distance to normalize openness cost
+        max_dist = max(d for d in self.sector_distances if d < 10.0) if any(d < 10.0 for d in self.sector_distances) else 3.0
+        max_dist = max(max_dist, 1.0)  # Avoid division by zero
+
+        # Get map exploration scores (which sectors have unknown/unexplored cells)
+        map_scores = self.get_map_exploration_scores()
 
         for sector in range(NUM_SECTORS):
             dist = self.sector_distances[sector]
@@ -1041,11 +1145,15 @@ rclpy.shutdown()
             # Calculate angle from front (0 = front, ±π = back)
             angle = abs(self.sector_to_angle(sector))
 
-            # Target cost: prefer front direction (angle = 0)
+            # Target cost: slight preference for forward direction (angle = 0)
             target_cost = 1.0 - (angle / math.pi)  # 1.0 at front, 0.0 at back
 
-            # Clearance cost: prefer more clearance
-            clearance_cost = min(dist / 2.0, 1.0)  # Normalize to 0-1
+            # OPENNESS COST: Prefer directions with HIGH LiDAR distance
+            openness_cost = min(dist / max_dist, 1.0)  # 1.0 = farthest, 0.0 = closest
+
+            # MAP EXPLORATION COST: From Cartographer map data
+            # High score = lots of unknown cells = unexplored frontier!
+            map_explore_cost = map_scores[sector]  # 0.0-1.0, 1.0 = all unknown
 
             # Previous direction cost: prefer continuing in same direction
             if hasattr(self, 'previous_sector'):
@@ -1076,7 +1184,8 @@ rclpy.shutdown()
 
             # Combined score
             score = (TARGET_WEIGHT * target_cost +
-                    CLEARANCE_WEIGHT * clearance_cost +
+                    OPENNESS_WEIGHT * openness_cost +
+                    MAP_EXPLORE_WEIGHT * map_explore_cost +
                     PREVIOUS_WEIGHT * previous_cost +
                     UNVISITED_WEIGHT * unvisited_cost)
 
@@ -1504,7 +1613,7 @@ rclpy.shutdown()
                     self.stuck_cooldown = 5  # Wait 5 iterations before checking again
 
                     # Publish virtual obstacle marker at stuck position (visible in RViz)
-                    if hasattr(self, 'stuck_position') and self.stuck_position:
+                    if self.stuck_position:
                         stuck_x, stuck_y = self.stuck_position
                         self.publish_virtual_obstacle(stuck_x, stuck_y)
 
