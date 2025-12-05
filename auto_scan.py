@@ -390,6 +390,7 @@ class SectorObstacleAvoider:
         self.movement_lock = threading.Lock()
         self.movement_thread = None
         self.movement_running = False
+        self.movement_paused = False  # Pause during discrete maneuvers (backup, turn)
 
     def smooth_velocity(self, target_linear: float, target_angular: float) -> Tuple[float, float]:
         """
@@ -526,8 +527,8 @@ class SectorObstacleAvoider:
                 target_ang = self.target_angular
 
             # Apply smoothing and send command
-            # Skip if paused or emergency stopped
-            if not self.keyboard.emergency_stop and not self.keyboard.paused:
+            # Skip if paused, emergency stopped, or during discrete maneuver
+            if not self.keyboard.emergency_stop and not self.keyboard.paused and not self.movement_paused:
                 smoothed_lin, smoothed_ang = self.smooth_velocity(target_lin, target_ang)
                 self.send_cmd(smoothed_lin, smoothed_ang)
 
@@ -631,6 +632,10 @@ echo '{stop_cmd}' > /dev/ttyAMA0
         """
         print(f"\n[AVOID] Backing up for {backup_duration:.1f}s, then turning {turn_degrees:.0f}°")
 
+        # PAUSE the movement thread so it doesn't override our commands
+        self.movement_paused = True
+        time.sleep(0.1)  # Let the movement thread finish its current iteration
+
         # First: Back up
         # Motor is INVERTED: positive X = forward, negative X = backward
         # So we need NEGATIVE x_val to go backward
@@ -656,6 +661,7 @@ echo '{stop_cmd}' > /dev/ttyAMA0
         except Exception as e:
             print(f"Backup error: {e}")
             self.stop()
+            self.movement_paused = False  # Unpause on error
             return
 
         time.sleep(0.1)  # Brief pause between maneuvers
@@ -664,6 +670,9 @@ echo '{stop_cmd}' > /dev/ttyAMA0
         self.turn_in_place(turn_degrees, speed=1.0)
 
         self.obstacles_avoided += 1
+
+        # UNPAUSE the movement thread
+        self.movement_paused = False
 
     def stop(self):
         """Stop the robot"""
