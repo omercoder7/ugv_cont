@@ -390,7 +390,10 @@ class SectorObstacleAvoider:
         self.movement_lock = threading.Lock()
         self.movement_thread = None
         self.movement_running = False
-        self.movement_paused = False  # Pause during discrete maneuvers (backup, turn)
+        # Maneuver mode: None = normal, "backup" = backing up, "turn" = turning
+        self.maneuver_mode = None
+        self.maneuver_end_time = 0
+        self.maneuver_speed = 0.0  # For backup: linear speed, for turn: angular speed
 
     def smooth_velocity(self, target_linear: float, target_angular: float) -> Tuple[float, float]:
         """
@@ -514,6 +517,7 @@ class SectorObstacleAvoider:
         Continuous movement loop running at ~20Hz.
         Sends smoothed velocity commands for smooth motion instead of
         discrete start-stop movements.
+        Also handles backup and turn maneuvers directly.
         """
         LOOP_RATE = 20  # Hz - higher frequency for smoother motion
         loop_period = 1.0 / LOOP_RATE
@@ -521,14 +525,33 @@ class SectorObstacleAvoider:
         while self.movement_running:
             loop_start = time.time()
 
-            # Get current target velocity (thread-safe)
-            with self.movement_lock:
-                target_lin = self.target_linear
-                target_ang = self.target_angular
+            # Skip if paused or emergency stopped
+            if self.keyboard.emergency_stop or self.keyboard.paused:
+                time.sleep(loop_period)
+                continue
 
-            # Apply smoothing and send command
-            # Skip if paused, emergency stopped, or during discrete maneuver
-            if not self.keyboard.emergency_stop and not self.keyboard.paused and not self.movement_paused:
+            # Check if we're in a maneuver mode
+            current_time = time.time()
+            if self.maneuver_mode is not None:
+                if current_time < self.maneuver_end_time:
+                    # Execute maneuver
+                    if self.maneuver_mode == "backup":
+                        # Send backup command (negative linear, no angular)
+                        self.send_cmd(-abs(self.maneuver_speed), 0.0)
+                    elif self.maneuver_mode == "turn":
+                        # Send turn command (no linear, angular based on speed sign)
+                        self.send_cmd(0.0, self.maneuver_speed)
+                else:
+                    # Maneuver complete - stop and clear
+                    self.send_cmd(0.0, 0.0)
+                    self.maneuver_mode = None
+            else:
+                # Normal operation - get target velocity (thread-safe)
+                with self.movement_lock:
+                    target_lin = self.target_linear
+                    target_ang = self.target_angular
+
+                # Apply smoothing and send command
                 smoothed_lin, smoothed_ang = self.smooth_velocity(target_lin, target_ang)
                 self.send_cmd(smoothed_lin, smoothed_ang)
 
@@ -625,6 +648,7 @@ echo '{stop_cmd}' > /dev/ttyAMA0
     def backup_then_turn(self, backup_duration: float = 0.8, turn_degrees: float = 45):
         """
         Execute obstacle avoidance maneuver: back up, then turn in place.
+        Uses the movement thread for smooth execution.
 
         Args:
             backup_duration: How long to back up in seconds
@@ -632,47 +656,40 @@ echo '{stop_cmd}' > /dev/ttyAMA0
         """
         print(f"\n[AVOID] Backing up for {backup_duration:.1f}s, then turning {turn_degrees:.0f}°")
 
-        # PAUSE the movement thread so it doesn't override our commands
-        self.movement_paused = True
-        time.sleep(0.1)  # Let the movement thread finish its current iteration
+        # Calculate turn duration using calibrated angular velocity
+        turn_speed = 1.0
+        actual_vel = ACTUAL_MAX_ANGULAR_VEL * turn_speed
+        angle_rad = abs(turn_degrees) * (math.pi / 180)
+        turn_duration = angle_rad / actual_vel
 
-        # First: Back up
-        # Motor is INVERTED: positive X = forward, negative X = backward
-        # So we need NEGATIVE x_val to go backward
-        x_val = max(-1.0, min(1.0, -self.linear_speed * 0.6 / 0.3))  # NEGATIVE = backward
-        serial_cmd = f'{{"T":"13","X":{x_val:.2f},"Z":0.00}}'
-        stop_cmd = '{"T":"13","X":0.00,"Z":0.00}'
+        # Determine turn direction (positive degrees = left = positive angular)
+        angular_speed = turn_speed if turn_degrees > 0 else -turn_speed
 
-        iterations = int(backup_duration / 0.05)
-        bash_script = f'''
-for i in $(seq 1 {iterations}); do
-    echo '{serial_cmd}' > /dev/ttyAMA0
-    sleep 0.05
-done
-echo '{stop_cmd}' > /dev/ttyAMA0
-'''
+        # Step 1: Backup
+        self.maneuver_mode = "backup"
+        self.maneuver_speed = self.linear_speed * 0.8  # Backup speed
+        self.maneuver_end_time = time.time() + backup_duration
 
-        try:
-            subprocess.run(
-                ['docker', 'exec', CONTAINER_NAME, 'bash', '-c', bash_script],
-                timeout=backup_duration + 3,
-                capture_output=True
-            )
-        except Exception as e:
-            print(f"Backup error: {e}")
-            self.stop()
-            self.movement_paused = False  # Unpause on error
-            return
+        # Wait for backup to complete
+        while self.maneuver_mode == "backup" and time.time() < self.maneuver_end_time + 0.2:
+            time.sleep(0.05)
 
-        time.sleep(0.1)  # Brief pause between maneuvers
+        # Brief pause between maneuvers
+        time.sleep(0.1)
 
-        # Second: Turn in place
-        self.turn_in_place(turn_degrees, speed=1.0)
+        # Step 2: Turn
+        self.maneuver_mode = "turn"
+        self.maneuver_speed = angular_speed
+        self.maneuver_end_time = time.time() + turn_duration
 
+        # Wait for turn to complete
+        while self.maneuver_mode == "turn" and time.time() < self.maneuver_end_time + 0.2:
+            time.sleep(0.05)
+
+        # Clear maneuver mode
+        self.maneuver_mode = None
         self.obstacles_avoided += 1
-
-        # UNPAUSE the movement thread
-        self.movement_paused = False
+        self.total_rotations += 1
 
     def stop(self):
         """Stop the robot"""
