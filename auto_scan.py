@@ -380,6 +380,16 @@ class SectorObstacleAvoider:
         self.avoidance_attempt_count = 0  # Count attempts in same area
         self.last_avoidance_position = None  # Position where we last avoided
 
+        # Dead-end detection
+        self.dead_end_positions: Set[Tuple[int, int]] = set()  # Grid cells marked as dead ends
+
+        # Continuous movement thread
+        self.target_linear = 0.0
+        self.target_angular = 0.0
+        self.movement_lock = threading.Lock()
+        self.movement_thread = None
+        self.movement_running = False
+
     def smooth_velocity(self, target_linear: float, target_angular: float) -> Tuple[float, float]:
         """
         Apply smoothing to velocity commands using:
@@ -419,6 +429,112 @@ class SectorObstacleAvoider:
         self.last_angular = smoothed_angular
 
         return smoothed_linear, smoothed_angular
+
+    def is_dead_end(self) -> bool:
+        """
+        Detect if current position is a dead-end by checking if 3+ direction
+        groups are blocked. Direction groups:
+        - FRONT: sectors 11, 0, 1
+        - LEFT: sectors 2, 3, 4
+        - BACK: sectors 5, 6, 7
+        - RIGHT: sectors 8, 9, 10
+
+        Returns True if 3 or more direction groups are blocked.
+        """
+        BLOCKED_THRESHOLD = 0.5  # Consider blocked if closer than this
+
+        # Count blocked direction groups
+        blocked_groups = 0
+
+        # FRONT (sectors 11, 0, 1)
+        front_dists = [self.sector_distances[11], self.sector_distances[0], self.sector_distances[1]]
+        front_valid = [d for d in front_dists if d > 0.1]  # Exclude blind spots
+        if front_valid and max(front_valid) < BLOCKED_THRESHOLD:
+            blocked_groups += 1
+
+        # LEFT (sectors 2, 3, 4)
+        left_dists = [self.sector_distances[2], self.sector_distances[3], self.sector_distances[4]]
+        left_valid = [d for d in left_dists if d > 0.1]
+        if left_valid and max(left_valid) < BLOCKED_THRESHOLD:
+            blocked_groups += 1
+
+        # BACK (sectors 5, 6, 7)
+        back_dists = [self.sector_distances[5], self.sector_distances[6], self.sector_distances[7]]
+        back_valid = [d for d in back_dists if d > 0.1]
+        if back_valid and max(back_valid) < BLOCKED_THRESHOLD:
+            blocked_groups += 1
+
+        # RIGHT (sectors 8, 9, 10)
+        right_dists = [self.sector_distances[8], self.sector_distances[9], self.sector_distances[10]]
+        right_valid = [d for d in right_dists if d > 0.1]
+        if right_valid and max(right_valid) < BLOCKED_THRESHOLD:
+            blocked_groups += 1
+
+        return blocked_groups >= 3
+
+    def mark_dead_end(self, x: float, y: float):
+        """Mark a position as a dead-end that should be avoided"""
+        cell = self.visited_tracker.pos_to_cell(x, y)
+        if cell not in self.dead_end_positions:
+            self.dead_end_positions.add(cell)
+            print(f"\n[DEAD-END] Marked cell {cell} as dead-end at ({x:.2f}, {y:.2f})")
+
+    def is_in_dead_end(self, x: float, y: float) -> bool:
+        """Check if a position is in a known dead-end area"""
+        cell = self.visited_tracker.pos_to_cell(x, y)
+        return cell in self.dead_end_positions
+
+    def start_movement_thread(self):
+        """Start the continuous movement thread for smooth motion"""
+        if self.movement_thread is not None and self.movement_thread.is_alive():
+            return  # Already running
+
+        self.movement_running = True
+        self.movement_thread = threading.Thread(target=self._movement_loop, daemon=True)
+        self.movement_thread.start()
+        print("[MOTION] Started continuous movement thread")
+
+    def stop_movement_thread(self):
+        """Stop the continuous movement thread"""
+        self.movement_running = False
+        if self.movement_thread is not None:
+            self.movement_thread.join(timeout=1.0)
+        self.movement_thread = None
+
+    def set_target_velocity(self, linear: float, angular: float):
+        """Set target velocity for the movement thread (thread-safe)"""
+        with self.movement_lock:
+            self.target_linear = linear
+            self.target_angular = angular
+
+    def _movement_loop(self):
+        """
+        Continuous movement loop running at ~10Hz.
+        Sends smoothed velocity commands for smooth motion instead of
+        discrete start-stop movements.
+        """
+        LOOP_RATE = 10  # Hz
+        loop_period = 1.0 / LOOP_RATE
+
+        while self.movement_running:
+            loop_start = time.time()
+
+            # Get current target velocity (thread-safe)
+            with self.movement_lock:
+                target_lin = self.target_linear
+                target_ang = self.target_angular
+
+            # Apply smoothing and send command
+            # Skip if paused or emergency stopped
+            if not self.keyboard.emergency_stop and not self.keyboard.paused:
+                smoothed_lin, smoothed_ang = self.smooth_velocity(target_lin, target_ang)
+                self.send_cmd(smoothed_lin, smoothed_ang)
+
+            # Maintain loop rate
+            elapsed = time.time() - loop_start
+            sleep_time = loop_period - elapsed
+            if sleep_time > 0:
+                time.sleep(sleep_time)
 
     def send_cmd(self, linear_x: float, angular_z: float):
         """Send velocity command directly to serial port (bypasses ROS2)"""
@@ -1247,7 +1363,7 @@ rclpy.shutdown()
         print("="*60)
 
     def run(self):
-        """Main control loop"""
+        """Main control loop with continuous movement thread for smooth motion"""
         self.running = True
         self.start_time = time.time()
 
@@ -1260,7 +1376,8 @@ rclpy.shutdown()
         print(f"Sectors:         {NUM_SECTORS} ({self.sector_degrees}° each)")
         print(f"LiDAR rotation:  90° (corrected in software)")
         print(f"Stuck detection: Enabled (uses odometry)")
-        print(f"Motion smooth:   EMA(α={self.ema_alpha}) + accel limits")
+        print(f"Motion smooth:   Continuous thread @10Hz + EMA(α={self.ema_alpha})")
+        print(f"Dead-end detect: Enabled (skip 3+ blocked directions)")
         print("-"*60)
         print("Controls:")
         print("  SPACE/s  - Emergency stop")
@@ -1270,7 +1387,9 @@ rclpy.shutdown()
         print("="*60 + "\n")
 
         self.keyboard.start()
+        self.start_movement_thread()  # Start continuous movement for smooth motion
         last_status_time = time.time()
+        dead_ends_found = 0
 
         try:
             while self.running:
@@ -1288,7 +1407,7 @@ rclpy.shutdown()
 
                 # Check emergency stop / pause
                 if self.keyboard.emergency_stop or self.keyboard.paused:
-                    self.stop()
+                    self.set_target_velocity(0.0, 0.0)  # Stop via movement thread
                     time.sleep(0.2)
                     continue
 
@@ -1306,12 +1425,25 @@ rclpy.shutdown()
                         stats = self.visited_tracker.get_coverage_stats()
                         print(f"\n[EXPLORE] New cell! Total: {stats['cells_visited']} cells, {stats['area_covered']:.1f}m²")
 
-                # Compute and send velocity
+                    # Check for dead-end at current position
+                    if self.is_dead_end():
+                        if not self.is_in_dead_end(pos[0], pos[1]):
+                            self.mark_dead_end(pos[0], pos[1])
+                            dead_ends_found += 1
+                            # Back out of dead-end
+                            print(f"\n[DEAD-END] Backing out of dead-end area!")
+                            self.set_target_velocity(0.0, 0.0)  # Stop movement thread
+                            self.backup_then_turn(backup_duration=1.2, turn_degrees=120)
+                            continue
+
+                # Compute velocity (may execute discrete maneuvers)
                 linear, angular = self.compute_velocity()
 
                 # If compute_velocity returned None, a discrete maneuver was executed
                 # Skip the rest of this iteration
                 if linear is None:
+                    # After discrete maneuver, reset target velocity
+                    self.set_target_velocity(0.0, 0.0)
                     continue
 
                 # Check if stuck (driving but not moving)
@@ -1341,6 +1473,7 @@ rclpy.shutdown()
                         self.avoidance_direction = "left"  # Default
                         self.avoidance_start_time = time.time()
 
+                    self.set_target_velocity(0.0, 0.0)  # Stop movement thread during maneuver
                     turn_degrees = 60 if self.avoidance_direction == "left" else -60
                     self.backup_then_turn(backup_duration=1.0, turn_degrees=turn_degrees)
 
@@ -1348,7 +1481,7 @@ rclpy.shutdown()
                     self.last_position = None
                     continue
 
-                # Send velocity command
+                # Set target velocity for the continuous movement thread
                 # During emergency maneuvers, bypass smoothing for faster response
                 if self.emergency_maneuver:
                     # Reset smoothing state and send direct command
@@ -1356,20 +1489,24 @@ rclpy.shutdown()
                     self.last_angular = angular
                     self.send_cmd(linear, angular)
                 else:
-                    self.send_smoothed_cmd(linear, angular)
+                    # Set target velocity - movement thread will smooth and send
+                    self.set_target_velocity(linear, angular)
 
                 # Print detailed status periodically
                 if time.time() - last_status_time > 10:
                     self.print_sector_display()
                     last_status_time = time.time()
 
-                # Control loop rate (~5 Hz)
+                # Control loop rate (~5 Hz) - just for decision making
+                # Movement thread runs at 10Hz for smooth motion
                 time.sleep(0.2)
 
         except KeyboardInterrupt:
             print("\n\nInterrupted (Ctrl+C)")
         finally:
             print("\n\nStopping...")
+            self.set_target_velocity(0.0, 0.0)
+            self.stop_movement_thread()
             self.emergency_stop()
             self.keyboard.stop()
             self.running = False
@@ -1387,6 +1524,7 @@ rclpy.shutdown()
             print(f"Obstacles avoided:  {self.obstacles_avoided}")
             print(f"Direction changes:  {self.total_rotations}")
             print(f"Stuck detections:   {len(self.blocked_sectors) // 3}")  # Approx, since we block 3 at a time
+            print(f"Dead-ends found:    {dead_ends_found}")
             print("-"*60)
             print("EXPLORATION COVERAGE:")
             print(f"  Cells visited:    {stats['cells_visited']}")
