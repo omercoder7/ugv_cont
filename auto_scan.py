@@ -487,14 +487,18 @@ class SectorObstacleAvoider:
                 self.maneuver_mode = mode
                 self.maneuver_speed = speed
                 self.maneuver_end_time = current_time + duration
+                # Debug: print when starting a new maneuver
+                print(f"\r[MANEUVER] Starting {mode}: speed={speed:.2f}, duration={duration:.2f}s", end="", flush=True)
 
             # Execute current maneuver or normal operation
             if self.maneuver_mode is not None:
                 if self.maneuver_mode == "backup":
                     # Send backup command (negative linear, no angular)
+                    # At 0.15 m/s, this should move ~15cm per second
                     self.send_cmd(-abs(self.maneuver_speed), 0.0)
                 elif self.maneuver_mode == "turn":
                     # Send turn command (no linear, angular based on speed sign)
+                    # At speed=1.0, this sends Z=1.0 which turns at ~0.29 rad/s calibrated
                     self.send_cmd(0.0, self.maneuver_speed)
                 elif self.maneuver_mode == "stop":
                     # Stationary - send zero
@@ -625,20 +629,27 @@ echo '{stop_cmd}' > /dev/ttyAMA0
         self.maneuver_mode = None
 
         # Queue maneuvers: STOP -> TURN -> BACKUP
-        self.queue_maneuver("stop", 0.0, 0.15)  # Brief stop
+        self.queue_maneuver("stop", 0.0, 0.2)  # Brief stop (increased for safety)
         self.queue_maneuver("turn", angular_speed, turn_duration)  # Turn in place
-        self.queue_maneuver("stop", 0.0, 0.1)  # Brief pause
+        self.queue_maneuver("stop", 0.0, 0.2)  # Brief pause (increased)
         # Backup speed: Use 0.15 m/s (faster than normal driving) to actually move back
         # This maps to X = -0.5 in send_cmd (0.15/0.3 = 0.5)
         self.queue_maneuver("backup", 0.15, backup_duration)  # Back away at decent speed
 
         # Calculate total wait time
-        total_duration = 0.15 + turn_duration + 0.1 + backup_duration
+        total_duration = 0.2 + turn_duration + 0.2 + backup_duration
 
-        # Wait for all maneuvers to complete
-        wait_until = time.time() + total_duration + 0.3
-        while (self.maneuver_mode is not None or self.maneuver_queue) and time.time() < wait_until:
-            time.sleep(0.05)
+        # BLOCK until maneuvers complete - don't let main loop send new commands
+        # Use longer timeout to ensure full completion
+        wait_until = time.time() + total_duration + 1.0
+        while time.time() < wait_until:
+            # Check if all maneuvers are done
+            if self.maneuver_mode is None and not self.maneuver_queue:
+                break
+            time.sleep(0.1)  # Check less frequently to avoid busy-waiting
+
+        # Extra safety: ensure movement thread has time to finish last command
+        time.sleep(0.2)
 
         self.obstacles_avoided += 1
         self.total_rotations += 1
