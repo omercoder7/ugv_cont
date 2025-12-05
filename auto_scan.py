@@ -390,10 +390,12 @@ class SectorObstacleAvoider:
         self.movement_lock = threading.Lock()
         self.movement_thread = None
         self.movement_running = False
-        # Maneuver mode: None = normal, "backup" = backing up, "turn" = turning
+        # Maneuver mode: None = normal, "backup" = backing up, "turn" = turning, "stop" = stationary
         self.maneuver_mode = None
         self.maneuver_end_time = 0
         self.maneuver_speed = 0.0  # For backup: linear speed, for turn: angular speed
+        # Maneuver queue (FIFO): list of (mode, speed, duration) tuples
+        self.maneuver_queue = []
 
     def smooth_velocity(self, target_linear: float, target_angular: float) -> Tuple[float, float]:
         """
@@ -512,12 +514,16 @@ class SectorObstacleAvoider:
             self.target_linear = linear
             self.target_angular = angular
 
+    def queue_maneuver(self, mode: str, speed: float, duration: float):
+        """Add a maneuver to the queue (thread-safe)"""
+        self.maneuver_queue.append((mode, speed, duration))
+
     def _movement_loop(self):
         """
         Continuous movement loop running at ~20Hz.
         Sends smoothed velocity commands for smooth motion instead of
         discrete start-stop movements.
-        Also handles backup and turn maneuvers directly.
+        Also handles backup, turn, and stop maneuvers via queue.
         """
         LOOP_RATE = 20  # Hz - higher frequency for smoother motion
         loop_period = 1.0 / LOOP_RATE
@@ -530,21 +536,30 @@ class SectorObstacleAvoider:
                 time.sleep(loop_period)
                 continue
 
-            # Check if we're in a maneuver mode
             current_time = time.time()
+
+            # Check if current maneuver is done
+            if self.maneuver_mode is not None and current_time >= self.maneuver_end_time:
+                self.maneuver_mode = None
+
+            # If no active maneuver, check queue for next one
+            if self.maneuver_mode is None and self.maneuver_queue:
+                mode, speed, duration = self.maneuver_queue.pop(0)
+                self.maneuver_mode = mode
+                self.maneuver_speed = speed
+                self.maneuver_end_time = current_time + duration
+
+            # Execute current maneuver or normal operation
             if self.maneuver_mode is not None:
-                if current_time < self.maneuver_end_time:
-                    # Execute maneuver
-                    if self.maneuver_mode == "backup":
-                        # Send backup command (negative linear, no angular)
-                        self.send_cmd(-abs(self.maneuver_speed), 0.0)
-                    elif self.maneuver_mode == "turn":
-                        # Send turn command (no linear, angular based on speed sign)
-                        self.send_cmd(0.0, self.maneuver_speed)
-                else:
-                    # Maneuver complete - stop and clear
+                if self.maneuver_mode == "backup":
+                    # Send backup command (negative linear, no angular)
+                    self.send_cmd(-abs(self.maneuver_speed), 0.0)
+                elif self.maneuver_mode == "turn":
+                    # Send turn command (no linear, angular based on speed sign)
+                    self.send_cmd(0.0, self.maneuver_speed)
+                elif self.maneuver_mode == "stop":
+                    # Stationary - send zero
                     self.send_cmd(0.0, 0.0)
-                    self.maneuver_mode = None
             else:
                 # Normal operation - get target velocity (thread-safe)
                 with self.movement_lock:
@@ -647,14 +662,15 @@ echo '{stop_cmd}' > /dev/ttyAMA0
 
     def backup_then_turn(self, backup_duration: float = 0.8, turn_degrees: float = 45):
         """
-        Execute obstacle avoidance maneuver: back up, then turn in place.
-        Uses the movement thread for smooth execution.
+        Execute obstacle avoidance maneuver: stop, turn in place, then back up.
+        Uses the movement thread queue for smooth execution.
+        Order: STOP -> TURN -> BACKUP (turn first while stationary, then back away)
 
         Args:
             backup_duration: How long to back up in seconds
             turn_degrees: How many degrees to turn (positive = left, negative = right)
         """
-        print(f"\n[AVOID] Backing up for {backup_duration:.1f}s, then turning {turn_degrees:.0f}°")
+        print(f"\n[AVOID] Stop, turn {turn_degrees:.0f}°, then backup {backup_duration:.1f}s")
 
         # Calculate turn duration using calibrated angular velocity
         turn_speed = 1.0
@@ -665,29 +681,24 @@ echo '{stop_cmd}' > /dev/ttyAMA0
         # Determine turn direction (positive degrees = left = positive angular)
         angular_speed = turn_speed if turn_degrees > 0 else -turn_speed
 
-        # Step 1: Backup
-        self.maneuver_mode = "backup"
-        self.maneuver_speed = self.linear_speed * 0.8  # Backup speed
-        self.maneuver_end_time = time.time() + backup_duration
-
-        # Wait for backup to complete
-        while self.maneuver_mode == "backup" and time.time() < self.maneuver_end_time + 0.2:
-            time.sleep(0.05)
-
-        # Brief pause between maneuvers
-        time.sleep(0.1)
-
-        # Step 2: Turn
-        self.maneuver_mode = "turn"
-        self.maneuver_speed = angular_speed
-        self.maneuver_end_time = time.time() + turn_duration
-
-        # Wait for turn to complete
-        while self.maneuver_mode == "turn" and time.time() < self.maneuver_end_time + 0.2:
-            time.sleep(0.05)
-
-        # Clear maneuver mode
+        # Clear any existing queue
+        self.maneuver_queue.clear()
         self.maneuver_mode = None
+
+        # Queue maneuvers: STOP -> TURN -> BACKUP
+        self.queue_maneuver("stop", 0.0, 0.15)  # Brief stop
+        self.queue_maneuver("turn", angular_speed, turn_duration)  # Turn in place
+        self.queue_maneuver("stop", 0.0, 0.1)  # Brief pause
+        self.queue_maneuver("backup", self.linear_speed * 0.8, backup_duration)  # Back away
+
+        # Calculate total wait time
+        total_duration = 0.15 + turn_duration + 0.1 + backup_duration
+
+        # Wait for all maneuvers to complete
+        wait_until = time.time() + total_duration + 0.3
+        while (self.maneuver_mode is not None or self.maneuver_queue) and time.time() < wait_until:
+            time.sleep(0.05)
+
         self.obstacles_avoided += 1
         self.total_rotations += 1
 
@@ -875,8 +886,9 @@ rclpy.shutdown()
         if front_min < 0.40:
             self.stuck_time_counter += 1
 
-            # 3 iterations = ~0.6s of driving into close obstacle = stuck
-            if self.stuck_time_counter >= 3:
+            # 2 iterations at 5Hz = ~0.4s of driving into close obstacle = stuck
+            # Faster detection since movement thread runs at 20Hz
+            if self.stuck_time_counter >= 2:
                 print(f"\n[STUCK] Driving into obstacle at {front_min:.2f}m!")
                 print(f"  Front sectors: s0={self.sector_distances[0]:.2f} s1={self.sector_distances[1]:.2f} s4={self.sector_distances[4]:.2f} s5={self.sector_distances[5]:.2f}")
                 self.stuck_position = self.get_odometry()
