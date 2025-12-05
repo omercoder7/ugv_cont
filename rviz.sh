@@ -101,6 +101,7 @@ show_help() {
     echo "                Use 'slam-opt new_map' to start with a fresh map"
     echo "  slam-ekf    - SLAM with EKF triple fusion (BEST ACCURACY)"
     echo "                Uses wheel encoders + LiDAR + IMU for best odometry"
+    echo "                Use 'slam-ekf new_map' to start with a fresh map"
     echo "  slam-simple - Simple SLAM without Nav2 (requires bringup running)"
     echo "  slam3d      - SLAM+Nav2 with 3D visualization"
     echo "  nav         - Navigation view (2D)"
@@ -360,6 +361,8 @@ case "${MODE}" in
         launch_rviz "/tmp/view_slam_2d.rviz"
         ;;
     slam-ekf)
+        NEW_MAP="$2"
+
         echo "Starting SLAM with EKF triple sensor fusion (BEST ACCURACY)..."
         echo ""
         echo "This uses:"
@@ -371,69 +374,136 @@ case "${MODE}" in
 
         SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-        # Restart container for clean slate
-        echo "Restarting container for clean slate..."
-        docker restart ${CONTAINER_NAME}
-        sleep 5
+        # Handle new_map option - restart container to clear zombie processes
+        if [ "${NEW_MAP}" = "new_map" ] || [ "${NEW_MAP}" = "new" ] || [ "${NEW_MAP}" = "--new-map" ]; then
+            echo ""
+            echo "*** NEW MAP MODE - Restarting container for clean slate ***"
+            echo ""
 
-        # Copy configs
-        docker cp "${SCRIPT_DIR}/slam_toolbox_optimized.yaml" ${CONTAINER_NAME}:/tmp/slam_toolbox_optimized.yaml
-        docker cp "${SCRIPT_DIR}/ekf_wheel_lidar_imu.yaml" ${CONTAINER_NAME}:/tmp/ekf_wheel_lidar_imu.yaml
-        docker cp "${SCRIPT_DIR}/view_slam_2d.rviz" ${CONTAINER_NAME}:/tmp/view_slam_2d.rviz 2>/dev/null
+            # Restart container for clean slate
+            echo "Restarting container..."
+            docker restart ${CONTAINER_NAME}
+            sleep 5
 
-        # Start bringup WITHOUT odom TF (EKF will publish it)
-        echo "Starting robot bringup (EKF handles odometry TF)..."
-        docker exec -d ${CONTAINER_NAME} /bin/bash -c "
-        source /opt/ros/humble/setup.bash && \
-        source /root/ugv_ws/install/setup.bash && \
-        export UGV_MODEL=ugv_beast && \
-        export LDLIDAR_MODEL=ld19 && \
-        ros2 launch ugv_bringup bringup_lidar.launch.py pub_odom_tf:=false > /tmp/bringup.log 2>&1
-        "
-        sleep 6
+            # Copy configs
+            docker cp "${SCRIPT_DIR}/slam_toolbox_optimized.yaml" ${CONTAINER_NAME}:/tmp/slam_toolbox_optimized.yaml
+            docker cp "${SCRIPT_DIR}/ekf_wheel_lidar_imu.yaml" ${CONTAINER_NAME}:/tmp/ekf_wheel_lidar_imu.yaml
+            docker cp "${SCRIPT_DIR}/view_slam_2d.rviz" ${CONTAINER_NAME}:/tmp/view_slam_2d.rviz 2>/dev/null
 
-        # Check bringup
-        if docker exec ${CONTAINER_NAME} pgrep -f "bringup_lidar" > /dev/null 2>&1; then
-            echo "  Bringup: RUNNING"
+            # Start bringup WITHOUT odom TF (EKF will publish it)
+            echo "Starting robot bringup (EKF handles odometry TF)..."
+            docker exec -d ${CONTAINER_NAME} /bin/bash -c "
+            source /opt/ros/humble/setup.bash && \
+            source /root/ugv_ws/install/setup.bash && \
+            export UGV_MODEL=ugv_beast && \
+            export LDLIDAR_MODEL=ld19 && \
+            ros2 launch ugv_bringup bringup_lidar.launch.py pub_odom_tf:=false > /tmp/bringup.log 2>&1
+            "
+            sleep 6
+
+            # Check bringup
+            if docker exec ${CONTAINER_NAME} pgrep -f "bringup_lidar" > /dev/null 2>&1; then
+                echo "  Bringup: RUNNING"
+            else
+                echo "  Bringup: FAILED"
+            fi
+
+            # Start EKF fusion
+            echo "Starting EKF fusion (wheel + LiDAR + IMU)..."
+            docker exec -d ${CONTAINER_NAME} /bin/bash -c "
+            source /opt/ros/humble/setup.bash && \
+            source /root/ugv_ws/install/setup.bash && \
+            ros2 run robot_localization ekf_node \
+              --ros-args \
+              --params-file /tmp/ekf_wheel_lidar_imu.yaml \
+              -r /odometry/filtered:=/odom_fused > /tmp/ekf.log 2>&1
+            "
+            sleep 3
+
+            # Check EKF
+            if docker exec ${CONTAINER_NAME} pgrep -f "ekf_node" > /dev/null 2>&1; then
+                echo "  EKF: RUNNING"
+            else
+                echo "  EKF: FAILED - check /tmp/ekf.log"
+            fi
+
+            # Start SLAM
+            echo "Starting SLAM..."
+            docker exec -d ${CONTAINER_NAME} /bin/bash -c "
+            source /opt/ros/humble/setup.bash && \
+            source /root/ugv_ws/install/setup.bash && \
+            ros2 launch slam_toolbox online_async_launch.py \
+              use_sim_time:=false \
+              slam_params_file:=/tmp/slam_toolbox_optimized.yaml > /tmp/slam.log 2>&1
+            "
+            sleep 3
+
+            # Check SLAM
+            if docker exec ${CONTAINER_NAME} pgrep -f "slam_toolbox" > /dev/null 2>&1; then
+                echo "  SLAM: RUNNING"
+            else
+                echo "  SLAM: FAILED"
+            fi
+
+            # Verify no zombie processes
+            ZOMBIES=$(docker exec ${CONTAINER_NAME} ps aux 2>/dev/null | grep -c "<defunct>" || echo "0")
+            if [ "${ZOMBIES}" -gt 0 ]; then
+                echo "Warning: ${ZOMBIES} zombie processes found"
+            else
+                echo "Clean start - no zombie processes!"
+            fi
         else
-            echo "  Bringup: FAILED"
-        fi
+            # Normal mode - continue existing session or start if not running
+            # Copy configs
+            docker cp "${SCRIPT_DIR}/slam_toolbox_optimized.yaml" ${CONTAINER_NAME}:/tmp/slam_toolbox_optimized.yaml
+            docker cp "${SCRIPT_DIR}/ekf_wheel_lidar_imu.yaml" ${CONTAINER_NAME}:/tmp/ekf_wheel_lidar_imu.yaml
+            docker cp "${SCRIPT_DIR}/view_slam_2d.rviz" ${CONTAINER_NAME}:/tmp/view_slam_2d.rviz 2>/dev/null
 
-        # Start EKF fusion
-        echo "Starting EKF fusion (wheel + LiDAR + IMU)..."
-        docker exec -d ${CONTAINER_NAME} /bin/bash -c "
-        source /opt/ros/humble/setup.bash && \
-        source /root/ugv_ws/install/setup.bash && \
-        ros2 run robot_localization ekf_node \
-          --ros-args \
-          --params-file /tmp/ekf_wheel_lidar_imu.yaml \
-          -r /odometry/filtered:=/odom_fused > /tmp/ekf.log 2>&1
-        "
-        sleep 3
+            # Check if bringup is already running
+            if ! docker exec ${CONTAINER_NAME} pgrep -f "bringup_lidar" > /dev/null 2>&1; then
+                echo "Starting robot bringup (EKF handles odometry TF)..."
+                docker exec -d ${CONTAINER_NAME} /bin/bash -c "
+                source /opt/ros/humble/setup.bash && \
+                source /root/ugv_ws/install/setup.bash && \
+                export UGV_MODEL=ugv_beast && \
+                export LDLIDAR_MODEL=ld19 && \
+                ros2 launch ugv_bringup bringup_lidar.launch.py pub_odom_tf:=false > /tmp/bringup.log 2>&1
+                "
+                sleep 6
+            else
+                echo "Bringup already running, skipping..."
+            fi
 
-        # Check EKF
-        if docker exec ${CONTAINER_NAME} pgrep -f "ekf_node" > /dev/null 2>&1; then
-            echo "  EKF: RUNNING"
-        else
-            echo "  EKF: FAILED - check /tmp/ekf.log"
-        fi
+            # Check if EKF is already running
+            if ! docker exec ${CONTAINER_NAME} pgrep -f "ekf_node" > /dev/null 2>&1; then
+                echo "Starting EKF fusion (wheel + LiDAR + IMU)..."
+                docker exec -d ${CONTAINER_NAME} /bin/bash -c "
+                source /opt/ros/humble/setup.bash && \
+                source /root/ugv_ws/install/setup.bash && \
+                ros2 run robot_localization ekf_node \
+                  --ros-args \
+                  --params-file /tmp/ekf_wheel_lidar_imu.yaml \
+                  -r /odometry/filtered:=/odom_fused > /tmp/ekf.log 2>&1
+                "
+                sleep 3
+            else
+                echo "EKF already running, skipping..."
+            fi
 
-        # Start SLAM
-        echo "Starting SLAM..."
-        docker exec -d ${CONTAINER_NAME} /bin/bash -c "
-        source /opt/ros/humble/setup.bash && \
-        source /root/ugv_ws/install/setup.bash && \
-        ros2 launch slam_toolbox online_async_launch.py \
-          use_sim_time:=false \
-          slam_params_file:=/tmp/slam_toolbox_optimized.yaml > /tmp/slam.log 2>&1
-        "
-        sleep 3
-
-        # Check SLAM
-        if docker exec ${CONTAINER_NAME} pgrep -f "slam_toolbox" > /dev/null 2>&1; then
-            echo "  SLAM: RUNNING"
-        else
-            echo "  SLAM: FAILED"
+            # Check if SLAM is already running
+            if ! docker exec ${CONTAINER_NAME} pgrep -f "slam_toolbox" > /dev/null 2>&1; then
+                echo "Starting SLAM..."
+                docker exec -d ${CONTAINER_NAME} /bin/bash -c "
+                source /opt/ros/humble/setup.bash && \
+                source /root/ugv_ws/install/setup.bash && \
+                ros2 launch slam_toolbox online_async_launch.py \
+                  use_sim_time:=false \
+                  slam_params_file:=/tmp/slam_toolbox_optimized.yaml > /tmp/slam.log 2>&1
+                "
+                sleep 3
+            else
+                echo "SLAM already running, skipping..."
+            fi
         fi
 
         echo ""

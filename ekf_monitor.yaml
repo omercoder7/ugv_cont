@@ -1,26 +1,19 @@
-### EKF config for Wheel + LiDAR + IMU fusion ###
-# Triple sensor fusion for UGV Beast - best odometry accuracy
+### EKF config for monitoring wheel + LiDAR + IMU fusion ###
+# This config runs EKF alongside the normal odometry for comparison
+# It does NOT publish TF - just the /odom_fused topic for monitoring
 #
-# Sensors:
-# - Wheel encoders: Ground truth for when robot is actually moving
-# - LiDAR odometry: Good for position in feature-rich environments
-# - IMU: Best for rotation detection and orientation
-#
-# Strategy:
-# - Use wheel encoders for VELOCITY (vx, vyaw) - most reliable for actual movement
-# - Use LiDAR for POSITION corrections (differential mode)
-# - Use IMU for orientation and angular velocity
+# Use this to see how fused odometry compares to raw rf2o odometry
 
 ekf_filter_node:
     ros__parameters:
         use_sim_time: false
-        frequency: 50.0           # Higher frequency for smoother output
-        sensor_timeout: 0.2
+        frequency: 50.0
+        sensor_timeout: 0.5       # Increased timeout
         two_d_mode: true
         transform_time_offset: 0.0
-        transform_timeout: 0.5
-        print_diagnostics: true   # Enable to debug sensor fusion
-        publish_tf: true          # EKF publishes odom->base_footprint TF
+        transform_timeout: 1.0    # Increased
+        print_diagnostics: false  # Disable noisy diagnostics
+        publish_tf: false         # DON'T publish TF - let rf2o handle it
         publish_acceleration: false
         reset_on_time_jump: true
 
@@ -28,62 +21,44 @@ ekf_filter_node:
         base_link_frame: base_footprint
         world_frame: odom
 
-        # ============================================
-        # Sensor 0: Wheel Encoders (most trusted for velocity)
-        # ============================================
-        # Wheel encoders tell us when the robot is ACTUALLY moving
-        # This prevents drift when robot is stationary but laser sees movement
-        # NOTE: /odom is wheel encoder odometry from base_node
-        #       /odom/odom_raw is raw Float32MultiArray - NOT usable by EKF
+        # Sensor 0: Wheel Encoders - velocity only
         odom0: /odom
-        odom0_config: [false, false, false,   # x, y, z - DON'T use (accumulates drift)
-                       false, false, false,   # roll, pitch, yaw - DON'T use
-                       true, false, false,    # vx - YES! Trust wheel velocity
-                       false, false, true,    # yaw_rate - YES! Trust wheel angular velocity
-                       false, false, false]   # ax, ay, az
-        odom0_queue_size: 5
+        odom0_config: [false, false, false,   # position
+                       false, false, false,   # orientation
+                       true, false, false,    # vx only
+                       false, false, true,    # yaw_rate only
+                       false, false, false]   # acceleration
+        odom0_queue_size: 10
         odom0_nodelay: true
         odom0_differential: false
         odom0_relative: false
 
-        # ============================================
-        # Sensor 1: Laser Odometry (rf2o)
-        # ============================================
-        # Good for position in feature-rich environments
-        # Use differential mode to reduce drift accumulation
+        # Sensor 1: Laser Odometry (rf2o) - position
         odom1: /odom_rf2o
-        odom1_config: [true, true, false,     # x, y - Use for position correction
-                       false, false, true,    # yaw - Use laser yaw
-                       false, false, false,   # DON'T trust rf2o velocity (overestimates)
+        odom1_config: [true, true, false,     # x, y position
+                       false, false, true,    # yaw
+                       false, false, false,
                        false, false, false,
                        false, false, false]
-        odom1_queue_size: 5
+        odom1_queue_size: 10
         odom1_nodelay: true
-        odom1_differential: true   # Differential mode reduces drift
+        odom1_differential: true
         odom1_relative: false
 
-        # ============================================
-        # Sensor 2: IMU
-        # ============================================
-        # Best for rotation - measures actual physical movement
+        # Sensor 2: IMU - orientation
         imu0: /imu/data
-        imu0_config: [false, false, false,    # No position from IMU
-                      false, false, true,     # yaw - Trust IMU orientation
-                      false, false, false,    # No velocity from IMU
-                      false, false, true,     # yaw_rate - Trust IMU angular velocity
-                      true, true, false]      # ax, ay - Use IMU acceleration
+        imu0_config: [false, false, false,
+                      false, false, true,     # yaw
+                      false, false, false,
+                      false, false, true,     # yaw_rate
+                      true, true, false]      # ax, ay
         imu0_nodelay: true
         imu0_differential: false
         imu0_relative: false
         imu0_queue_size: 10
         imu0_remove_gravitational_acceleration: true
 
-        # ============================================
-        # Process Noise Covariance
-        # ============================================
-        # How much we expect the robot state to change between updates
-        # Lower = trust predictions more, Higher = trust measurements more
-        # 15x15 matrix: [x, y, z, roll, pitch, yaw, vx, vy, vz, roll_rate, pitch_rate, yaw_rate, ax, ay, az]
+        # Process noise - tuned for robot
         process_noise_covariance: [0.05,   0.0,    0.0,    0.0,    0.0,    0.0,    0.0,     0.0,     0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,
                                    0.0,    0.05,   0.0,    0.0,    0.0,    0.0,    0.0,     0.0,     0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,
                                    0.0,    0.0,    0.06,   0.0,    0.0,    0.0,    0.0,     0.0,     0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,
@@ -100,7 +75,6 @@ ekf_filter_node:
                                    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,     0.0,     0.0,    0.0,    0.0,    0.0,    0.0,    0.01,   0.0,
                                    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,     0.0,     0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.015]
 
-        # Initial estimate covariance
         initial_estimate_covariance: [1.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,     0.0,     0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,
                                       0.0,    1.0,    0.0,    0.0,    0.0,    0.0,    0.0,     0.0,     0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,
                                       0.0,    0.0,    1.0,    0.0,    0.0,    0.0,    0.0,     0.0,     0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.0,

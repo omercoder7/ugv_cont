@@ -28,8 +28,8 @@ if [ "$1" == "--check" ]; then
     echo "=== Checking Sensor Topics ==="
     echo ""
 
-    echo "1. Wheel encoders (/odom/odom_raw):"
-    WHEEL=$(docker exec ${CONTAINER_NAME} bash -c "source /opt/ros/humble/setup.bash && timeout 3 ros2 topic hz /odom/odom_raw 2>/dev/null | head -2" 2>/dev/null)
+    echo "1. Wheel encoders (/odom from base_node):"
+    WHEEL=$(docker exec ${CONTAINER_NAME} bash -c "source /opt/ros/humble/setup.bash && timeout 3 ros2 topic hz /odom 2>/dev/null | head -2" 2>/dev/null)
     if [ -n "$WHEEL" ]; then
         echo "   $WHEEL"
     else
