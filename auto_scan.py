@@ -631,7 +631,9 @@ echo '{stop_cmd}' > /dev/ttyAMA0
         print(f"\n[AVOID] Backing up for {backup_duration:.1f}s, then turning {turn_degrees:.0f}°")
 
         # First: Back up
-        x_val = max(-1.0, min(1.0, self.linear_speed * 0.6 / 0.3))  # Backward (inverted)
+        # Motor is INVERTED: positive X = forward, negative X = backward
+        # So we need NEGATIVE x_val to go backward
+        x_val = max(-1.0, min(1.0, -self.linear_speed * 0.6 / 0.3))  # NEGATIVE = backward
         serial_cmd = f'{{"T":"13","X":{x_val:.2f},"Z":0.00}}'
         stop_cmd = '{"T":"13","X":0.00,"Z":0.00}'
 
