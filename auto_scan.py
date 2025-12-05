@@ -358,7 +358,8 @@ class SectorObstacleAvoider:
 
         # Smoothing parameters (based on DWA/VFH research)
         # Exponential Moving Average for velocity smoothing
-        self.ema_alpha = 0.3  # Lower = smoother but slower response (0.2-0.4 typical)
+        # At 20Hz, we can use higher alpha for faster response while still being smooth
+        self.ema_alpha = 0.4  # Higher = faster response (0.2-0.4 typical)
         self.last_linear = 0.0
         self.last_angular = 0.0
 
@@ -509,11 +510,11 @@ class SectorObstacleAvoider:
 
     def _movement_loop(self):
         """
-        Continuous movement loop running at ~10Hz.
+        Continuous movement loop running at ~20Hz.
         Sends smoothed velocity commands for smooth motion instead of
         discrete start-stop movements.
         """
-        LOOP_RATE = 10  # Hz
+        LOOP_RATE = 20  # Hz - higher frequency for smoother motion
         loop_period = 1.0 / LOOP_RATE
 
         while self.movement_running:
@@ -1378,7 +1379,7 @@ rclpy.shutdown()
         print(f"Sectors:         {NUM_SECTORS} ({self.sector_degrees}° each)")
         print(f"LiDAR rotation:  90° (corrected in software)")
         print(f"Stuck detection: Enabled (uses odometry)")
-        print(f"Motion smooth:   Continuous thread @10Hz + EMA(α={self.ema_alpha})")
+        print(f"Motion smooth:   Continuous thread @20Hz + EMA(α={self.ema_alpha})")
         print(f"Dead-end detect: Enabled (skip 3+ blocked directions)")
         print("-"*60)
         print("Controls:")
