@@ -499,21 +499,24 @@ rclpy.shutdown()
             self.stuck_cooldown -= 1
             return False
 
-        # Robot body appears at ~0.1-0.25m in sectors 7-11
-        # Only check sectors 0, 1, 4, 5 for real obstacles (not body)
-        BODY_THRESHOLD = 0.25
+        # Robot body appears at ~0.1-0.25m in side/back sectors
+        # Use same thresholds as compute_velocity() for consistency
+        BODY_THRESHOLD_FRONT = 0.12  # Front sectors: real obstacles can be close
+        BODY_THRESHOLD_SIDE = 0.25   # Side/back sectors: may have body readings
 
-        narrow_front = [
-            self.sector_distances[0],   # FRONT
-            self.sector_distances[1],   # F-L
-            self.sector_distances[4],   # BACK-L (can see around)
-            self.sector_distances[5],   # BACK
+        # Check front and side sectors with appropriate thresholds
+        sectors_to_check = [
+            (0, self.sector_distances[0], BODY_THRESHOLD_FRONT),   # FRONT
+            (1, self.sector_distances[1], BODY_THRESHOLD_FRONT),   # F-L
+            (11, self.sector_distances[11], BODY_THRESHOLD_FRONT), # FRONT-R
+            (4, self.sector_distances[4], BODY_THRESHOLD_SIDE),    # BACK-L
+            (5, self.sector_distances[5], BODY_THRESHOLD_SIDE),    # BACK
         ]
 
         # Find minimum distance, filtering out body readings and blind spots
         front_min = 999
-        for d in narrow_front:
-            if d > BODY_THRESHOLD:  # Skip body and blind readings
+        for sector, d, threshold in sectors_to_check:
+            if d > threshold:  # Skip body and blind readings
                 front_min = min(front_min, d)
 
         # If front_min is still 999, no valid readings - don't trigger stuck
@@ -940,6 +943,53 @@ rclpy.shutdown()
             print(f"  {i:2d} {labels[i]:7s}: {dist:5.2f}m {bar:12s} {clear}")
         print("="*55)
 
+    def test_front_sector(self):
+        """
+        Calibration test: Place obstacle directly in front of robot.
+        The sector with lowest distance should be sector 0 (FRONT).
+        If not, LIDAR_ROTATION_SECTORS needs adjustment.
+        """
+        if not self.update_scan():
+            print("ERROR: Could not read LiDAR data")
+            return
+
+        print("\n" + "="*60)
+        print("FRONT SECTOR CALIBRATION TEST")
+        print("="*60)
+        print("Hold an obstacle directly in FRONT of the robot (< 0.5m)")
+        print("The sector with lowest distance should be sector 0 (FRONT)")
+        print("-"*60)
+
+        # Find sectors with close obstacles (excluding blind spots)
+        close_sectors = []
+        for i, d in enumerate(self.sector_distances):
+            if 0.1 < d < 0.6:
+                close_sectors.append((i, d))
+
+        if not close_sectors:
+            print("No close obstacles detected (0.1m - 0.6m range)")
+            print("Please hold something in front of the robot and try again")
+        else:
+            close_sectors.sort(key=lambda x: x[1])  # Sort by distance
+            print("\nDetected obstacles:")
+            labels = ["FRONT", "F-L", "LEFT", "L-BACK", "BACK-L", "BACK",
+                      "BACK-R", "R-BACK", "RIGHT", "R-F", "F-R", "FRONT-R"]
+            for sector, dist in close_sectors:
+                marker = " *** LIKELY FRONT ***" if sector == close_sectors[0][0] else ""
+                print(f"  Sector {sector:2d} ({labels[sector]:7s}): {dist:.2f}m{marker}")
+
+            closest_sector = close_sectors[0][0]
+            if closest_sector == 0:
+                print(f"\n✓ Calibration CORRECT: Closest sector is 0 (FRONT)")
+            else:
+                # Calculate what offset would fix this
+                needed_offset = (LIDAR_ROTATION_SECTORS - closest_sector) % 12
+                print(f"\n✗ Calibration ERROR: Closest sector is {closest_sector}, should be 0")
+                print(f"  Current LIDAR_ROTATION_SECTORS = {LIDAR_ROTATION_SECTORS}")
+                print(f"  Try changing to: LIDAR_ROTATION_SECTORS = {needed_offset}")
+
+        print("="*60)
+
     def run(self):
         """Main control loop"""
         self.running = True
@@ -1154,6 +1204,8 @@ Algorithm:
                         help='Min obstacle distance m (default: 0.65)')
     parser.add_argument('--duration', '-d', type=float, default=60,
                         help='Scan duration seconds, 0=unlimited (default: 60)')
+    parser.add_argument('--test-front', action='store_true',
+                        help='Test front sector calibration (place obstacle in front)')
     args = parser.parse_args()
 
     if not check_prerequisites():
@@ -1167,6 +1219,11 @@ Algorithm:
         min_distance=args.min_dist,
         duration=args.duration
     )
+
+    # Run calibration test if requested
+    if args.test_front:
+        avoider.test_front_sector()
+        sys.exit(0)
 
     def signal_handler(sig, frame):
         avoider.running = False
