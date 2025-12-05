@@ -246,7 +246,7 @@ class SectorObstacleAvoider:
     5. Rotate towards that direction, then move forward
     """
 
-    def __init__(self, linear_speed: float = 0.04, min_distance: float = 0.45,
+    def __init__(self, linear_speed: float = 0.04, min_distance: float = 0.60,
                  duration: float = 60.0, clear_visited: bool = False):
         # Cap max speed at 0.10 m/s - rf2o odometry overestimates at higher speeds
         # causing mismatch between RViz display and actual robot position
@@ -632,9 +632,10 @@ echo '{stop_cmd}' > /dev/ttyAMA0
         self.queue_maneuver("stop", 0.0, 0.2)  # Brief stop (increased for safety)
         self.queue_maneuver("turn", angular_speed, turn_duration)  # Turn in place
         self.queue_maneuver("stop", 0.0, 0.2)  # Brief pause (increased)
-        # Backup speed: Use 0.15 m/s (faster than normal driving) to actually move back
-        # This maps to X = -0.5 in send_cmd (0.15/0.3 = 0.5)
-        self.queue_maneuver("backup", 0.15, backup_duration)  # Back away at decent speed
+        # Backup speed: Use same speed as forward driving (or slightly higher)
+        # Using 1.5x forward speed to actually make progress backing up
+        backup_speed = self.linear_speed * 1.5
+        self.queue_maneuver("backup", backup_speed, backup_duration)
 
         # Calculate total wait time
         total_duration = 0.2 + turn_duration + 0.2 + backup_duration
@@ -1304,8 +1305,9 @@ rclpy.shutdown()
                     closest_sector = sec
 
         # Danger zone threshold - execute backup+turn maneuver if closer than this
-        # Using min_distance directly so we back up as soon as obstacle is too close
-        DANGER_DISTANCE = self.min_distance  # 0.65m - back up when obstacle is within min safe distance
+        # Add extra margin because the movement loop runs continuously - by the time
+        # we detect an obstacle and start the maneuver, we're already closer than expected
+        DANGER_DISTANCE = self.min_distance + 0.15  # Extra 15cm margin for reaction time
 
         # Check if path is clear enough to drive straight
         path_clear = front_arc_min >= self.min_distance
@@ -1790,8 +1792,8 @@ Algorithm:
     )
     parser.add_argument('--speed', '-s', type=float, default=0.06,
                         help='Linear speed m/s (default: 0.06, max: 0.08)')
-    parser.add_argument('--min-dist', '-m', type=float, default=0.45,
-                        help='Min obstacle distance m (default: 0.45)')
+    parser.add_argument('--min-dist', '-m', type=float, default=0.60,
+                        help='Min obstacle distance m (default: 0.60)')
     parser.add_argument('--duration', '-d', type=float, default=60,
                         help='Scan duration seconds, 0=unlimited (default: 60)')
     parser.add_argument('--clear-visited', '-c', action='store_true',
