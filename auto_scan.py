@@ -372,10 +372,13 @@ class SectorObstacleAvoider:
         self.state_hold_counter = 0
         self.min_state_hold = 2  # Hold state for at least N iterations
 
-        # Committed avoidance direction - once we pick left or right, stick with it
+        # Avoidance direction - alternates to help navigate passages
         self.avoidance_direction = None  # "left" or "right" or None
         self.avoidance_intensity = 1.0   # Increases if still stuck after turning
         self.avoidance_start_time = 0    # When we started this avoidance maneuver
+        self.last_avoidance_direction = "right"  # Track last direction to alternate
+        self.avoidance_attempt_count = 0  # Count attempts in same area
+        self.last_avoidance_position = None  # Position where we last avoided
 
     def smooth_velocity(self, target_linear: float, target_angular: float) -> Tuple[float, float]:
         """
@@ -1031,33 +1034,60 @@ rclpy.shutdown()
             # OBSTACLE TOO CLOSE! Execute discrete avoidance maneuver
             self.emergency_maneuver = True
 
-            # COMMITTED DIRECTION: Once we pick left or right, stick with it!
+            # Pick avoidance direction - ALTERNATE to help navigate passages
             if self.avoidance_direction is None:
-                # First time encountering obstacle - pick direction based on more clearance
-                # IMPORTANT: Only use reliable sectors, not blind spots or body readings!
-                # - Sectors 2-3 are blind spots (often 0)
-                # - Sectors 9-11 may have body readings (< 0.25m)
-                # Use only: sector 1 (F-L), sector 4 (BACK-L) for left
-                #           sector 10 (F-R), sector 5 (BACK) for right
+                # Check if we're in the same area as last avoidance (within 0.5m)
+                same_area = False
+                if self.current_position and self.last_avoidance_position:
+                    dx = self.current_position[0] - self.last_avoidance_position[0]
+                    dy = self.current_position[1] - self.last_avoidance_position[1]
+                    dist_from_last = math.sqrt(dx*dx + dy*dy)
+                    same_area = dist_from_last < 0.5
 
-                # Left: Use F-L (1) and BACK-L (4), filter body readings
+                # Get clearance on both sides
                 s1 = self.sector_distances[1] if self.sector_distances[1] > BODY_THRESHOLD_FRONT else 0
                 s4 = self.sector_distances[4] if self.sector_distances[4] > BODY_THRESHOLD_SIDE else 0
                 left_clearance = max(s1, s4)
 
-                # Right: Use F-R (10) and BACK (5), filter body readings
                 s10 = self.sector_distances[10] if self.sector_distances[10] > BODY_THRESHOLD_SIDE else 0
                 s5 = self.sector_distances[5] if self.sector_distances[5] > BODY_THRESHOLD_SIDE else 0
                 right_clearance = max(s10, s5)
 
-                if left_clearance >= right_clearance:
-                    self.avoidance_direction = "left"
-                else:
-                    self.avoidance_direction = "right"
+                # Check if this looks like a passage (both sides have similar clearance)
+                clearance_ratio = min(left_clearance, right_clearance) / max(left_clearance, right_clearance, 0.01)
+                is_passage = clearance_ratio > 0.5 and left_clearance > 0.3 and right_clearance > 0.3
 
+                if same_area:
+                    # We're stuck in same area - ALTERNATE direction!
+                    self.avoidance_attempt_count += 1
+                    if self.avoidance_attempt_count >= 2:
+                        # Tried same direction twice, switch!
+                        self.avoidance_direction = "right" if self.last_avoidance_direction == "left" else "left"
+                        self.avoidance_attempt_count = 0
+                        print(f"\n[PASSAGE] Alternating to {self.avoidance_direction} (attempt #{self.avoidance_attempt_count})")
+                    else:
+                        # First attempt in this area, use clearance
+                        if left_clearance >= right_clearance:
+                            self.avoidance_direction = "left"
+                        else:
+                            self.avoidance_direction = "right"
+                elif is_passage:
+                    # Looks like a passage - alternate from last direction
+                    self.avoidance_direction = "right" if self.last_avoidance_direction == "left" else "left"
+                    print(f"\n[PASSAGE] Detected passage, trying {self.avoidance_direction} (L:{left_clearance:.2f}m R:{right_clearance:.2f}m)")
+                else:
+                    # Normal obstacle - pick side with more clearance
+                    if left_clearance >= right_clearance:
+                        self.avoidance_direction = "left"
+                    else:
+                        self.avoidance_direction = "right"
+
+                # Save state
+                self.last_avoidance_direction = self.avoidance_direction
+                self.last_avoidance_position = self.current_position
                 self.avoidance_intensity = 1.0
                 self.avoidance_start_time = time.time()
-                print(f"\n[COMMIT] Chose {self.avoidance_direction} (L:{left_clearance:.2f}m R:{right_clearance:.2f}m)")
+                print(f"\n[AVOID] Chose {self.avoidance_direction} (L:{left_clearance:.2f}m R:{right_clearance:.2f}m)")
 
             # Calculate turn degrees dynamically based on obstacle
             turn_degrees = self.calculate_turn_degrees(closest_sector, front_arc_min)
@@ -1085,11 +1115,12 @@ rclpy.shutdown()
             angular = 0.0
             self.emergency_maneuver = False
 
-            # Clear the committed avoidance direction - we escaped!
+            # Clear the avoidance state - we escaped!
             if self.avoidance_direction is not None:
-                print(f"\n[CLEAR] Path clear, resetting direction commitment")
+                print(f"\n[CLEAR] Path clear, resetting avoidance state")
                 self.avoidance_direction = None
                 self.avoidance_intensity = 1.0
+                self.avoidance_attempt_count = 0  # Reset attempts on success
 
             status = f"[FWD] clear={front_arc_min:.2f}m - going straight"
 
