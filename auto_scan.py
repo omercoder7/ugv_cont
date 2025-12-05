@@ -29,9 +29,15 @@ import threading
 import select
 import termios
 import tty
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Set, Dict
+import json
+import os
 
 CONTAINER_NAME = "ugv_rpi_ros_humble"
+
+# Visited locations grid settings
+GRID_RESOLUTION = 0.5  # 50cm grid cells
+VISITED_FILE = "/tmp/visited_locations.json"
 NUM_SECTORS = 12  # 360° / 12 = 30° per sector
 
 # Calibration: Robot actual turn rate at Z=1.0 command
@@ -108,6 +114,192 @@ class KeyboardMonitor:
                     pass
 
 
+class VisitedTracker:
+    """
+    Tracks visited locations using a grid-based approach.
+    Divides the map into cells and marks cells as visited when the robot passes through.
+    """
+
+    def __init__(self, resolution: float = GRID_RESOLUTION):
+        self.resolution = resolution  # Grid cell size in meters
+        self.visited_cells: Set[Tuple[int, int]] = set()
+        self.visit_counts: Dict[Tuple[int, int], int] = {}  # How many times visited
+        self.last_cell: Optional[Tuple[int, int]] = None
+        self.total_cells_visited = 0
+
+        # Load existing visited locations if available
+        self.load()
+
+    def pos_to_cell(self, x: float, y: float) -> Tuple[int, int]:
+        """Convert world position to grid cell coordinates"""
+        cell_x = int(x / self.resolution)
+        cell_y = int(y / self.resolution)
+        return (cell_x, cell_y)
+
+    def cell_to_pos(self, cell: Tuple[int, int]) -> Tuple[float, float]:
+        """Convert grid cell to world position (center of cell)"""
+        x = (cell[0] + 0.5) * self.resolution
+        y = (cell[1] + 0.5) * self.resolution
+        return (x, y)
+
+    def mark_visited(self, x: float, y: float) -> bool:
+        """
+        Mark a position as visited. Returns True if this is a new cell.
+        """
+        cell = self.pos_to_cell(x, y)
+
+        # Skip if same cell as last time
+        if cell == self.last_cell:
+            return False
+
+        self.last_cell = cell
+        is_new = cell not in self.visited_cells
+
+        self.visited_cells.add(cell)
+        self.visit_counts[cell] = self.visit_counts.get(cell, 0) + 1
+
+        if is_new:
+            self.total_cells_visited += 1
+
+        return is_new
+
+    def is_visited(self, x: float, y: float) -> bool:
+        """Check if a position has been visited"""
+        cell = self.pos_to_cell(x, y)
+        return cell in self.visited_cells
+
+    def get_visit_count(self, x: float, y: float) -> int:
+        """Get how many times a position has been visited"""
+        cell = self.pos_to_cell(x, y)
+        return self.visit_counts.get(cell, 0)
+
+    def get_unvisited_direction(self, current_x: float, current_y: float,
+                                 sector_distances: List[float],
+                                 min_distance: float) -> Optional[int]:
+        """
+        Find a sector direction that leads to unvisited cells.
+        Returns sector number (0-11) or None if all reachable cells are visited.
+
+        Priority:
+        1. Unvisited cells that are reachable (clear path)
+        2. Less-visited cells
+        3. None if all directions lead to visited areas
+        """
+        current_cell = self.pos_to_cell(current_x, current_y)
+
+        best_sector = None
+        best_score = -999
+
+        for sector in range(NUM_SECTORS):
+            dist = sector_distances[sector]
+
+            # Skip blocked/close sectors
+            if dist < min_distance:
+                continue
+
+            # Calculate where we'd end up going this direction
+            # Sector 0 = front (0°), sector 3 = left (90°), etc.
+            angle = sector * (2 * math.pi / NUM_SECTORS)
+
+            # Look ahead by the clearance distance (capped at 2m)
+            look_ahead = min(dist, 2.0)
+            target_x = current_x + look_ahead * math.cos(angle)
+            target_y = current_y + look_ahead * math.sin(angle)
+
+            target_cell = self.pos_to_cell(target_x, target_y)
+
+            # Score based on visit count (lower = better)
+            visit_count = self.visit_counts.get(target_cell, 0)
+
+            # Prefer unvisited (visit_count=0), then less visited
+            # Also factor in clearance and prefer forward direction
+            clearance_score = min(dist / 3.0, 1.0)  # 0-1 based on clearance
+            direction_score = 1.0 - (abs(sector - 6) / 6.0) if sector <= 6 else 1.0 - (abs(sector - 6) / 6.0)
+            # Prefer front (sector 0, 1, 11)
+            if sector in [0, 1, 11]:
+                direction_score = 1.0
+            elif sector in [2, 10]:
+                direction_score = 0.7
+            else:
+                direction_score = 0.3
+
+            # Visit score: heavily penalize visited cells
+            if visit_count == 0:
+                visit_score = 10.0  # Big bonus for unvisited
+            elif visit_count == 1:
+                visit_score = 2.0   # Small bonus for visited once
+            else:
+                visit_score = -visit_count  # Penalty for revisiting
+
+            total_score = visit_score + clearance_score + direction_score
+
+            if total_score > best_score:
+                best_score = total_score
+                best_sector = sector
+
+        return best_sector
+
+    def get_coverage_stats(self) -> Dict:
+        """Get statistics about coverage"""
+        if not self.visited_cells:
+            return {"cells_visited": 0, "area_covered": 0.0, "revisit_rate": 0.0}
+
+        total_visits = sum(self.visit_counts.values())
+        unique_cells = len(self.visited_cells)
+        revisit_rate = (total_visits - unique_cells) / total_visits if total_visits > 0 else 0
+
+        return {
+            "cells_visited": unique_cells,
+            "area_covered": unique_cells * (self.resolution ** 2),  # m²
+            "total_visits": total_visits,
+            "revisit_rate": revisit_rate,
+        }
+
+    def save(self):
+        """Save visited locations to file"""
+        data = {
+            "resolution": self.resolution,
+            "visited_cells": list(self.visited_cells),
+            "visit_counts": {f"{k[0]},{k[1]}": v for k, v in self.visit_counts.items()},
+        }
+        try:
+            with open(VISITED_FILE, 'w') as f:
+                json.dump(data, f)
+            print(f"\n[SAVE] Saved {len(self.visited_cells)} visited cells to {VISITED_FILE}")
+        except Exception as e:
+            print(f"\n[SAVE] Failed to save visited locations: {e}")
+
+    def load(self):
+        """Load visited locations from file"""
+        if not os.path.exists(VISITED_FILE):
+            return
+
+        try:
+            with open(VISITED_FILE, 'r') as f:
+                data = json.load(f)
+
+            self.resolution = data.get("resolution", GRID_RESOLUTION)
+            self.visited_cells = set(tuple(c) for c in data.get("visited_cells", []))
+            self.visit_counts = {
+                tuple(map(int, k.split(','))): v
+                for k, v in data.get("visit_counts", {}).items()
+            }
+            self.total_cells_visited = len(self.visited_cells)
+            print(f"\n[LOAD] Loaded {len(self.visited_cells)} visited cells from {VISITED_FILE}")
+        except Exception as e:
+            print(f"\n[LOAD] Failed to load visited locations: {e}")
+
+    def clear(self):
+        """Clear all visited locations"""
+        self.visited_cells.clear()
+        self.visit_counts.clear()
+        self.last_cell = None
+        self.total_cells_visited = 0
+        if os.path.exists(VISITED_FILE):
+            os.remove(VISITED_FILE)
+        print("\n[CLEAR] Cleared all visited locations")
+
+
 class SectorObstacleAvoider:
     """
     Sector-based obstacle avoidance.
@@ -120,12 +312,13 @@ class SectorObstacleAvoider:
     5. Rotate towards that direction, then move forward
     """
 
-    def __init__(self, linear_speed: float = 0.06, min_distance: float = 0.65,
-                 duration: float = 60.0):
-        # Cap max speed at 0.08 m/s - rf2o odometry overestimates at higher speeds
+    def __init__(self, linear_speed: float = 0.04, min_distance: float = 0.45,
+                 duration: float = 60.0, clear_visited: bool = False):
+        # Cap max speed at 0.10 m/s - rf2o odometry overestimates at higher speeds
         # causing mismatch between RViz display and actual robot position
-        self.linear_speed = min(linear_speed, 0.08)
-        self.min_distance = max(min_distance, 0.5)   # Min safe distance 0.5m
+        self.linear_speed = min(linear_speed, 0.10)
+        # Reduced min distance to 0.35m floor (robot is ~17cm wide, need clearance)
+        self.min_distance = max(min_distance, 0.35)
         self.duration = duration
         self.running = False
 
@@ -137,6 +330,12 @@ class SectorObstacleAvoider:
         self.scan_ranges: List[float] = []
         self.sector_distances: List[float] = [10.0] * NUM_SECTORS
         self.current_heading_sector = 0  # Front = sector 0
+        self.current_position: Optional[Tuple[float, float]] = None
+
+        # Visited location tracking
+        self.visited_tracker = VisitedTracker()
+        if clear_visited:
+            self.visited_tracker.clear()
 
         # Keyboard monitor
         self.keyboard = KeyboardMonitor()
@@ -645,20 +844,28 @@ rclpy.shutdown()
     def find_best_direction(self) -> Tuple[int, float]:
         """
         VFH-inspired algorithm: Find the best direction using a cost function.
+        Now includes visited location tracking to prefer unvisited areas.
 
         Cost = target_weight * target_cost
-             + current_weight * current_cost
+             + clearance_weight * clearance_cost
              + previous_weight * previous_cost
+             + unvisited_weight * unvisited_cost
 
         Returns (best_sector, best_score)
         """
-        # Weights (inspired by VFH)
-        TARGET_WEIGHT = 3.0      # Prefer forward direction
-        CLEARANCE_WEIGHT = 2.0   # Prefer clear paths
-        PREVIOUS_WEIGHT = 1.0    # Smooth trajectory (reduce oscillation)
+        # Weights (inspired by VFH + exploration)
+        TARGET_WEIGHT = 2.0       # Prefer forward direction
+        CLEARANCE_WEIGHT = 2.0    # Prefer clear paths
+        PREVIOUS_WEIGHT = 1.0     # Smooth trajectory (reduce oscillation)
+        UNVISITED_WEIGHT = 5.0    # STRONGLY prefer unvisited areas
 
         best_sector = 0
         best_score = -999
+
+        # Get current position for visited checking
+        current_x, current_y = 0.0, 0.0
+        if self.current_position:
+            current_x, current_y = self.current_position
 
         for sector in range(NUM_SECTORS):
             dist = self.sector_distances[sector]
@@ -690,10 +897,28 @@ rclpy.shutdown()
             else:
                 previous_cost = 0.5  # Neutral for first iteration
 
+            # UNVISITED COST: Check if direction leads to unvisited area
+            # Calculate target position in this direction
+            sector_angle = sector * (2 * math.pi / NUM_SECTORS)
+            look_ahead = min(dist, 1.5)  # Look 1.5m ahead or to obstacle
+            target_x = current_x + look_ahead * math.cos(sector_angle)
+            target_y = current_y + look_ahead * math.sin(sector_angle)
+
+            visit_count = self.visited_tracker.get_visit_count(target_x, target_y)
+
+            # Score: unvisited = 1.0, visited once = 0.3, visited more = 0.0
+            if visit_count == 0:
+                unvisited_cost = 1.0
+            elif visit_count == 1:
+                unvisited_cost = 0.3
+            else:
+                unvisited_cost = 0.0
+
             # Combined score
             score = (TARGET_WEIGHT * target_cost +
                     CLEARANCE_WEIGHT * clearance_cost +
-                    PREVIOUS_WEIGHT * previous_cost)
+                    PREVIOUS_WEIGHT * previous_cost +
+                    UNVISITED_WEIGHT * unvisited_cost)
 
             if score > best_score:
                 best_score = score
@@ -1041,6 +1266,15 @@ rclpy.shutdown()
                     time.sleep(0.1)
                     continue
 
+                # Update current position for visited tracking
+                pos = self.get_odometry()
+                if pos:
+                    self.current_position = pos
+                    is_new = self.visited_tracker.mark_visited(pos[0], pos[1])
+                    if is_new:
+                        stats = self.visited_tracker.get_coverage_stats()
+                        print(f"\n[EXPLORE] New cell! Total: {stats['cells_visited']} cells, {stats['area_covered']:.1f}m²")
+
                 # Compute and send velocity
                 linear, angular = self.compute_velocity()
 
@@ -1109,8 +1343,12 @@ rclpy.shutdown()
             self.keyboard.stop()
             self.running = False
 
+            # Save visited locations for next run
+            self.visited_tracker.save()
+
             # Summary
             total_time = time.time() - self.start_time
+            stats = self.visited_tracker.get_coverage_stats()
             print("\n" + "="*60)
             print("SCAN SUMMARY")
             print("="*60)
@@ -1118,28 +1356,46 @@ rclpy.shutdown()
             print(f"Obstacles avoided:  {self.obstacles_avoided}")
             print(f"Direction changes:  {self.total_rotations}")
             print(f"Stuck detections:   {len(self.blocked_sectors) // 3}")  # Approx, since we block 3 at a time
+            print("-"*60)
+            print("EXPLORATION COVERAGE:")
+            print(f"  Cells visited:    {stats['cells_visited']}")
+            print(f"  Area covered:     {stats['area_covered']:.2f} m²")
+            print(f"  Total visits:     {stats.get('total_visits', 0)}")
+            print(f"  Revisit rate:     {stats.get('revisit_rate', 0)*100:.1f}%")
             print("="*60)
 
 
 def check_prerequisites():
-    """Check if container and required topics are available"""
-    result = subprocess.run(
-        ['docker', 'ps', '--filter', f'name={CONTAINER_NAME}', '--format', '{{.Names}}'],
-        capture_output=True, text=True
-    )
-    if CONTAINER_NAME not in result.stdout:
-        print(f"Error: Container '{CONTAINER_NAME}' is not running.")
-        print("Start it with: ./start_ugv_service.sh")
-        return False
+    """Ensure container and bringup are running using helper script"""
+    # Get script directory
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    ensure_script = os.path.join(script_dir, 'ensure_bringup.sh')
 
+    # Check if helper script exists
+    if not os.path.exists(ensure_script):
+        print(f"Warning: {ensure_script} not found, falling back to manual check")
+        # Fallback to basic container check
+        result = subprocess.run(
+            ['docker', 'ps', '--filter', f'name={CONTAINER_NAME}', '--format', '{{.Names}}'],
+            capture_output=True, text=True
+        )
+        if CONTAINER_NAME not in result.stdout:
+            print(f"Error: Container '{CONTAINER_NAME}' is not running.")
+            print("Start it with: ./start_ugv_service.sh")
+            return False
+        return True
+
+    # Use helper script to ensure bringup is running
+    print("Checking robot bringup...")
     result = subprocess.run(
-        ['docker', 'exec', CONTAINER_NAME, 'bash', '-c',
-         'source /opt/ros/humble/setup.bash && ros2 topic list 2>/dev/null | grep /scan'],
-        capture_output=True, text=True
+        [ensure_script, '--wait'],
+        capture_output=True, text=True,
+        timeout=30
     )
-    if '/scan' not in result.stdout:
-        print("Error: /scan topic not found.")
-        print("Make sure bringup_lidar.launch.py is running")
+
+    if result.returncode != 0:
+        print(result.stdout)
+        print(result.stderr)
         return False
 
     return True
@@ -1200,10 +1456,12 @@ Algorithm:
     )
     parser.add_argument('--speed', '-s', type=float, default=0.06,
                         help='Linear speed m/s (default: 0.06, max: 0.08)')
-    parser.add_argument('--min-dist', '-m', type=float, default=0.65,
-                        help='Min obstacle distance m (default: 0.65)')
+    parser.add_argument('--min-dist', '-m', type=float, default=0.45,
+                        help='Min obstacle distance m (default: 0.45)')
     parser.add_argument('--duration', '-d', type=float, default=60,
                         help='Scan duration seconds, 0=unlimited (default: 60)')
+    parser.add_argument('--clear-visited', '-c', action='store_true',
+                        help='Clear visited locations history before starting')
     parser.add_argument('--test-front', action='store_true',
                         help='Test front sector calibration (place obstacle in front)')
     args = parser.parse_args()
@@ -1217,7 +1475,8 @@ Algorithm:
     avoider = SectorObstacleAvoider(
         linear_speed=args.speed,
         min_distance=args.min_dist,
-        duration=args.duration
+        duration=args.duration,
+        clear_visited=args.clear_visited
     )
 
     # Run calibration test if requested

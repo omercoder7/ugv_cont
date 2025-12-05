@@ -55,24 +55,28 @@ fi
 # Copy configs
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 docker cp "${SCRIPT_DIR}/slam_toolbox_optimized.yaml" ${CONTAINER_NAME}:/tmp/slam_toolbox_optimized.yaml 2>/dev/null
-docker cp "${SCRIPT_DIR}/ekf_lidar_imu.yaml" ${CONTAINER_NAME}:/tmp/ekf_lidar_imu.yaml 2>/dev/null
 
-# Start bringup (with TF publishing - rf2o handles odom TF)
+# Start bringup using helper script (avoids duplicates)
 echo ""
 echo "Starting robot bringup..."
-docker exec -d ${CONTAINER_NAME} /bin/bash -c "
-source /opt/ros/humble/setup.bash && \
-source /root/ugv_ws/install/setup.bash && \
-export UGV_MODEL=ugv_beast && \
-export LDLIDAR_MODEL=ld19 && \
-ros2 launch ugv_bringup bringup_lidar.launch.py pub_odom_tf:=true > /tmp/bringup.log 2>&1
-"
-sleep 6
+if [ -x "${SCRIPT_DIR}/ensure_bringup.sh" ]; then
+    "${SCRIPT_DIR}/ensure_bringup.sh" --wait
+else
+    # Fallback if helper doesn't exist
+    docker exec -d ${CONTAINER_NAME} /bin/bash -c "
+    source /opt/ros/humble/setup.bash && \
+    source /root/ugv_ws/install/setup.bash && \
+    export UGV_MODEL=ugv_beast && \
+    export LDLIDAR_MODEL=ld19 && \
+    ros2 launch ugv_bringup bringup_lidar.launch.py pub_odom_tf:=true > /tmp/bringup.log 2>&1
+    "
+    sleep 6
+fi
 
 # Check if bringup started
 echo ""
 echo "Checking bringup status..."
-if docker exec ${CONTAINER_NAME} pgrep -f "bringup_lidar" > /dev/null 2>&1; then
+if docker exec ${CONTAINER_NAME} pgrep -f "ugv_bringup" > /dev/null 2>&1; then
     echo "  Bringup: RUNNING"
 else
     echo "  Bringup: FAILED - check /tmp/bringup.log inside container"

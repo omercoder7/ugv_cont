@@ -42,15 +42,19 @@ TRAJECTORY_BUILDER_2D.max_range = 8.0
 TRAJECTORY_BUILDER_2D.missing_data_ray_length = 5.0
 TRAJECTORY_BUILDER_2D.use_imu_data = false  -- Disable if IMU is noisy
 TRAJECTORY_BUILDER_2D.use_online_correlative_scan_matching = true
-TRAJECTORY_BUILDER_2D.real_time_correlative_scan_matcher.linear_search_window = 0.15
-TRAJECTORY_BUILDER_2D.real_time_correlative_scan_matcher.angular_search_window = math.rad(20.)
-TRAJECTORY_BUILDER_2D.real_time_correlative_scan_matcher.translation_delta_cost_weight = 1e-1
-TRAJECTORY_BUILDER_2D.real_time_correlative_scan_matcher.rotation_delta_cost_weight = 1e-1
+-- Wider search window to recover from odometry drift
+TRAJECTORY_BUILDER_2D.real_time_correlative_scan_matcher.linear_search_window = 0.2
+TRAJECTORY_BUILDER_2D.real_time_correlative_scan_matcher.angular_search_window = math.rad(30.)
+-- Lower cost = trust scan matching MORE than odometry prediction
+TRAJECTORY_BUILDER_2D.real_time_correlative_scan_matcher.translation_delta_cost_weight = 5e-2
+TRAJECTORY_BUILDER_2D.real_time_correlative_scan_matcher.rotation_delta_cost_weight = 5e-2
 
 -- Ceres scan matcher for fine tuning
-TRAJECTORY_BUILDER_2D.ceres_scan_matcher.occupied_space_weight = 1.
-TRAJECTORY_BUILDER_2D.ceres_scan_matcher.translation_weight = 10.
-TRAJECTORY_BUILDER_2D.ceres_scan_matcher.rotation_weight = 40.
+-- Higher occupied_space_weight = trust laser more
+TRAJECTORY_BUILDER_2D.ceres_scan_matcher.occupied_space_weight = 10.
+-- Lower translation/rotation weight = trust odometry less
+TRAJECTORY_BUILDER_2D.ceres_scan_matcher.translation_weight = 1.
+TRAJECTORY_BUILDER_2D.ceres_scan_matcher.rotation_weight = 1.
 
 -- Submaps - smaller for indoor mapping
 TRAJECTORY_BUILDER_2D.submaps.num_range_data = 90
@@ -61,14 +65,20 @@ TRAJECTORY_BUILDER_2D.motion_filter.max_time_seconds = 0.5
 TRAJECTORY_BUILDER_2D.motion_filter.max_distance_meters = 0.1
 TRAJECTORY_BUILDER_2D.motion_filter.max_angle_radians = math.rad(5.)
 
--- Pose graph optimization (loop closure)
+-- Pose graph optimization (loop closure) - more aggressive
 POSE_GRAPH.optimization_problem.huber_scale = 1e1
-POSE_GRAPH.optimize_every_n_nodes = 35
-POSE_GRAPH.constraint_builder.min_score = 0.55
-POSE_GRAPH.constraint_builder.global_localization_min_score = 0.6
-POSE_GRAPH.constraint_builder.sampling_ratio = 0.3
-POSE_GRAPH.constraint_builder.max_constraint_distance = 15.
-POSE_GRAPH.constraint_builder.loop_closure_translation_weight = 1.1e4
-POSE_GRAPH.constraint_builder.loop_closure_rotation_weight = 1e5
+POSE_GRAPH.optimize_every_n_nodes = 20  -- Optimize more frequently
+POSE_GRAPH.constraint_builder.min_score = 0.50  -- Accept more loop closures
+POSE_GRAPH.constraint_builder.global_localization_min_score = 0.55
+POSE_GRAPH.constraint_builder.sampling_ratio = 0.5  -- Check more constraints
+POSE_GRAPH.constraint_builder.max_constraint_distance = 10.
+POSE_GRAPH.constraint_builder.loop_closure_translation_weight = 1.5e4
+POSE_GRAPH.constraint_builder.loop_closure_rotation_weight = 1.5e5
+
+-- Reduce odometry influence in pose graph
+POSE_GRAPH.optimization_problem.odometry_translation_weight = 1e3
+POSE_GRAPH.optimization_problem.odometry_rotation_weight = 1e3
+POSE_GRAPH.optimization_problem.local_slam_pose_translation_weight = 1e5
+POSE_GRAPH.optimization_problem.local_slam_pose_rotation_weight = 1e5
 
 return options
