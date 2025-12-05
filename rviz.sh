@@ -132,14 +132,15 @@ launch_rviz() {
     fi
 
     # Copy host's Xauthority file to container for X11 auth
+    # Use /tmp/.Xauthority to avoid "device busy" issues with mounted /root/.Xauthority
     if [ -f "${HOME}/.Xauthority" ]; then
-        docker cp "${HOME}/.Xauthority" ${CONTAINER_NAME}:/root/.Xauthority 2>/dev/null
+        docker cp "${HOME}/.Xauthority" ${CONTAINER_NAME}:/tmp/.Xauthority 2>/dev/null
     fi
 
     # Use software rendering for X11 forwarding (required for RPi)
     docker exec ${DOCKER_FLAGS} \
         -e DISPLAY=${DISPLAY} \
-        -e XAUTHORITY=/root/.Xauthority \
+        -e XAUTHORITY=/tmp/.Xauthority \
         -e LIBGL_ALWAYS_SOFTWARE=1 \
         -e QT_X11_NO_MITSHM=1 \
         ${CONTAINER_NAME} /bin/bash -c "
