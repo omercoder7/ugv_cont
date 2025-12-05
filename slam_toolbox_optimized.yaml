@@ -1,5 +1,10 @@
 # Optimized SLAM Toolbox Configuration for UGV Beast
-# Based on analysis of ugv_ws defaults with improvements for better mapping
+# Tuned for BETTER MAPPING ACCURACY
+# Key changes:
+# - More frequent scan processing for detailed maps
+# - Tighter scan matching for accuracy
+# - Better loop closure detection
+# - Higher resolution for indoor environments
 
 slam_toolbox:
   ros__parameters:
@@ -18,74 +23,86 @@ slam_toolbox:
     scan_topic: /scan
 
     # Operating mode
-    mode: mapping  # 'mapping' or 'localization'
+    mode: mapping
 
-    # Scan processing
+    # ===========================================
+    # SCAN PROCESSING - More frequent for detail
+    # ===========================================
     throttle_scans: 1              # Process every scan
-    minimum_time_interval: 0.5     # Min time between processed scans
+    minimum_time_interval: 0.2     # REDUCED: Process scans more often (was 0.5)
     transform_publish_period: 0.02 # 50Hz TF publish rate
 
-    # Map settings
-    map_update_interval: 5.0       # How often to update the map (seconds)
-    resolution: 0.05               # 5cm resolution (matches costmaps)
+    # ===========================================
+    # MAP SETTINGS - Higher resolution
+    # ===========================================
+    map_update_interval: 2.0       # REDUCED: Update map more often (was 5.0)
+    resolution: 0.03               # INCREASED: 3cm resolution (was 5cm) - more detail
 
-    # Laser range settings
-    min_laser_range: 0.2           # Ignore readings < 20cm (robot body)
-    max_laser_range: 12.0          # LD19 effective range ~12m
+    # ===========================================
+    # LASER RANGE - Tuned for LD19
+    # ===========================================
+    min_laser_range: 0.15          # Ignore readings < 15cm (robot body interference)
+    max_laser_range: 8.0           # REDUCED: LD19 is more accurate at closer range
 
     # Transform settings
-    transform_timeout: 1.0         # Increased for EKF latency
-    tf_buffer_duration: 60.0       # TF buffer size - increased for startup
+    transform_timeout: 0.5
+    tf_buffer_duration: 30.0
 
     # Memory allocation
-    stack_size_to_use: 40000000    # 40MB stack
+    stack_size_to_use: 40000000
 
-    # Scan matching
+    # ===========================================
+    # SCAN MATCHING - Tighter for accuracy
+    # ===========================================
     use_scan_matching: true
     use_scan_barycenter: true
 
-    # Motion thresholds for new scan processing
-    minimum_travel_distance: 0.3   # Reduced from 0.5 for more frequent updates
-    minimum_travel_heading: 0.3    # Reduced from 0.5 for more frequent updates
+    # Motion thresholds - capture more poses for better map
+    minimum_travel_distance: 0.1   # REDUCED: Add scan every 10cm (was 0.3)
+    minimum_travel_heading: 0.15   # REDUCED: Add scan every ~8.5 degrees (was 0.3)
 
-    # IMPROVED: Scan buffer settings
-    scan_buffer_size: 10           # INCREASED from 3 (default: 10)
-    scan_buffer_maximum_scan_distance: 10.0
+    # Scan buffer - more scans for matching
+    scan_buffer_size: 15           # INCREASED from 10
+    scan_buffer_maximum_scan_distance: 8.0
 
-    # Scan matching parameters
-    link_match_minimum_response_fine: 0.1
-    link_scan_maximum_distance: 1.5
+    # Scan matching parameters - tighter matching
+    link_match_minimum_response_fine: 0.15  # INCREASED: require better matches (was 0.1)
+    link_scan_maximum_distance: 1.0         # REDUCED: tighter matching distance (was 1.5)
 
-    # IMPROVED: Loop closure settings
+    # ===========================================
+    # LOOP CLOSURE - Critical for accuracy
+    # ===========================================
     do_loop_closing: true
-    loop_match_minimum_chain_size: 10   # INCREASED from 3 (default: 10)
-    loop_match_maximum_variance_coarse: 3.0
-    loop_match_minimum_response_coarse: 0.35
-    loop_match_minimum_response_fine: 0.45
+    loop_match_minimum_chain_size: 5        # REDUCED: detect loops earlier (was 10)
+    loop_match_maximum_variance_coarse: 2.0 # REDUCED: stricter variance (was 3.0)
+    loop_match_minimum_response_coarse: 0.4 # INCREASED: require better coarse match
+    loop_match_minimum_response_fine: 0.5   # INCREASED: require better fine match
 
-    # Additional recommended settings
-    enable_interactive_mode: false  # Disable for autonomous operation
-    use_map_saver: true             # Enable map saving capability
+    # Additional settings
+    enable_interactive_mode: false
+    use_map_saver: true
 
-    # Correlation settings for better matching
-    correlation_search_space_dimension: 0.5
-    correlation_search_space_resolution: 0.01
-    correlation_search_space_smear_deviation: 0.1
+    # ===========================================
+    # CORRELATION SEARCH - Tighter search space
+    # ===========================================
+    correlation_search_space_dimension: 0.3      # REDUCED (was 0.5)
+    correlation_search_space_resolution: 0.008   # FINER (was 0.01)
+    correlation_search_space_smear_deviation: 0.05  # REDUCED (was 0.1)
 
-    # Loop search settings
-    loop_search_space_dimension: 8.0
-    loop_search_space_resolution: 0.05
-    loop_search_space_smear_deviation: 0.03
+    # Loop search - balance between finding loops and false positives
+    loop_search_space_dimension: 6.0             # REDUCED (was 8.0)
+    loop_search_space_resolution: 0.03           # FINER (was 0.05)
+    loop_search_space_smear_deviation: 0.02      # REDUCED (was 0.03)
 
     # Fine search parameters
-    distance_variance_penalty: 0.5
-    angle_variance_penalty: 1.0
-    fine_search_angle_offset: 0.00349  # ~0.2 degrees
-    coarse_search_angle_offset: 0.349   # ~20 degrees
-    coarse_angle_resolution: 0.0349     # ~2 degrees
+    distance_variance_penalty: 0.3    # REDUCED: less penalty for distance
+    angle_variance_penalty: 0.8       # REDUCED: less penalty for angle
+    fine_search_angle_offset: 0.00349
+    coarse_search_angle_offset: 0.262  # REDUCED: ~15 degrees (was 20)
+    coarse_angle_resolution: 0.0262    # FINER: ~1.5 degrees (was 2)
 
-    # Map thresholds
+    # Map quality thresholds
     minimum_score: 0.0
-    minimum_angle_penalty: 0.9
-    minimum_distance_penalty: 0.5
+    minimum_angle_penalty: 0.85       # Slightly reduced
+    minimum_distance_penalty: 0.4     # Slightly reduced
     use_response_expansion: true

@@ -99,9 +99,11 @@ show_help() {
     echo "  slam        - Full SLAM+Nav2 using manufacturer's launch"
     echo "  slam-opt    - OPTIMIZED SLAM with better parameters"
     echo "                Use 'slam-opt new_map' to start with a fresh map"
-    echo "  slam-ekf    - SLAM with EKF triple fusion (BEST ACCURACY)"
-    echo "                Uses wheel encoders + LiDAR + IMU for best odometry"
-    echo "                Use 'slam-ekf new_map' to start with a fresh map"
+    echo "  slam-ekf    - SLAM with EKF triple fusion"
+    echo "                Uses wheel encoders + LiDAR + IMU"
+    echo "  slam-carto  - Google Cartographer SLAM (BEST ACCURACY)"
+    echo "                More accurate than slam_toolbox, less reliant on odometry"
+    echo "                Use 'slam-carto new_map' to start fresh"
     echo "  slam-simple - Simple SLAM without Nav2 (requires bringup running)"
     echo "  slam3d      - SLAM+Nav2 with 3D visualization"
     echo "  nav         - Navigation view (2D)"
@@ -113,11 +115,10 @@ show_help() {
     echo "  custom      - Custom .rviz file (provide path as 2nd arg)"
     echo ""
     echo "Examples:"
-    echo "  ./rviz.sh lidar            # Just view LiDAR"
-    echo "  ./rviz.sh slam-ekf         # BEST: SLAM with EKF triple fusion"
-    echo "  ./rviz.sh slam-opt         # Optimized SLAM (continues existing map)"
-    echo "  ./rviz.sh slam-opt new_map # Optimized SLAM with fresh map"
-    echo "  ./rviz.sh slam-simple      # Simple SLAM (if bringup already running)"
+    echo "  ./rviz.sh lidar             # Just view LiDAR"
+    echo "  ./rviz.sh slam-carto new_map # BEST: Cartographer SLAM (fresh map)"
+    echo "  ./rviz.sh slam-opt new_map  # Optimized slam_toolbox"
+    echo "  ./rviz.sh slam-opt          # Continue existing map"
     echo "  ./rviz.sh custom /path/to/my_config.rviz"
 }
 
@@ -509,6 +510,151 @@ case "${MODE}" in
         echo ""
         echo "EKF fusion chain:"
         echo "  Wheel + LiDAR + IMU -> EKF -> odom TF -> SLAM"
+        echo ""
+        echo "Launching RViz..."
+        launch_rviz "/tmp/view_slam_2d.rviz"
+        ;;
+    slam-carto|slam-cartographer)
+        NEW_MAP="$2"
+
+        echo "Starting Google Cartographer SLAM (BEST ACCURACY)..."
+        echo ""
+        echo "Cartographer advantages:"
+        echo "  - Scan-to-submap matching (less reliant on odometry)"
+        echo "  - Global pose graph optimization"
+        echo "  - Better loop closure detection"
+        echo ""
+        echo "Using DISPLAY=${DISPLAY}"
+
+        SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+        # Handle new_map option
+        if [ "${NEW_MAP}" = "new_map" ] || [ "${NEW_MAP}" = "new" ] || [ "${NEW_MAP}" = "--new-map" ]; then
+            echo ""
+            echo "*** NEW MAP MODE - Restarting for clean slate ***"
+            echo ""
+
+            docker restart ${CONTAINER_NAME}
+            sleep 5
+
+            # Copy configs
+            docker cp "${SCRIPT_DIR}/cartographer_2d.lua" ${CONTAINER_NAME}:/tmp/cartographer_2d.lua
+            docker cp "${SCRIPT_DIR}/view_slam_2d.rviz" ${CONTAINER_NAME}:/tmp/view_slam_2d.rviz 2>/dev/null
+
+            # Start bringup
+            echo "Starting robot bringup..."
+            docker exec -d ${CONTAINER_NAME} /bin/bash -c "
+            source /opt/ros/humble/setup.bash && \
+            source /root/ugv_ws/install/setup.bash && \
+            export UGV_MODEL=ugv_beast && \
+            export LDLIDAR_MODEL=ld19 && \
+            ros2 launch ugv_bringup bringup_lidar.launch.py pub_odom_tf:=true > /tmp/bringup.log 2>&1
+            "
+            sleep 6
+
+            if docker exec ${CONTAINER_NAME} pgrep -f "bringup_lidar" > /dev/null 2>&1; then
+                echo "  Bringup: RUNNING"
+            else
+                echo "  Bringup: FAILED"
+            fi
+
+            # Start Cartographer
+            echo "Starting Cartographer..."
+            docker exec -d ${CONTAINER_NAME} /bin/bash -c "
+            source /opt/ros/humble/setup.bash && \
+            ros2 run cartographer_ros cartographer_node \
+              -configuration_directory /tmp \
+              -configuration_basename cartographer_2d.lua > /tmp/cartographer.log 2>&1
+            "
+            sleep 3
+
+            if docker exec ${CONTAINER_NAME} pgrep -f "cartographer_node" > /dev/null 2>&1; then
+                echo "  Cartographer: RUNNING"
+            else
+                echo "  Cartographer: FAILED - check /tmp/cartographer.log"
+                docker exec ${CONTAINER_NAME} cat /tmp/cartographer.log 2>/dev/null | tail -10
+            fi
+
+            # Start occupancy grid node
+            echo "Starting occupancy grid publisher..."
+            docker exec -d ${CONTAINER_NAME} /bin/bash -c "
+            source /opt/ros/humble/setup.bash && \
+            ros2 run cartographer_ros cartographer_occupancy_grid_node \
+              -resolution 0.03 \
+              -publish_period_sec 1.0 > /tmp/occupancy_grid.log 2>&1
+            "
+            sleep 2
+
+            if docker exec ${CONTAINER_NAME} pgrep -f "occupancy_grid" > /dev/null 2>&1; then
+                echo "  Occupancy grid: RUNNING"
+            else
+                echo "  Occupancy grid: FAILED"
+            fi
+
+            # Verify clean
+            ZOMBIES=$(docker exec ${CONTAINER_NAME} ps aux 2>/dev/null | grep -c "<defunct>" || echo "0")
+            if [ "${ZOMBIES}" -gt 0 ]; then
+                echo "Warning: ${ZOMBIES} zombie processes"
+            else
+                echo "Clean start!"
+            fi
+        else
+            # Continue mode
+            docker cp "${SCRIPT_DIR}/cartographer_2d.lua" ${CONTAINER_NAME}:/tmp/cartographer_2d.lua
+            docker cp "${SCRIPT_DIR}/view_slam_2d.rviz" ${CONTAINER_NAME}:/tmp/view_slam_2d.rviz 2>/dev/null
+
+            if ! docker exec ${CONTAINER_NAME} pgrep -f "bringup_lidar" > /dev/null 2>&1; then
+                echo "Starting robot bringup..."
+                docker exec -d ${CONTAINER_NAME} /bin/bash -c "
+                source /opt/ros/humble/setup.bash && \
+                source /root/ugv_ws/install/setup.bash && \
+                export UGV_MODEL=ugv_beast && \
+                export LDLIDAR_MODEL=ld19 && \
+                ros2 launch ugv_bringup bringup_lidar.launch.py pub_odom_tf:=true > /tmp/bringup.log 2>&1
+                "
+                sleep 6
+            else
+                echo "Bringup already running..."
+            fi
+
+            # Kill slam_toolbox if running
+            if docker exec ${CONTAINER_NAME} pgrep -f "slam_toolbox" > /dev/null 2>&1; then
+                echo "Stopping slam_toolbox..."
+                docker exec ${CONTAINER_NAME} pkill -f "slam_toolbox" 2>/dev/null
+                sleep 2
+            fi
+
+            if ! docker exec ${CONTAINER_NAME} pgrep -f "cartographer_node" > /dev/null 2>&1; then
+                echo "Starting Cartographer..."
+                docker exec -d ${CONTAINER_NAME} /bin/bash -c "
+                source /opt/ros/humble/setup.bash && \
+                ros2 run cartographer_ros cartographer_node \
+                  -configuration_directory /tmp \
+                  -configuration_basename cartographer_2d.lua > /tmp/cartographer.log 2>&1
+                "
+                sleep 3
+            else
+                echo "Cartographer already running..."
+            fi
+
+            if ! docker exec ${CONTAINER_NAME} pgrep -f "occupancy_grid" > /dev/null 2>&1; then
+                echo "Starting occupancy grid publisher..."
+                docker exec -d ${CONTAINER_NAME} /bin/bash -c "
+                source /opt/ros/humble/setup.bash && \
+                ros2 run cartographer_ros cartographer_occupancy_grid_node \
+                  -resolution 0.03 \
+                  -publish_period_sec 1.0 > /tmp/occupancy_grid.log 2>&1
+                "
+                sleep 2
+            else
+                echo "Occupancy grid already running..."
+            fi
+        fi
+
+        echo ""
+        echo "Cartographer SLAM running!"
+        echo "  /map - Occupancy grid"
+        echo "  /submap_list - Submaps"
         echo ""
         echo "Launching RViz..."
         launch_rviz "/tmp/view_slam_2d.rviz"
