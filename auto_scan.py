@@ -628,7 +628,9 @@ echo '{stop_cmd}' > /dev/ttyAMA0
         self.queue_maneuver("stop", 0.0, 0.15)  # Brief stop
         self.queue_maneuver("turn", angular_speed, turn_duration)  # Turn in place
         self.queue_maneuver("stop", 0.0, 0.1)  # Brief pause
-        self.queue_maneuver("backup", self.linear_speed * 0.8, backup_duration)  # Back away
+        # Backup speed: Use 0.15 m/s (faster than normal driving) to actually move back
+        # This maps to X = -0.5 in send_cmd (0.15/0.3 = 0.5)
+        self.queue_maneuver("backup", 0.15, backup_duration)  # Back away at decent speed
 
         # Calculate total wait time
         total_duration = 0.15 + turn_duration + 0.1 + backup_duration
@@ -1208,27 +1210,28 @@ rclpy.shutdown()
         """
         # Base turn angle depends on obstacle distance
         # Closer obstacle = bigger turn needed
+        # INCREASED values - previous were too small to escape
         if obstacle_distance < 0.3:
-            base_degrees = 60  # Very close - big turn
+            base_degrees = 90  # Very close - big turn
         elif obstacle_distance < 0.4:
-            base_degrees = 45  # Close - moderate turn
+            base_degrees = 75  # Close - moderate turn
         elif obstacle_distance < 0.5:
-            base_degrees = 35  # Medium - smaller turn
+            base_degrees = 60  # Medium - decent turn
         else:
-            base_degrees = 25  # Far - gentle turn
+            base_degrees = 45  # Far - smaller turn
 
         # Adjust based on obstacle position (which sector)
         # Sectors 0, 11 = directly ahead, need bigger turn
         # Sectors 1, 10 = slightly off, need less turn
         # Sectors 2, 9 = more off-center, need even less
         if obstacle_sector in [0, 11]:  # Dead ahead
-            base_degrees *= 1.2
+            base_degrees *= 1.3
         elif obstacle_sector in [1, 10]:  # Slightly off
-            base_degrees *= 1.0
+            base_degrees *= 1.1
         elif obstacle_sector in [2, 9]:  # More off-center
-            base_degrees *= 0.8
+            base_degrees *= 0.9
 
-        return min(90, max(25, base_degrees))  # Clamp between 25-90°
+        return min(120, max(45, base_degrees))  # Clamp between 45-120°
 
     def compute_velocity(self) -> Tuple[float, float]:
         """
@@ -1369,7 +1372,8 @@ rclpy.shutdown()
                 print(f"\n[STUCK] Increasing turn to {abs(turn_degrees):.0f}°")
 
             # Execute backup + turn maneuver
-            backup_duration = 0.6 if front_arc_min > 0.3 else 1.0  # Back up more if very close
+            # INCREASED backup duration - previous 0.6s was too short
+            backup_duration = 1.0 if front_arc_min > 0.3 else 1.5  # Back up more if very close
             self.backup_then_turn(backup_duration=backup_duration, turn_degrees=turn_degrees)
 
             # Return None to indicate maneuver was executed
