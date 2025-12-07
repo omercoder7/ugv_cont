@@ -1223,63 +1223,43 @@ echo '{stop_cmd}' > /dev/ttyAMA0
 
         self.total_rotations += 1
 
-    def backup_then_turn(self, backup_duration: float = 0.8, turn_degrees: float = 45):
+    def backup_then_turn(self, backup_duration: float = 0.3, turn_degrees: float = 30):
         """
-        Execute obstacle avoidance maneuver: stop, turn in place, then back up.
-        Uses the movement thread queue for smooth execution.
-        Order: STOP -> TURN -> BACKUP (turn first while stationary, then back away)
+        Execute quick obstacle avoidance: brief backup then small turn.
+        NON-BLOCKING - queues maneuvers and returns immediately.
 
         Args:
-            backup_duration: How long to back up in seconds
+            backup_duration: How long to back up (default 0.3s = ~2cm at 0.06m/s)
             turn_degrees: How many degrees to turn (positive = left, negative = right)
         """
-        print(f"\n[AVOID] Stop, turn {turn_degrees:.0f}°, then backup {backup_duration:.1f}s")
+        # Use smaller, quicker turns (30° = ~1s turn time)
+        turn_degrees = max(-45, min(45, turn_degrees))  # Cap at 45°
 
-        # Calculate turn duration using calibrated angular velocity
+        # Calculate turn duration - use faster angular speed for quicker response
         turn_speed = 1.0
         actual_vel = ACTUAL_MAX_ANGULAR_VEL * turn_speed
         angle_rad = abs(turn_degrees) * (math.pi / 180)
         turn_duration = angle_rad / actual_vel
 
-        # Determine turn direction (positive degrees = left = positive angular)
         angular_speed = turn_speed if turn_degrees > 0 else -turn_speed
 
-        # Clear any existing queue and wait for current maneuver to complete (thread-safe)
-        # First, clear the queue so no new maneuvers start
+        # Clear queue and interrupt current maneuver
         with self.movement_lock:
             self.maneuver_queue.clear()
-            # Set end time to now to signal current maneuver should stop
             self.maneuver_end_time = time.time()
 
-        # Wait briefly for movement thread to finish current iteration
-        time.sleep(0.05)
+        time.sleep(0.02)  # Brief wait
 
-        # Now clear mode (movement thread will have seen the expired end_time)
         with self.movement_lock:
             self.maneuver_mode = None
 
-        # Queue maneuvers: STOP -> TURN -> BACKUP (no stop between turn and backup)
-        self.queue_maneuver("stop", 0.0, 0.1)  # Brief stop before turning
-        self.queue_maneuver("turn", angular_speed, turn_duration)  # Turn in place
-        # Backup immediately after turn - no pause needed
-        # Backup speed: Use same as forward speed for consistent motion
-        backup_speed = self.linear_speed
-        self.queue_maneuver("backup", backup_speed, backup_duration)
+        # Queue: BACKUP (brief) -> TURN (quick)
+        self.queue_maneuver("backup", self.linear_speed, backup_duration)
+        self.queue_maneuver("turn", angular_speed, turn_duration)
 
-        # Calculate total wait time
-        total_duration = 0.1 + turn_duration + backup_duration
-
-        # BLOCK until maneuvers complete - don't let main loop send new commands
-        # Use longer timeout to ensure full completion
-        wait_until = time.time() + total_duration + 1.0
-        while time.time() < wait_until:
-            # Check if all maneuvers are done (thread-safe)
-            with self.movement_lock:
-                queue_empty = len(self.maneuver_queue) == 0
-                mode_none = self.maneuver_mode is None
-            if mode_none and queue_empty:
-                break
-            time.sleep(0.05)  # Check more frequently (20Hz) to reduce wait time
+        # NON-BLOCKING: Just wait for backup to start, then return
+        # Main loop will continue checking sensors during the turn
+        time.sleep(backup_duration + 0.1)
 
         self.obstacles_avoided += 1
         self.total_rotations += 1
@@ -2085,28 +2065,44 @@ rclpy.shutdown()
             left_ok = left_arc >= dynamic_min_dist
             right_ok = right_arc >= dynamic_min_dist
 
-            # Auto-centering logic: steer toward a navigable path
-            # Priority: front > slight correction toward open side
+            # Get exploration scores to prefer unexplored areas
+            map_scores = self.get_map_exploration_scores()
+            left_explore = max(map_scores[1], map_scores[2], map_scores[3])
+            right_explore = max(map_scores[10], map_scores[11], map_scores[9])
+
+            # Auto-centering logic: steer toward unexplored areas + navigable paths
             if front_ok and left_ok and right_ok:
-                # All clear - gentle centering toward more open side
-                balance = left_arc - right_arc
-                if abs(balance) > 0.20:  # Only correct if 20cm+ difference
-                    max_correction = 0.15  # Gentle correction
-                    angular = max(-max_correction, min(max_correction, balance * 0.2))
+                # All clear - steer toward UNEXPLORED area (exploration-driven)
+                explore_balance = left_explore - right_explore  # Positive = left more unexplored
+                clearance_balance = left_arc - right_arc  # Positive = left more open
+
+                # Combined: exploration weighted higher than clearance
+                combined_balance = explore_balance * 2.0 + clearance_balance * 0.5
+
+                if abs(combined_balance) > 0.15:
+                    max_correction = 0.20  # Moderate correction toward exploration
+                    angular = max(-max_correction, min(max_correction, combined_balance * 0.3))
                 else:
                     angular = 0.0
             elif front_ok:
-                # Front clear but one side blocked - stay centered
-                angular = 0.0
+                # Front clear but one side blocked - steer gently away from blocked side
+                if left_ok and not right_ok:
+                    angular = 0.1  # Gentle left
+                elif right_ok and not left_ok:
+                    angular = -0.1  # Gentle right
+                else:
+                    angular = 0.0
             elif left_ok and not right_ok:
                 # Only left is navigable - steer left
-                angular = 0.25  # Moderate left turn
+                angular = 0.25
             elif right_ok and not left_ok:
                 # Only right is navigable - steer right
-                angular = -0.25  # Moderate right turn
+                angular = -0.25
             elif left_ok and right_ok:
-                # Both sides navigable but not front - pick the better one
-                if left_arc > right_arc:
+                # Both sides navigable but not front - pick by exploration then clearance
+                if abs(left_explore - right_explore) > 0.1:
+                    angular = 0.3 if left_explore > right_explore else -0.3
+                elif left_arc > right_arc:
                     angular = 0.3
                 else:
                     angular = -0.3
@@ -2360,16 +2356,19 @@ rclpy.shutdown()
                     front_arc_min = d
                     closest_sector = sec
 
-        # Danger zone threshold - execute backup+turn maneuver if closer than this
-        # Add extra margin because the movement loop runs continuously - by the time
-        # we detect an obstacle and start the maneuver, we're already closer than expected
-        # Use lidar_min_distance which accounts for LiDAR mounting offset
-        DANGER_DISTANCE = self.lidar_min_distance + 0.10  # Extra 10cm margin for reaction time
+        # DANGER_DISTANCE: Only backup when FRONT (sector 0) is too close
+        # Not the side sectors - robot can drive past side obstacles
+        DANGER_DISTANCE = self.lidar_min_distance  # 0.82m (includes LiDAR offset)
 
-        # Check if path is clear enough to drive straight
-        path_clear = front_arc_min >= self.lidar_min_distance
+        # Get FRONT sector only for danger check
+        front_only = self.sector_distances[0]
+        if front_only < BODY_THRESHOLD_FRONT:
+            front_only = 10.0  # Ignore invalid reading
 
-        if front_arc_min < DANGER_DISTANCE:
+        # Path is clear if front sector is above threshold
+        path_clear = front_only >= self.lidar_min_distance
+
+        if front_only < DANGER_DISTANCE:
             # OBSTACLE TOO CLOSE! Execute discrete avoidance maneuver
             self.emergency_maneuver = True
 
@@ -2392,6 +2391,17 @@ rclpy.shutdown()
                 s5 = self.sector_distances[5] if self.sector_distances[5] > BODY_THRESHOLD_SIDE else 0
                 right_clearance = max(s10, s5)
 
+                # Get exploration scores to prefer unexplored directions
+                map_scores = self.get_map_exploration_scores()
+                left_explore = max(map_scores[1], map_scores[2], map_scores[3])  # Sectors 1-3 (left side)
+                right_explore = max(map_scores[10], map_scores[11], map_scores[9])  # Sectors 9-11 (right side)
+
+                # Combined score: clearance + exploration (exploration weighted higher)
+                CLEARANCE_WEIGHT = 1.0
+                EXPLORE_WEIGHT = 2.0  # Strongly prefer unexplored areas
+                left_score = CLEARANCE_WEIGHT * left_clearance + EXPLORE_WEIGHT * left_explore
+                right_score = CLEARANCE_WEIGHT * right_clearance + EXPLORE_WEIGHT * right_explore
+
                 # Check if this looks like a passage (both sides have similar clearance)
                 clearance_ratio = min(left_clearance, right_clearance) / max(left_clearance, right_clearance, 0.01)
                 is_passage = clearance_ratio > 0.5 and left_clearance > 0.3 and right_clearance > 0.3
@@ -2405,18 +2415,29 @@ rclpy.shutdown()
                         self.avoidance_attempt_count = 0
                         print(f"\n[PASSAGE] Alternating to {self.avoidance_direction} (attempt #{self.avoidance_attempt_count})")
                     else:
-                        # First attempt in this area, use clearance
-                        if left_clearance >= right_clearance:
+                        # First attempt in this area, use combined score (clearance + exploration)
+                        if left_score >= right_score:
                             self.avoidance_direction = "left"
                         else:
                             self.avoidance_direction = "right"
                 elif is_passage:
-                    # Looks like a passage - alternate from last direction
-                    self.avoidance_direction = "right" if self.last_avoidance_direction == "left" else "left"
-                    print(f"\n[PASSAGE] Detected passage, trying {self.avoidance_direction} (L:{left_clearance:.2f}m R:{right_clearance:.2f}m)")
+                    # Passage: pick the direction with more clearance (obstacle is on opposite side)
+                    # Only alternate if clearances are VERY similar (within 10cm)
+                    if abs(left_clearance - right_clearance) > 0.10:
+                        # Clear difference - go toward the more open side
+                        self.avoidance_direction = "left" if left_clearance > right_clearance else "right"
+                        print(f"\n[PASSAGE] Going {self.avoidance_direction} (clearer: L:{left_clearance:.2f}m R:{right_clearance:.2f}m)")
+                    elif abs(left_explore - right_explore) > 0.2:
+                        # Similar clearance but different exploration - use exploration
+                        self.avoidance_direction = "left" if left_explore > right_explore else "right"
+                        print(f"\n[PASSAGE] Picking {self.avoidance_direction} (explore: L={left_explore:.2f} R={right_explore:.2f})")
+                    else:
+                        # Very similar - alternate to escape
+                        self.avoidance_direction = "right" if self.last_avoidance_direction == "left" else "left"
+                        print(f"\n[PASSAGE] Alternating to {self.avoidance_direction} (similar: L:{left_clearance:.2f}m R:{right_clearance:.2f}m)")
                 else:
-                    # Normal obstacle - pick side with more clearance
-                    if left_clearance >= right_clearance:
+                    # Normal obstacle - use combined score (clearance + exploration)
+                    if left_score >= right_score:
                         self.avoidance_direction = "left"
                     else:
                         self.avoidance_direction = "right"
@@ -2428,39 +2449,40 @@ rclpy.shutdown()
                 self.avoidance_start_time = time.time()
                 print(f"\n[AVOID] Chose {self.avoidance_direction} (L:{left_clearance:.2f}m R:{right_clearance:.2f}m)")
 
-            # Calculate turn degrees dynamically based on obstacle
-            turn_degrees = self.calculate_turn_degrees(closest_sector, front_arc_min)
+            # Small turn (30°) - quick avoidance, will turn back after clearing
+            turn_degrees = 30 if self.avoidance_direction == "left" else -30
 
-            # Apply committed direction
-            if self.avoidance_direction == "right":
-                turn_degrees = -turn_degrees
-
-            # Increase turn if we've been trying to avoid for a while
-            time_avoiding = time.time() - self.avoidance_start_time
-            if time_avoiding > 2.0:
-                turn_degrees *= 1.3  # 30% more turn if stuck
-                print(f"\n[STUCK] Increasing turn to {abs(turn_degrees):.0f}°")
-
-            # Execute backup + turn maneuver
-            # INCREASED backup duration - previous 0.6s was too short
-            backup_duration = 1.0 if front_arc_min > 0.3 else 1.5  # Back up more if very close
-            self.backup_then_turn(backup_duration=backup_duration, turn_degrees=turn_degrees)
+            # Quick backup + small turn
+            self.backup_then_turn(backup_duration=0.3, turn_degrees=turn_degrees)
 
             # Return None to indicate maneuver was executed
             return None, None
 
         elif path_clear:
-            # PATH IS CLEAR - Go straight!
+            # PATH IS CLEAR - check if we need to turn back toward original heading
             linear = self.linear_speed
             angular = 0.0
             self.emergency_maneuver = False
 
-            # Clear the avoidance state - we escaped!
+            # If we just finished avoiding, turn BACK toward original direction
             if self.avoidance_direction is not None:
-                print(f"\n[CLEAR] Path clear, resetting avoidance state")
+                # Turn back the opposite way to resume original heading (30° to match avoidance)
+                return_degrees = -30 if self.avoidance_direction == "left" else 30
+                print(f"\n[RETURN] Turning back {return_degrees}°")
+
+                # Quick turn back (no backup needed) - ~1s turn
+                turn_duration = abs(return_degrees) * (3.14159 / 180) / ACTUAL_MAX_ANGULAR_VEL
+                self.queue_maneuver("turn", 1.0 if return_degrees > 0 else -1.0, turn_duration)
+
+                # Clear avoidance state
                 self.avoidance_direction = None
                 self.avoidance_intensity = 1.0
-                self.avoidance_attempt_count = 0  # Reset attempts on success
+                self.avoidance_attempt_count = 0
+                self.avoidance_start_time = 0
+
+                # Brief wait for turn to start, then continue (non-blocking)
+                time.sleep(0.1)
+                return None, None
 
             status = f"[FWD] clear={front_arc_min:.2f}m - going straight"
 
@@ -2488,30 +2510,24 @@ rclpy.shutdown()
             angular = 0.0
             self.emergency_maneuver = False
 
+            # Reset ALL avoidance state when going forward
             if self.avoidance_direction is not None:
                 print(f"\n[CLEAR] Front is best direction, resetting commitment")
-                self.avoidance_direction = None
+            self.avoidance_direction = None
+            self.avoidance_start_time = 0  # Reset so next avoidance is fresh
+            self.avoidance_attempt_count = 0
 
             status = f"[FWD] front ok={front_arc_min:.2f}m s{best_sector}"
 
         else:
-            # All directions have obstacles - back up and turn to find clear path
-            turn_degrees = self.calculate_turn_degrees(closest_sector, front_arc_min)
-
+            # All directions have obstacles - quick backup and turn
             if self.avoidance_direction is None:
-                if best_sector <= 5:
-                    self.avoidance_direction = "left"
-                else:
-                    self.avoidance_direction = "right"
+                self.avoidance_direction = "left" if best_sector <= 5 else "right"
                 self.avoidance_start_time = time.time()
 
-            if self.avoidance_direction == "right":
-                turn_degrees = -turn_degrees
-
-            # Always back up first, then turn (using calibrated rotation)
-            backup_duration = 0.8 if front_arc_min > 0.3 else 1.2
-            print(f"\n[BLOCKED] Backing up and turning {turn_degrees:.0f}° to find clear path")
-            self.backup_then_turn(backup_duration=backup_duration, turn_degrees=turn_degrees)
+            turn_degrees = 30 if self.avoidance_direction == "left" else -30
+            print(f"\n[BLOCKED] Quick backup and turn {turn_degrees}°")
+            self.backup_then_turn(backup_duration=0.3, turn_degrees=turn_degrees)
             return None, None
 
         # Remember this direction for next iteration
@@ -2659,7 +2675,7 @@ rclpy.shutdown()
                             # Back out of dead-end
                             print(f"\n[DEAD-END] Backing out of dead-end area!")
                             self.set_target_velocity(0.0, 0.0)  # Stop movement thread
-                            self.backup_then_turn(backup_duration=1.2, turn_degrees=120)
+                            self.backup_then_turn(backup_duration=0.6, turn_degrees=90)
                             continue
 
                 # Compute velocity using selected algorithm
@@ -2705,8 +2721,8 @@ rclpy.shutdown()
                         self.avoidance_start_time = time.time()
 
                     self.set_target_velocity(0.0, 0.0)  # Stop movement thread during maneuver
-                    turn_degrees = 60 if self.avoidance_direction == "left" else -60
-                    self.backup_then_turn(backup_duration=1.0, turn_degrees=turn_degrees)
+                    turn_degrees = 50 if self.avoidance_direction == "left" else -50
+                    self.backup_then_turn(backup_duration=0.5, turn_degrees=turn_degrees)
 
                     # Reset position tracking after recovery maneuver
                     self.last_position = None
