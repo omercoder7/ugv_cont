@@ -2383,13 +2383,20 @@ rclpy.shutdown()
                     same_area = dist_from_last < 0.5
 
                 # Get clearance on both sides
+                # LEFT side: sectors 1 (front-left), 2, 3, 4 (left) - all reliable
+                # RIGHT side: sectors 11 (front-right), 8 (right), 7 (r-back)
+                # NOTE: Sectors 9, 10 are in LiDAR BLIND SPOT - don't use for clearance!
                 s1 = self.sector_distances[1] if self.sector_distances[1] > BODY_THRESHOLD_FRONT else 0
+                s2 = self.sector_distances[2] if self.sector_distances[2] > BODY_THRESHOLD_SIDE else 0
+                s3 = self.sector_distances[3] if self.sector_distances[3] > BODY_THRESHOLD_SIDE else 0
                 s4 = self.sector_distances[4] if self.sector_distances[4] > BODY_THRESHOLD_SIDE else 0
-                left_clearance = max(s1, s4)
+                left_clearance = max(s1, s2, s3, s4)
 
-                s10 = self.sector_distances[10] if self.sector_distances[10] > BODY_THRESHOLD_SIDE else 0
-                s5 = self.sector_distances[5] if self.sector_distances[5] > BODY_THRESHOLD_SIDE else 0
-                right_clearance = max(s10, s5)
+                # Right side - EXCLUDE sectors 9, 10 (blind spots!)
+                s11 = self.sector_distances[11] if self.sector_distances[11] > BODY_THRESHOLD_FRONT else 0
+                s8 = self.sector_distances[8] if self.sector_distances[8] > BODY_THRESHOLD_SIDE else 0
+                s7 = self.sector_distances[7] if self.sector_distances[7] > BODY_THRESHOLD_SIDE else 0
+                right_clearance = max(s11, s8, s7)
 
                 # Get exploration scores to prefer unexplored directions
                 map_scores = self.get_map_exploration_scores()
@@ -2447,7 +2454,11 @@ rclpy.shutdown()
                 self.last_avoidance_position = self.current_position
                 self.avoidance_intensity = 1.0
                 self.avoidance_start_time = time.time()
-                print(f"\n[AVOID] Chose {self.avoidance_direction} (L:{left_clearance:.2f}m R:{right_clearance:.2f}m)")
+                # Show which side has more clearance and which direction was chosen
+                obstacle_side = "LEFT" if left_clearance < right_clearance else "RIGHT"
+                print(f"\n[AVOID] Obstacle on {obstacle_side}, turning {self.avoidance_direction.upper()}")
+                print(f"        LEFT:  s1={s1:.2f} s2={s2:.2f} s3={s3:.2f} s4={s4:.2f} -> max={left_clearance:.2f}m")
+                print(f"        RIGHT: s11={s11:.2f} s8={s8:.2f} s7={s7:.2f} -> max={right_clearance:.2f}m")
 
             # Small turn (30°) - quick avoidance, will turn back after clearing
             turn_degrees = 30 if self.avoidance_direction == "left" else -30
@@ -2459,32 +2470,47 @@ rclpy.shutdown()
             return None, None
 
         elif path_clear:
-            # PATH IS CLEAR - check if we need to turn back toward original heading
+            # PATH IS CLEAR - go straight
             linear = self.linear_speed
             angular = 0.0
             self.emergency_maneuver = False
 
-            # If we just finished avoiding, turn BACK toward original direction
+            # If we were avoiding, check if we've traveled enough to return to original heading
             if self.avoidance_direction is not None:
-                # Turn back the opposite way to resume original heading (30° to match avoidance)
-                return_degrees = -30 if self.avoidance_direction == "left" else 30
-                print(f"\n[RETURN] Turning back {return_degrees}°")
+                # Check distance traveled since avoidance started
+                if self.last_avoidance_position is not None and self.current_position is not None:
+                    dx = self.current_position[0] - self.last_avoidance_position[0]
+                    dy = self.current_position[1] - self.last_avoidance_position[1]
+                    dist_traveled = math.sqrt(dx*dx + dy*dy)
 
-                # Quick turn back (no backup needed) - ~1s turn
-                turn_duration = abs(return_degrees) * (3.14159 / 180) / ACTUAL_MAX_ANGULAR_VEL
-                self.queue_maneuver("turn", 1.0 if return_degrees > 0 else -1.0, turn_duration)
+                    # Only return-to-heading after traveling at least 30cm past obstacle
+                    if dist_traveled >= 0.30:
+                        # Turn back toward original heading (opposite of avoidance turn)
+                        return_degrees = -30 if self.avoidance_direction == "left" else 30
+                        print(f"\n[RETURN] Passed obstacle ({dist_traveled:.2f}m), turning back {return_degrees}°")
 
-                # Clear avoidance state
-                self.avoidance_direction = None
-                self.avoidance_intensity = 1.0
-                self.avoidance_attempt_count = 0
-                self.avoidance_start_time = 0
+                        turn_duration = abs(return_degrees) * (3.14159 / 180) / ACTUAL_MAX_ANGULAR_VEL
+                        self.queue_maneuver("turn", 1.0 if return_degrees > 0 else -1.0, turn_duration)
 
-                # Brief wait for turn to start, then continue (non-blocking)
-                time.sleep(0.1)
-                return None, None
+                        # Clear avoidance state
+                        self.avoidance_direction = None
+                        self.avoidance_intensity = 1.0
+                        self.avoidance_attempt_count = 0
+                        self.avoidance_start_time = 0
+                        self.last_avoidance_position = None
 
-            status = f"[FWD] clear={front_arc_min:.2f}m - going straight"
+                        time.sleep(0.1)
+                        return None, None
+                    else:
+                        # Still close to obstacle - keep going straight, don't turn back yet
+                        status = f"[FWD] clear, bypassing ({dist_traveled:.2f}m)"
+                else:
+                    # No position data - just clear state
+                    self.avoidance_direction = None
+                    self.avoidance_start_time = 0
+                    status = f"[FWD] clear={front_arc_min:.2f}m"
+            else:
+                status = f"[FWD] clear={front_arc_min:.2f}m - going straight"
 
         elif best_dist >= self.lidar_min_distance and best_sector not in [0, 11, 1]:
             # Only steer if best direction is NOT the front sectors
