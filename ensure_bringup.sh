@@ -87,6 +87,17 @@ kill_duplicates() {
             return 1  # Signal that we need to start fresh
         fi
     fi
+
+    # Also check for duplicate rf2o nodes using ros2 node list
+    local rf2o_count
+    rf2o_count=$(docker exec ${CONTAINER_NAME} bash -c "source /opt/ros/humble/setup.bash && ros2 node list 2>/dev/null | grep -c rf2o_laser_odometry" 2>/dev/null || echo "0")
+    rf2o_count=$(echo "$rf2o_count" | tr -d '[:space:]')
+    if [ "$rf2o_count" -gt 1 ]; then
+        echo "Warning: Found $rf2o_count duplicate rf2o nodes, killing all rf2o..."
+        docker exec ${CONTAINER_NAME} pkill -f "rf2o" 2>/dev/null
+        sleep 2
+    fi
+
     return 0
 }
 

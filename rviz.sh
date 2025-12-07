@@ -78,6 +78,44 @@ fi
 xhost +local:docker 2>/dev/null
 xhost + 2>/dev/null
 
+# Function to kill duplicate/zombie ROS2 nodes
+cleanup_duplicate_nodes() {
+    echo "Checking for duplicate ROS2 nodes..."
+
+    # Get list of nodes
+    NODES=$(docker exec ${CONTAINER_NAME} bash -c "source /opt/ros/humble/setup.bash && ros2 node list 2>/dev/null" | sort)
+
+    # Check for duplicates
+    DUPS=$(echo "$NODES" | uniq -d)
+    if [ -n "$DUPS" ]; then
+        echo "Found duplicate nodes: $DUPS"
+
+        # Kill specific duplicate processes
+        if echo "$DUPS" | grep -q "rf2o"; then
+            echo "  Killing duplicate rf2o_laser_odometry..."
+            docker exec ${CONTAINER_NAME} pkill -f rf2o 2>/dev/null
+            sleep 1
+        fi
+        if echo "$DUPS" | grep -q "cartographer"; then
+            echo "  Killing duplicate cartographer nodes..."
+            docker exec ${CONTAINER_NAME} pkill -f cartographer 2>/dev/null
+            sleep 1
+        fi
+        if echo "$DUPS" | grep -q "slam_toolbox"; then
+            echo "  Killing duplicate slam_toolbox..."
+            docker exec ${CONTAINER_NAME} pkill -f slam_toolbox 2>/dev/null
+            sleep 1
+        fi
+    fi
+
+    # Check for zombie processes
+    ZOMBIES=$(docker exec ${CONTAINER_NAME} ps aux 2>/dev/null | grep -c "<defunct>" || echo "0")
+    if [ "${ZOMBIES}" -gt 0 ]; then
+        echo "Warning: ${ZOMBIES} zombie processes found."
+        echo "  Consider running with 'new_map' option to restart container."
+    fi
+}
+
 # RViz config paths
 RVIZ_LIDAR="/root/ugv_ws/install/ldlidar/share/ldlidar/rviz/view.rviz"
 RVIZ_BRINGUP="/root/ugv_ws/install/ugv_bringup/share/ugv_bringup/rviz/view_bringup.rviz"
@@ -259,6 +297,9 @@ case "${MODE}" in
 
         # Copy configs to container
         SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+        # Always check for duplicates first
+        cleanup_duplicate_nodes
         docker cp "${SCRIPT_DIR}/slam_toolbox_optimized.yaml" ${CONTAINER_NAME}:/tmp/slam_toolbox_optimized.yaml
         docker cp "${SCRIPT_DIR}/view_slam_2d.rviz" ${CONTAINER_NAME}:/tmp/view_slam_2d.rviz 2>/dev/null
 
@@ -527,6 +568,9 @@ case "${MODE}" in
         echo "Using DISPLAY=${DISPLAY}"
 
         SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+        # Always check for duplicates first
+        cleanup_duplicate_nodes
 
         # Handle new_map option
         if [ "${NEW_MAP}" = "new_map" ] || [ "${NEW_MAP}" = "new" ] || [ "${NEW_MAP}" = "--new-map" ]; then
