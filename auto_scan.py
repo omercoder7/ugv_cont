@@ -41,8 +41,14 @@ VISITED_FILE = "/tmp/visited_locations.json"
 NUM_SECTORS = 12  # 360° / 12 = 30° per sector
 
 # Calibration: Robot actual turn rate at Z=1.0 command
-# Measured: 6.5s command gave ~110° instead of 90°, adjusted from 0.24
-ACTUAL_MAX_ANGULAR_VEL = 0.29  # rad/s at Z=1.0
+# Measured with 30Hz movement thread: 5.07s for 90° rotation
+ACTUAL_MAX_ANGULAR_VEL = 0.31  # rad/s at Z=1.0
+
+# Linear velocity calibration (at 30Hz movement thread):
+# Commanded 0.06 m/s -> Actual 0.14 m/s forward, 0.13 m/s backward
+# Ratio: actual/commanded = 2.33 (forward), 2.17 (backward)
+# Average ratio: ~2.25x faster than commanded
+LINEAR_VEL_RATIO = 2.25  # Actual velocity is this many times the commanded velocity
 
 # LiDAR orientation calibration:
 # Run calibrate_lidar.py with robot FRONT facing clear space to determine this value.
@@ -297,7 +303,7 @@ class SectorObstacleAvoider:
 
         # Smoothing parameters (based on DWA/VFH research)
         # Exponential Moving Average for velocity smoothing
-        # At 20Hz, we can use higher alpha for faster response while still being smooth
+        # At 30Hz, we can use higher alpha for faster response while still being smooth
         self.ema_alpha = 0.4  # Higher = faster response (0.2-0.4 typical)
         self.last_linear = 0.0
         self.last_angular = 0.0
@@ -459,12 +465,12 @@ class SectorObstacleAvoider:
 
     def _movement_loop(self):
         """
-        Continuous movement loop running at ~20Hz.
+        Continuous movement loop running at ~30Hz.
         Sends smoothed velocity commands for smooth motion instead of
         discrete start-stop movements.
         Also handles backup, turn, and stop maneuvers via queue.
         """
-        LOOP_RATE = 20  # Hz - higher frequency for smoother motion
+        LOOP_RATE = 30  # Hz - higher frequency for smoother motion
         loop_period = 1.0 / LOOP_RATE
 
         while self.movement_running:
@@ -525,7 +531,12 @@ class SectorObstacleAvoider:
         # Scale: linear is in m/s, angular in rad/s
         # The robot expects values roughly in range -1 to 1
         # NOTE: Both linear AND angular are INVERTED due to motor wiring
-        x_val = max(-1.0, min(1.0, -linear_x / 0.3))  # INVERTED + Scale to -1 to 1
+        #
+        # CALIBRATED: Robot moves 2.25x faster than commanded
+        # To get desired velocity, we divide by the ratio to reduce the command
+        # Example: Want 0.06 m/s, ratio is 2.25, so command 0.06/2.25 = 0.027 m/s equivalent
+        calibrated_linear = linear_x / LINEAR_VEL_RATIO
+        x_val = max(-1.0, min(1.0, -calibrated_linear / 0.3))  # INVERTED + Scale to -1 to 1
         z_val = max(-1.0, min(1.0, -angular_z / 1.0))  # INVERTED + Scale to -1 to 1
 
         serial_cmd = f'{{"T":"13","X":{x_val:.2f},"Z":{z_val:.2f}}}'
@@ -1543,7 +1554,7 @@ rclpy.shutdown()
         print(f"Sectors:         {NUM_SECTORS} ({self.sector_degrees}° each)")
         print(f"LiDAR rotation:  90° (corrected in software)")
         print(f"Stuck detection: Enabled (uses odometry)")
-        print(f"Motion smooth:   Continuous thread @20Hz + EMA(α={self.ema_alpha})")
+        print(f"Motion smooth:   Continuous thread @30Hz + EMA(α={self.ema_alpha})")
         print(f"Dead-end detect: Enabled (skip 3+ blocked directions)")
         print("-"*60)
         print("Controls:")
