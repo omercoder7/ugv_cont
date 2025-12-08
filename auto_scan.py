@@ -1257,9 +1257,8 @@ echo '{stop_cmd}' > /dev/ttyAMA0
         self.queue_maneuver("backup", self.linear_speed, backup_duration)
         self.queue_maneuver("turn", angular_speed, turn_duration)
 
-        # NON-BLOCKING: Just wait for backup to start, then return
-        # Main loop will continue checking sensors during the turn
-        time.sleep(backup_duration + 0.1)
+        # FULLY NON-BLOCKING: Return immediately, let movement thread handle maneuvers
+        # No sleep here - main loop will continue but maneuver_mode blocks normal commands
 
         self.obstacles_avoided += 1
         self.total_rotations += 1
@@ -1473,19 +1472,19 @@ rclpy.shutdown()
             distance_change = front_min - self.prev_front_distance
 
             # Expected change when driving forward at commanded speed
-            # At 5Hz main loop, 0.04 m/s should give ~0.008m change per iteration
+            # At 10Hz main loop, 0.06 m/s should give ~0.006m change per iteration
             # Allow some tolerance for sensor noise
-            MIN_EXPECTED_CHANGE = 0.005  # 5mm minimum change expected
+            MIN_EXPECTED_CHANGE = 0.003  # 3mm minimum change expected
 
             # If driving forward and distance isn't changing (within noise)
             if abs(distance_change) < MIN_EXPECTED_CHANGE and commanded_linear > 0.02:
                 self.front_distance_unchanged_count += 1
 
-                # 4 iterations at 5Hz = ~0.8s of no distance change = stuck
-                if self.front_distance_unchanged_count >= 4:
+                # 6 iterations at 10Hz = ~0.6s of no distance change = stuck
+                if self.front_distance_unchanged_count >= 6:
                     print(f"\n[STUCK] Distance not changing while driving!")
                     print(f"  Front distance: {front_min:.3f}m, prev: {self.prev_front_distance:.3f}m")
-                    print(f"  Change: {distance_change:.4f}m (expected ~{commanded_linear * 0.2:.4f}m)")
+                    print(f"  Change: {distance_change:.4f}m (expected ~{commanded_linear * 0.1:.4f}m)")
                     self.stuck_position = self.get_odometry()
                     self.front_distance_unchanged_count = 0
                     self.prev_front_distance = None
@@ -1496,6 +1495,39 @@ rclpy.shutdown()
 
         # Update previous distance
         self.prev_front_distance = front_min
+
+        # Method 3: Odometry-based stuck detection (for invisible/low obstacles)
+        # If robot is commanded to move but odometry shows no movement
+        current_pos = self.get_odometry()
+        if current_pos and self.last_position:
+            dx = current_pos[0] - self.last_position[0]
+            dy = current_pos[1] - self.last_position[1]
+            odom_dist = math.sqrt(dx*dx + dy*dy)
+            time_elapsed = time.time() - self.last_position_time
+
+            # Expected distance at commanded speed
+            expected_dist = commanded_linear * time_elapsed
+
+            # If we've been driving for >0.5s but haven't moved much
+            if time_elapsed > 0.5 and expected_dist > 0.02:
+                # Should have moved at least 50% of expected distance
+                if odom_dist < expected_dist * 0.3:
+                    print(f"\n[STUCK] Odometry shows no movement!")
+                    print(f"  Expected: {expected_dist:.3f}m, Actual: {odom_dist:.3f}m in {time_elapsed:.1f}s")
+                    self.stuck_position = current_pos
+                    self.last_position = current_pos
+                    self.last_position_time = time.time()
+                    return True
+
+        # Update position tracking
+        if current_pos:
+            if self.last_position is None:
+                self.last_position = current_pos
+                self.last_position_time = time.time()
+            elif time.time() - self.last_position_time > 1.0:
+                # Update every 1 second
+                self.last_position = current_pos
+                self.last_position_time = time.time()
 
         return False
 
@@ -2372,96 +2404,97 @@ rclpy.shutdown()
             # OBSTACLE TOO CLOSE! Execute discrete avoidance maneuver
             self.emergency_maneuver = True
 
-            # Pick avoidance direction - ALTERNATE to help navigate passages
-            if self.avoidance_direction is None:
-                # Check if we're in the same area as last avoidance (within 0.5m)
-                same_area = False
-                if self.current_position and self.last_avoidance_position:
-                    dx = self.current_position[0] - self.last_avoidance_position[0]
-                    dy = self.current_position[1] - self.last_avoidance_position[1]
-                    dist_from_last = math.sqrt(dx*dx + dy*dy)
-                    same_area = dist_from_last < 0.5
+            # ALWAYS re-evaluate direction based on current sensor readings
+            # Don't keep old direction - it might point back to the obstacle!
 
-                # Get clearance on both sides
-                # LEFT side: sectors 1 (front-left), 2, 3, 4 (left) - all reliable
-                # RIGHT side: sectors 11 (front-right), 8 (right), 7 (r-back)
-                # NOTE: Sectors 9, 10 are in LiDAR BLIND SPOT - don't use for clearance!
-                s1 = self.sector_distances[1] if self.sector_distances[1] > BODY_THRESHOLD_FRONT else 0
-                s2 = self.sector_distances[2] if self.sector_distances[2] > BODY_THRESHOLD_SIDE else 0
-                s3 = self.sector_distances[3] if self.sector_distances[3] > BODY_THRESHOLD_SIDE else 0
-                s4 = self.sector_distances[4] if self.sector_distances[4] > BODY_THRESHOLD_SIDE else 0
-                left_clearance = max(s1, s2, s3, s4)
+            # Check if we're in the same area as last avoidance (within 0.5m)
+            same_area = False
+            if self.current_position and self.last_avoidance_position:
+                dx = self.current_position[0] - self.last_avoidance_position[0]
+                dy = self.current_position[1] - self.last_avoidance_position[1]
+                dist_from_last = math.sqrt(dx*dx + dy*dy)
+                same_area = dist_from_last < 0.5
 
-                # Right side - EXCLUDE sectors 9, 10 (blind spots!)
-                s11 = self.sector_distances[11] if self.sector_distances[11] > BODY_THRESHOLD_FRONT else 0
-                s8 = self.sector_distances[8] if self.sector_distances[8] > BODY_THRESHOLD_SIDE else 0
-                s7 = self.sector_distances[7] if self.sector_distances[7] > BODY_THRESHOLD_SIDE else 0
-                right_clearance = max(s11, s8, s7)
+            # Get clearance on both sides
+            # LEFT side: sectors 1 (front-left), 2, 3, 4 (left) - all reliable
+            # RIGHT side: sectors 11 (front-right), 8 (right), 7 (r-back)
+            # NOTE: Sectors 9, 10 are in LiDAR BLIND SPOT - don't use for clearance!
+            s1 = self.sector_distances[1] if self.sector_distances[1] > BODY_THRESHOLD_FRONT else 0
+            s2 = self.sector_distances[2] if self.sector_distances[2] > BODY_THRESHOLD_SIDE else 0
+            s3 = self.sector_distances[3] if self.sector_distances[3] > BODY_THRESHOLD_SIDE else 0
+            s4 = self.sector_distances[4] if self.sector_distances[4] > BODY_THRESHOLD_SIDE else 0
+            left_clearance = max(s1, s2, s3, s4)
 
-                # Get exploration scores to prefer unexplored directions
-                map_scores = self.get_map_exploration_scores()
-                left_explore = max(map_scores[1], map_scores[2], map_scores[3])  # Sectors 1-3 (left side)
-                right_explore = max(map_scores[10], map_scores[11], map_scores[9])  # Sectors 9-11 (right side)
+            # Right side - EXCLUDE sectors 9, 10 (blind spots!)
+            s11 = self.sector_distances[11] if self.sector_distances[11] > BODY_THRESHOLD_FRONT else 0
+            s8 = self.sector_distances[8] if self.sector_distances[8] > BODY_THRESHOLD_SIDE else 0
+            s7 = self.sector_distances[7] if self.sector_distances[7] > BODY_THRESHOLD_SIDE else 0
+            right_clearance = max(s11, s8, s7)
 
-                # Combined score: clearance + exploration (exploration weighted higher)
-                CLEARANCE_WEIGHT = 1.0
-                EXPLORE_WEIGHT = 2.0  # Strongly prefer unexplored areas
-                left_score = CLEARANCE_WEIGHT * left_clearance + EXPLORE_WEIGHT * left_explore
-                right_score = CLEARANCE_WEIGHT * right_clearance + EXPLORE_WEIGHT * right_explore
+            # Get exploration scores to prefer unexplored directions
+            map_scores = self.get_map_exploration_scores()
+            left_explore = max(map_scores[1], map_scores[2], map_scores[3])  # Sectors 1-3 (left side)
+            right_explore = max(map_scores[10], map_scores[11], map_scores[9])  # Sectors 9-11 (right side)
 
-                # Check if this looks like a passage (both sides have similar clearance)
-                clearance_ratio = min(left_clearance, right_clearance) / max(left_clearance, right_clearance, 0.01)
-                is_passage = clearance_ratio > 0.5 and left_clearance > 0.3 and right_clearance > 0.3
+            # Combined score: clearance + exploration (exploration weighted higher)
+            CLEARANCE_WEIGHT = 1.0
+            EXPLORE_WEIGHT = 2.0  # Strongly prefer unexplored areas
+            left_score = CLEARANCE_WEIGHT * left_clearance + EXPLORE_WEIGHT * left_explore
+            right_score = CLEARANCE_WEIGHT * right_clearance + EXPLORE_WEIGHT * right_explore
 
-                if same_area:
-                    # We're stuck in same area - ALTERNATE direction!
-                    self.avoidance_attempt_count += 1
-                    if self.avoidance_attempt_count >= 2:
-                        # Tried same direction twice, switch!
-                        self.avoidance_direction = "right" if self.last_avoidance_direction == "left" else "left"
-                        self.avoidance_attempt_count = 0
-                        print(f"\n[PASSAGE] Alternating to {self.avoidance_direction} (attempt #{self.avoidance_attempt_count})")
-                    else:
-                        # First attempt in this area, use combined score (clearance + exploration)
-                        if left_score >= right_score:
-                            self.avoidance_direction = "left"
-                        else:
-                            self.avoidance_direction = "right"
-                elif is_passage:
-                    # Passage: pick the direction with more clearance (obstacle is on opposite side)
-                    # Only alternate if clearances are VERY similar (within 10cm)
-                    if abs(left_clearance - right_clearance) > 0.10:
-                        # Clear difference - go toward the more open side
-                        self.avoidance_direction = "left" if left_clearance > right_clearance else "right"
-                        print(f"\n[PASSAGE] Going {self.avoidance_direction} (clearer: L:{left_clearance:.2f}m R:{right_clearance:.2f}m)")
-                    elif abs(left_explore - right_explore) > 0.2:
-                        # Similar clearance but different exploration - use exploration
-                        self.avoidance_direction = "left" if left_explore > right_explore else "right"
-                        print(f"\n[PASSAGE] Picking {self.avoidance_direction} (explore: L={left_explore:.2f} R={right_explore:.2f})")
-                    else:
-                        # Very similar - alternate to escape
-                        self.avoidance_direction = "right" if self.last_avoidance_direction == "left" else "left"
-                        print(f"\n[PASSAGE] Alternating to {self.avoidance_direction} (similar: L:{left_clearance:.2f}m R:{right_clearance:.2f}m)")
+            # Check if this looks like a passage (both sides have similar clearance)
+            clearance_ratio = min(left_clearance, right_clearance) / max(left_clearance, right_clearance, 0.01)
+            is_passage = clearance_ratio > 0.5 and left_clearance > 0.3 and right_clearance > 0.3
+
+            if same_area:
+                # We're stuck in same area - ALTERNATE direction!
+                self.avoidance_attempt_count += 1
+                if self.avoidance_attempt_count >= 2:
+                    # Tried same direction twice, switch!
+                    self.avoidance_direction = "right" if self.last_avoidance_direction == "left" else "left"
+                    self.avoidance_attempt_count = 0
+                    print(f"\n[PASSAGE] Alternating to {self.avoidance_direction} (attempt #{self.avoidance_attempt_count})")
                 else:
-                    # Normal obstacle - use combined score (clearance + exploration)
+                    # First attempt in this area, use combined score (clearance + exploration)
                     if left_score >= right_score:
                         self.avoidance_direction = "left"
                     else:
                         self.avoidance_direction = "right"
+            elif is_passage:
+                # Passage: pick the direction with more clearance (obstacle is on opposite side)
+                # Only alternate if clearances are VERY similar (within 10cm)
+                if abs(left_clearance - right_clearance) > 0.10:
+                    # Clear difference - go toward the more open side
+                    self.avoidance_direction = "left" if left_clearance > right_clearance else "right"
+                    print(f"\n[PASSAGE] Going {self.avoidance_direction} (clearer: L:{left_clearance:.2f}m R:{right_clearance:.2f}m)")
+                elif abs(left_explore - right_explore) > 0.2:
+                    # Similar clearance but different exploration - use exploration
+                    self.avoidance_direction = "left" if left_explore > right_explore else "right"
+                    print(f"\n[PASSAGE] Picking {self.avoidance_direction} (explore: L={left_explore:.2f} R={right_explore:.2f})")
+                else:
+                    # Very similar - alternate to escape
+                    self.avoidance_direction = "right" if self.last_avoidance_direction == "left" else "left"
+                    print(f"\n[PASSAGE] Alternating to {self.avoidance_direction} (similar: L:{left_clearance:.2f}m R:{right_clearance:.2f}m)")
+            else:
+                # Normal obstacle - use combined score (clearance + exploration)
+                if left_score >= right_score:
+                    self.avoidance_direction = "left"
+                else:
+                    self.avoidance_direction = "right"
 
-                # Save state
-                self.last_avoidance_direction = self.avoidance_direction
-                self.last_avoidance_position = self.current_position
-                self.avoidance_intensity = 1.0
-                self.avoidance_start_time = time.time()
-                # Show which side has more clearance and which direction was chosen
-                obstacle_side = "LEFT" if left_clearance < right_clearance else "RIGHT"
-                print(f"\n[AVOID] Obstacle on {obstacle_side}, turning {self.avoidance_direction.upper()}")
-                print(f"        LEFT:  s1={s1:.2f} s2={s2:.2f} s3={s3:.2f} s4={s4:.2f} -> max={left_clearance:.2f}m")
-                print(f"        RIGHT: s11={s11:.2f} s8={s8:.2f} s7={s7:.2f} -> max={right_clearance:.2f}m")
+            # Save state
+            self.last_avoidance_direction = self.avoidance_direction
+            self.last_avoidance_position = self.current_position
+            self.avoidance_intensity = 1.0
+            self.avoidance_start_time = time.time()
+            # Show which side has more clearance and which direction was chosen
+            obstacle_side = "LEFT" if left_clearance < right_clearance else "RIGHT"
+            print(f"\n[AVOID] Obstacle on {obstacle_side}, turning {self.avoidance_direction.upper()}")
+            print(f"        LEFT:  s1={s1:.2f} s2={s2:.2f} s3={s3:.2f} s4={s4:.2f} -> max={left_clearance:.2f}m")
+            print(f"        RIGHT: s11={s11:.2f} s8={s8:.2f} s7={s7:.2f} -> max={right_clearance:.2f}m")
 
-            # Small turn (30°) - quick avoidance, will turn back after clearing
-            turn_degrees = 30 if self.avoidance_direction == "left" else -30
+            # Larger turn (45°) to properly escape obstacles
+            turn_degrees = 45 if self.avoidance_direction == "left" else -45
 
             # Quick backup + small turn
             self.backup_then_turn(backup_duration=0.3, turn_degrees=turn_degrees)
@@ -2700,9 +2733,18 @@ rclpy.shutdown()
                             dead_ends_found += 1
                             # Back out of dead-end
                             print(f"\n[DEAD-END] Backing out of dead-end area!")
-                            self.set_target_velocity(0.0, 0.0)  # Stop movement thread
                             self.backup_then_turn(backup_duration=0.6, turn_degrees=90)
                             continue
+
+                # Skip computing velocity if a maneuver is in progress
+                # This prevents queueing duplicate maneuvers
+                with self.movement_lock:
+                    maneuver_active = self.maneuver_mode is not None or len(self.maneuver_queue) > 0
+
+                if maneuver_active:
+                    # Let the maneuver complete without interference
+                    time.sleep(0.05)
+                    continue
 
                 # Compute velocity using selected algorithm
                 if self.use_vfh:
@@ -2713,10 +2755,8 @@ rclpy.shutdown()
                     linear, angular = self.compute_velocity()
 
                 # If compute_velocity returned None, a discrete maneuver was executed
-                # Skip the rest of this iteration
+                # Skip the rest of this iteration - DON'T reset velocity, let maneuver complete
                 if linear is None:
-                    # After discrete maneuver, reset target velocity
-                    self.set_target_velocity(0.0, 0.0)
                     continue
 
                 # Check if stuck (driving but not moving)
@@ -2746,7 +2786,6 @@ rclpy.shutdown()
                         self.avoidance_direction = "left"  # Default
                         self.avoidance_start_time = time.time()
 
-                    self.set_target_velocity(0.0, 0.0)  # Stop movement thread during maneuver
                     turn_degrees = 50 if self.avoidance_direction == "left" else -50
                     self.backup_then_turn(backup_duration=0.5, turn_degrees=turn_degrees)
 
