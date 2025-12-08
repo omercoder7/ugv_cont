@@ -137,6 +137,7 @@ show_help() {
     echo "  slam        - Full SLAM+Nav2 using manufacturer's launch"
     echo "  slam-opt    - OPTIMIZED SLAM with better parameters"
     echo "                Use 'slam-opt new_map' to start with a fresh map"
+    echo "                Use 'slam-opt new_map --ekf' for EKF sensor fusion"
     echo "  slam-ekf    - SLAM with EKF triple fusion"
     echo "                Uses wheel encoders + LiDAR + IMU"
     echo "  slam-carto  - Google Cartographer SLAM (BEST ACCURACY)"
@@ -290,8 +291,21 @@ case "${MODE}" in
         ;;
     slam-opt|slam-optimized)
         NEW_MAP="$2"
+        USE_EKF_SLAM=false
 
-        echo "Starting OPTIMIZED SLAM with improved parameters..."
+        # Check for ekf flag
+        for arg in "$@"; do
+            if [ "$arg" = "--ekf" ] || [ "$arg" = "ekf" ]; then
+                USE_EKF_SLAM=true
+            fi
+        done
+
+        if [ "$USE_EKF_SLAM" = true ]; then
+            echo "Starting OPTIMIZED SLAM with EKF sensor fusion..."
+            echo "  EKF fuses: RF2O LiDAR odometry + IMU"
+        else
+            echo "Starting OPTIMIZED SLAM with improved parameters..."
+        fi
         echo ""
         echo "Using DISPLAY=${DISPLAY}"
 
@@ -302,6 +316,13 @@ case "${MODE}" in
         cleanup_duplicate_nodes
         docker cp "${SCRIPT_DIR}/slam_toolbox_optimized.yaml" ${CONTAINER_NAME}:/tmp/slam_toolbox_optimized.yaml
         docker cp "${SCRIPT_DIR}/view_slam_2d.rviz" ${CONTAINER_NAME}:/tmp/view_slam_2d.rviz 2>/dev/null
+
+        # Copy EKF configs if using EKF
+        if [ "$USE_EKF_SLAM" = true ]; then
+            docker cp "${SCRIPT_DIR}/bringup_ekf_simple.launch.py" ${CONTAINER_NAME}:/root/ugv_ws/install/ugv_bringup/share/ugv_bringup/launch/ 2>/dev/null
+            # Also copy the updated ekf.yaml from ugv_ws
+            docker cp /home/ws/ugv_ws/src/ugv_main/ugv_bringup/param/ekf.yaml ${CONTAINER_NAME}:/root/ugv_ws/install/ugv_bringup/share/ugv_bringup/param/ekf.yaml 2>/dev/null
+        fi
 
         # Handle new_map option - restart container to clear zombie processes
         if [ "${NEW_MAP}" = "new_map" ] || [ "${NEW_MAP}" = "new" ] || [ "${NEW_MAP}" = "--new-map" ]; then
@@ -325,16 +346,28 @@ case "${MODE}" in
             docker cp "${SCRIPT_DIR}/view_slam_2d.rviz" ${CONTAINER_NAME}:/tmp/view_slam_2d.rviz 2>/dev/null
             docker cp "${SCRIPT_DIR}/ekf_lidar_imu.yaml" ${CONTAINER_NAME}:/tmp/ekf_lidar_imu.yaml 2>/dev/null
 
-            # Start fresh bringup (rf2o publishes TF directly)
-            echo "Starting robot bringup..."
-            docker exec -d ${CONTAINER_NAME} /bin/bash -c "
-            source /opt/ros/humble/setup.bash && \
-            source /root/ugv_ws/install/setup.bash && \
-            export UGV_MODEL=ugv_beast && \
-            export LDLIDAR_MODEL=ld19 && \
-            ros2 launch ugv_bringup bringup_lidar.launch.py pub_odom_tf:=true > /tmp/bringup.log 2>&1
-            "
-            sleep 6
+            # Start fresh bringup
+            if [ "$USE_EKF_SLAM" = true ]; then
+                echo "Starting robot bringup with EKF..."
+                docker exec -d ${CONTAINER_NAME} /bin/bash -c "
+                source /opt/ros/humble/setup.bash && \
+                source /root/ugv_ws/install/setup.bash && \
+                export UGV_MODEL=ugv_beast && \
+                export LDLIDAR_MODEL=ld19 && \
+                ros2 launch ugv_bringup bringup_ekf_simple.launch.py > /tmp/bringup.log 2>&1
+                "
+                sleep 10  # EKF needs more time
+            else
+                echo "Starting robot bringup..."
+                docker exec -d ${CONTAINER_NAME} /bin/bash -c "
+                source /opt/ros/humble/setup.bash && \
+                source /root/ugv_ws/install/setup.bash && \
+                export UGV_MODEL=ugv_beast && \
+                export LDLIDAR_MODEL=ld19 && \
+                ros2 launch ugv_bringup bringup_lidar.launch.py pub_odom_tf:=true > /tmp/bringup.log 2>&1
+                "
+                sleep 6
+            fi
 
             # Verify odometry is near zero
             echo "Checking odometry reset..."
@@ -368,19 +401,41 @@ case "${MODE}" in
             echo "Fresh map started!"
         else
             # Normal mode - check if already running
-            # Check if bringup is already running
-            if ! docker exec ${CONTAINER_NAME} pgrep -f "bringup_lidar" > /dev/null 2>&1; then
-                echo "Starting robot bringup..."
-                docker exec -d ${CONTAINER_NAME} /bin/bash -c "
-                source /opt/ros/humble/setup.bash && \
-                source /root/ugv_ws/install/setup.bash && \
-                export UGV_MODEL=ugv_beast && \
-                export LDLIDAR_MODEL=ld19 && \
-                ros2 launch ugv_bringup bringup_lidar.launch.py pub_odom_tf:=true > /tmp/bringup.log 2>&1
-                "
-                sleep 5
+            # Check if bringup is already running (check both ekf and non-ekf)
+            BRINGUP_RUNNING=$(docker exec ${CONTAINER_NAME} pgrep -f "ugv_bringup" 2>/dev/null || true)
+            if [ -z "$BRINGUP_RUNNING" ]; then
+                if [ "$USE_EKF_SLAM" = true ]; then
+                    echo "Starting robot bringup with EKF..."
+                    docker exec -d ${CONTAINER_NAME} /bin/bash -c "
+                    source /opt/ros/humble/setup.bash && \
+                    source /root/ugv_ws/install/setup.bash && \
+                    export UGV_MODEL=ugv_beast && \
+                    export LDLIDAR_MODEL=ld19 && \
+                    ros2 launch ugv_bringup bringup_ekf_simple.launch.py > /tmp/bringup.log 2>&1
+                    "
+                    sleep 10
+                else
+                    echo "Starting robot bringup..."
+                    docker exec -d ${CONTAINER_NAME} /bin/bash -c "
+                    source /opt/ros/humble/setup.bash && \
+                    source /root/ugv_ws/install/setup.bash && \
+                    export UGV_MODEL=ugv_beast && \
+                    export LDLIDAR_MODEL=ld19 && \
+                    ros2 launch ugv_bringup bringup_lidar.launch.py pub_odom_tf:=true > /tmp/bringup.log 2>&1
+                    "
+                    sleep 5
+                fi
             else
                 echo "Bringup already running, skipping..."
+                # Check if EKF is running when requested
+                if [ "$USE_EKF_SLAM" = true ]; then
+                    EKF_RUNNING=$(docker exec ${CONTAINER_NAME} bash -c "source /opt/ros/humble/setup.bash && ros2 node list 2>/dev/null | grep -c ekf_filter_node" 2>/dev/null || echo "0")
+                    if [ "$EKF_RUNNING" = "0" ]; then
+                        echo "  NOTE: EKF not running. Use 'new_map --ekf' to start fresh with EKF."
+                    else
+                        echo "  EKF: RUNNING"
+                    fi
+                fi
             fi
 
             # Check if SLAM is already running

@@ -21,8 +21,8 @@ EKF_RUNNING=$(docker exec ${CONTAINER} bash -c "source /opt/ros/humble/setup.bas
 if [ "$EKF_RUNNING" != "0" ]; then
     echo "EKF is already running!"
     echo ""
-    echo "Current EKF status:"
-    docker exec ${CONTAINER} bash -c "source /opt/ros/humble/setup.bash && ros2 topic echo /odometry/filtered --once 2>/dev/null | head -20"
+    echo "Current EKF odom:"
+    docker exec ${CONTAINER} bash -c "source /opt/ros/humble/setup.bash && ros2 topic echo /odom --once 2>/dev/null | head -15"
     exit 0
 fi
 
@@ -34,25 +34,24 @@ echo ""
 # Kill current bringup processes
 echo "Stopping current bringup..."
 docker exec ${CONTAINER} bash -c "
-    pkill -f 'ugv_bringup' 2>/dev/null
-    pkill -f 'ugv_driver' 2>/dev/null
-    pkill -f 'base_node' 2>/dev/null
-    pkill -f 'ldlidar' 2>/dev/null
-    pkill -f 'complementary_filter' 2>/dev/null
+    pkill -9 -f 'ros2' 2>/dev/null || true
+    pkill -9 -f 'python3.*ros' 2>/dev/null || true
 " 2>/dev/null
-sleep 2
+sleep 3
 
 # Launch EKF bringup in background
 echo "Starting EKF bringup..."
 docker exec -d ${CONTAINER} bash -c "
+    export UGV_MODEL=ugv_beast && \
+    export LDLIDAR_MODEL=ld19 && \
     source /opt/ros/humble/setup.bash && \
-    source /home/ws/ugv_ws/install/setup.bash && \
-    ros2 launch ugv_bringup bringup_imu_ekf.launch.py > /tmp/ekf_bringup.log 2>&1
+    source /root/ugv_ws/install/setup.bash && \
+    ros2 launch ugv_bringup bringup_ekf_simple.launch.py > /tmp/ekf_bringup.log 2>&1
 "
 
 # Wait for EKF to start
 echo "Waiting for EKF node to start..."
-for i in {1..10}; do
+for i in {1..15}; do
     sleep 1
     EKF_CHECK=$(docker exec ${CONTAINER} bash -c "source /opt/ros/humble/setup.bash && ros2 node list 2>/dev/null | grep -c ekf_filter_node" 2>/dev/null || echo "0")
     if [ "$EKF_CHECK" != "0" ]; then
@@ -62,8 +61,10 @@ for i in {1..10}; do
         echo "Nodes running:"
         docker exec ${CONTAINER} bash -c "source /opt/ros/humble/setup.bash && ros2 node list 2>/dev/null"
         echo ""
-        echo "EKF publishes filtered odometry to: /odom"
-        echo "  (remapped from /odometry/filtered)"
+        echo "Topics:"
+        echo "  /odom        - EKF filtered odometry"
+        echo "  /odom_rf2o   - RF2O laser odometry input"
+        echo "  /imu/data    - IMU data input"
         exit 0
     fi
     echo -n "."

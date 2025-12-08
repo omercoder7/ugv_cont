@@ -4,10 +4,30 @@
 #
 # IMPORTANT: This script restarts the Docker container to clear zombie processes.
 # Killing processes alone does NOT remove zombies - only container restart does.
+#
+# Usage:
+#   ./restart_ros_DEBUG.sh         # Standard bringup (no EKF)
+#   ./restart_ros_DEBUG.sh --ekf   # EKF mode (sensor fusion)
 
 CONTAINER_NAME="ugv_rpi_ros_humble"
+USE_EKF=false
+
+# Parse arguments
+for arg in "$@"; do
+    case $arg in
+        --ekf)
+            USE_EKF=true
+            shift
+            ;;
+    esac
+done
 
 echo "=== ROS2 Debug Restart Script ==="
+if [ "$USE_EKF" = true ]; then
+    echo "Mode: EKF (IMU + Laser Odometry fusion)"
+else
+    echo "Mode: Standard (Laser Odometry only)"
+fi
 echo ""
 
 # Check container
@@ -56,21 +76,36 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 docker cp "${SCRIPT_DIR}/slam_toolbox_optimized.yaml" ${CONTAINER_NAME}:/tmp/slam_toolbox_optimized.yaml 2>/dev/null
 
-# Start bringup using helper script (avoids duplicates)
+# Start bringup
 echo ""
-echo "Starting robot bringup..."
-if [ -x "${SCRIPT_DIR}/ensure_bringup.sh" ]; then
-    "${SCRIPT_DIR}/ensure_bringup.sh" --wait
-else
-    # Fallback if helper doesn't exist
+if [ "$USE_EKF" = true ]; then
+    echo "Starting robot bringup (EKF mode)..."
+    # Copy EKF launch file to container if it exists locally
+    if [ -f "${SCRIPT_DIR}/bringup_ekf_simple.launch.py" ]; then
+        docker cp "${SCRIPT_DIR}/bringup_ekf_simple.launch.py" ${CONTAINER_NAME}:/root/ugv_ws/install/ugv_bringup/share/ugv_bringup/launch/
+    fi
     docker exec -d ${CONTAINER_NAME} /bin/bash -c "
     source /opt/ros/humble/setup.bash && \
     source /root/ugv_ws/install/setup.bash && \
     export UGV_MODEL=ugv_beast && \
     export LDLIDAR_MODEL=ld19 && \
-    ros2 launch ugv_bringup bringup_lidar.launch.py pub_odom_tf:=true > /tmp/bringup.log 2>&1
+    ros2 launch ugv_bringup bringup_ekf_simple.launch.py > /tmp/bringup.log 2>&1
     "
-    sleep 6
+    sleep 10  # EKF needs more time to initialize
+else
+    echo "Starting robot bringup (standard mode)..."
+    if [ -x "${SCRIPT_DIR}/ensure_bringup.sh" ]; then
+        "${SCRIPT_DIR}/ensure_bringup.sh" --wait
+    else
+        docker exec -d ${CONTAINER_NAME} /bin/bash -c "
+        source /opt/ros/humble/setup.bash && \
+        source /root/ugv_ws/install/setup.bash && \
+        export UGV_MODEL=ugv_beast && \
+        export LDLIDAR_MODEL=ld19 && \
+        ros2 launch ugv_bringup bringup_lidar.launch.py pub_odom_tf:=true > /tmp/bringup.log 2>&1
+        "
+        sleep 6
+    fi
 fi
 
 # Check if bringup started
@@ -80,6 +115,15 @@ if docker exec ${CONTAINER_NAME} pgrep -f "ugv_bringup" > /dev/null 2>&1; then
     echo "  Bringup: RUNNING"
 else
     echo "  Bringup: FAILED - check /tmp/bringup.log inside container"
+fi
+
+# Check EKF if in EKF mode
+if [ "$USE_EKF" = true ]; then
+    if docker exec ${CONTAINER_NAME} bash -c "source /opt/ros/humble/setup.bash && ros2 node list 2>/dev/null | grep -q ekf_filter_node"; then
+        echo "  EKF: RUNNING"
+    else
+        echo "  EKF: NOT RUNNING - check /tmp/bringup.log"
+    fi
 fi
 
 # Check odometry
