@@ -79,33 +79,35 @@ xhost +local:docker 2>/dev/null
 xhost + 2>/dev/null
 
 # Function to kill duplicate/zombie ROS2 nodes
+# NOTE: ROS2 DDS discovery can show duplicate nodes in 'ros2 node list' even when
+# there's only one actual process. This is a known DDS cache issue.
+# We now check actual PROCESSES, not just node names.
 cleanup_duplicate_nodes() {
-    echo "Checking for duplicate ROS2 nodes..."
+    echo "Checking for duplicate processes..."
 
-    # Get list of nodes
-    NODES=$(docker exec ${CONTAINER_NAME} bash -c "source /opt/ros/humble/setup.bash && ros2 node list 2>/dev/null" | sort)
+    # Check for duplicate rf2o processes - count only the actual binary, not shell wrappers
+    # Use 'pgrep -x' for exact match on the executable name
+    RF2O_PROCS=$(docker exec ${CONTAINER_NAME} bash -c "ps aux | grep -c '[r]f2o_laser_odometry_node --ros-args'" 2>/dev/null || echo "0")
+    if [ "${RF2O_PROCS}" -gt 1 ]; then
+        echo "  Found ${RF2O_PROCS} rf2o processes - killing all and letting bringup restart..."
+        docker exec ${CONTAINER_NAME} pkill -f rf2o 2>/dev/null
+        sleep 1
+    fi
 
-    # Check for duplicates
-    DUPS=$(echo "$NODES" | uniq -d)
-    if [ -n "$DUPS" ]; then
-        echo "Found duplicate nodes: $DUPS"
+    # Check for duplicate slam_toolbox processes
+    SLAM_PROCS=$(docker exec ${CONTAINER_NAME} pgrep -c -f "slam_toolbox" 2>/dev/null || echo "0")
+    if [ "${SLAM_PROCS}" -gt 1 ]; then
+        echo "  Found ${SLAM_PROCS} slam_toolbox processes - killing all..."
+        docker exec ${CONTAINER_NAME} pkill -f slam_toolbox 2>/dev/null
+        sleep 1
+    fi
 
-        # Kill specific duplicate processes
-        if echo "$DUPS" | grep -q "rf2o"; then
-            echo "  Killing duplicate rf2o_laser_odometry..."
-            docker exec ${CONTAINER_NAME} pkill -f rf2o 2>/dev/null
-            sleep 1
-        fi
-        if echo "$DUPS" | grep -q "cartographer"; then
-            echo "  Killing duplicate cartographer nodes..."
-            docker exec ${CONTAINER_NAME} pkill -f cartographer 2>/dev/null
-            sleep 1
-        fi
-        if echo "$DUPS" | grep -q "slam_toolbox"; then
-            echo "  Killing duplicate slam_toolbox..."
-            docker exec ${CONTAINER_NAME} pkill -f slam_toolbox 2>/dev/null
-            sleep 1
-        fi
+    # Check for duplicate cartographer processes
+    CARTO_PROCS=$(docker exec ${CONTAINER_NAME} pgrep -c -f "cartographer_node" 2>/dev/null || echo "0")
+    if [ "${CARTO_PROCS}" -gt 1 ]; then
+        echo "  Found ${CARTO_PROCS} cartographer processes - killing all..."
+        docker exec ${CONTAINER_NAME} pkill -f cartographer 2>/dev/null
+        sleep 1
     fi
 
     # Check for zombie processes
@@ -113,6 +115,29 @@ cleanup_duplicate_nodes() {
     if [ "${ZOMBIES}" -gt 0 ]; then
         echo "Warning: ${ZOMBIES} zombie processes found."
         echo "  Consider running with 'new_map' option to restart container."
+    fi
+}
+
+# Function to ensure RF2O is running (call after bringup starts)
+ensure_rf2o_running() {
+    sleep 2  # Give bringup time to start RF2O
+    RF2O_RUNNING=$(docker exec ${CONTAINER_NAME} pgrep -f "rf2o_laser_odometry_node" 2>/dev/null || echo "")
+    if [ -z "${RF2O_RUNNING}" ]; then
+        echo "  RF2O not running - starting it..."
+        docker exec -d ${CONTAINER_NAME} bash -c "
+        source /opt/ros/humble/setup.bash && \
+        source /root/ugv_ws/install/setup.bash && \
+        ros2 launch rf2o_laser_odometry rf2o_laser_odometry.launch.py > /tmp/rf2o.log 2>&1
+        "
+        sleep 2
+        # Verify it started
+        if docker exec ${CONTAINER_NAME} pgrep -f "rf2o_laser_odometry_node" > /dev/null 2>&1; then
+            echo "  RF2O: STARTED"
+        else
+            echo "  RF2O: FAILED TO START - check /tmp/rf2o.log"
+        fi
+    else
+        echo "  RF2O: RUNNING"
     fi
 }
 
@@ -369,6 +394,9 @@ case "${MODE}" in
                 sleep 6
             fi
 
+            # Ensure RF2O is running (may have been killed)
+            ensure_rf2o_running
+
             # Verify odometry is near zero
             echo "Checking odometry reset..."
             ODOM_CHECK=$(docker exec ${CONTAINER_NAME} bash -c "source /opt/ros/humble/setup.bash && timeout 5 ros2 topic echo /odom --once 2>/dev/null | grep -A2 'position:' | grep 'x:' | awk '{print \$2}'" 2>/dev/null)
@@ -425,6 +453,8 @@ case "${MODE}" in
                     "
                     sleep 5
                 fi
+                # Ensure RF2O started with bringup
+                ensure_rf2o_running
             else
                 echo "Bringup already running, skipping..."
                 # Check if EKF is running when requested
@@ -436,6 +466,9 @@ case "${MODE}" in
                         echo "  EKF: RUNNING"
                     fi
                 fi
+                # Ensure RF2O is running even if bringup is running
+                # (RF2O might have been killed by OOM or other issues)
+                ensure_rf2o_running
             fi
 
             # Check if SLAM is already running

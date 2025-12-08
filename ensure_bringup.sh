@@ -88,15 +88,18 @@ kill_duplicates() {
         fi
     fi
 
-    # Also check for duplicate rf2o nodes using ros2 node list
-    local rf2o_count
-    rf2o_count=$(docker exec ${CONTAINER_NAME} bash -c "source /opt/ros/humble/setup.bash && ros2 node list 2>/dev/null | grep -c rf2o_laser_odometry" 2>/dev/null || echo "0")
-    rf2o_count=$(echo "$rf2o_count" | tr -d '[:space:]')
-    if [ "$rf2o_count" -gt 1 ]; then
-        echo "Warning: Found $rf2o_count duplicate rf2o nodes, killing all rf2o..."
+    # Check for duplicate rf2o PROCESSES (not nodes - ros2 node list has DDS cache issues)
+    # Count only the actual binary processes, not shell wrappers
+    local rf2o_procs
+    rf2o_procs=$(docker exec ${CONTAINER_NAME} bash -c "ps aux | grep -c '[r]f2o_laser_odometry_node --ros-args'" 2>/dev/null || echo "0")
+    rf2o_procs=$(echo "$rf2o_procs" | tr -d '[:space:]')
+    if [ "$rf2o_procs" -gt 1 ]; then
+        echo "Warning: Found $rf2o_procs duplicate rf2o processes, killing all rf2o..."
         docker exec ${CONTAINER_NAME} pkill -f "rf2o" 2>/dev/null
         sleep 2
     fi
+    # NOTE: ros2 node list can show duplicate nodes due to DDS discovery cache
+    # even when there's only 1 process. Don't use node count for duplicate detection!
 
     return 0
 }
