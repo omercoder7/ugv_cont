@@ -89,6 +89,11 @@ ROBOT_HALF_WIDTH = ROBOT_WIDTH / 2  # 0.09m - for corridor width checking
 # Minimum corridor width the robot can fit through
 MIN_CORRIDOR_WIDTH = ROBOT_WIDTH + 0.10  # 28cm - robot width + 10cm clearance
 
+# Wheel encoder stuck detection constants
+# If wheels should be moving but encoder delta is below threshold, robot is stuck
+WHEEL_ENCODER_STUCK_THRESHOLD = 0.05  # Minimum encoder change expected when moving
+WHEEL_ENCODER_STUCK_TIME = 0.8  # Seconds of no encoder change to trigger stuck
+
 
 # ============================================================================
 # State Machine for Navigation
@@ -881,6 +886,10 @@ class SectorObstacleAvoider:
         self.front_distance_unchanged_count = 0  # How many times front distance didn't change
         self.stuck_position = None  # Position where we got stuck (for virtual obstacle)
 
+        # Wheel encoder stuck detection
+        self.prev_wheel_encoders = None  # Previous (left, right) encoder values
+        self.wheel_encoder_stuck_start = None  # Time when encoder stopped changing
+
         # Smoothing parameters (based on DWA/VFH research)
         # Exponential Moving Average for velocity smoothing
         # At 30Hz, we can use higher alpha for faster response while still being smooth
@@ -1311,6 +1320,36 @@ rclpy.shutdown()
         except:
             return None
 
+    def get_wheel_encoders(self) -> Optional[Tuple[float, float]]:
+        """Get raw wheel encoder values from /odom/odom_raw topic"""
+        try:
+            result = subprocess.run(
+                ['docker', 'exec', CONTAINER_NAME, 'bash', '-c',
+                 '''source /opt/ros/humble/setup.bash && python3 -c "
+import rclpy
+from std_msgs.msg import Float32MultiArray
+rclpy.init()
+node = rclpy.create_node('encoder_reader')
+msg = None
+def cb(m): global msg; msg = m
+sub = node.create_subscription(Float32MultiArray, '/odom/odom_raw', cb, 1)
+for _ in range(20):
+    rclpy.spin_once(node, timeout_sec=0.05)
+    if msg: break
+if msg and len(msg.data) >= 2:
+    print(f'{msg.data[0]:.4f},{msg.data[1]:.4f}')
+node.destroy_node()
+rclpy.shutdown()
+"'''],
+                capture_output=True, text=True, timeout=3
+            )
+            if result.stdout.strip():
+                parts = result.stdout.strip().split(',')
+                return (float(parts[0]), float(parts[1]))
+            return None
+        except:
+            return None
+
     def publish_virtual_obstacle(self, x: float, y: float):
         """
         Publish a virtual obstacle marker at the given position.
@@ -1402,132 +1441,68 @@ rclpy.shutdown()
 
     def check_if_stuck(self, is_driving: bool, commanded_linear: float = 0.0) -> bool:
         """
-        Check if robot is stuck by detecting unchanging LiDAR distance.
+        Check if robot is stuck using odometry distance tracking.
         Returns True if stuck is detected.
 
-        Key insight: If driving forward but front distance ISN'T DECREASING,
-        we're stuck (wheels spinning but robot not moving). LiDAR directly
-        measures obstacle distance - trust it over odometry!
+        Uses the same approach as behavior_ctrl.py from ugv_ws:
+        - Track distance moved using math.hypot(diff_x, diff_y)
+        - If robot should be moving but odometry shows no movement, we're stuck
 
-        Two detection methods:
-        1. Close obstacle: Front distance < 0.40m while driving
-        2. Distance unchanging: Front distance not decreasing over multiple readings
+        This works for invisible/low obstacles that LiDAR can't see.
         """
         if not is_driving or commanded_linear <= 0.01:
-            # Not driving forward, reset
-            self.stuck_time_counter = 0
-            self.front_distance_unchanged_count = 0
-            self.prev_front_distance = None
+            # Not driving forward, reset tracking
+            self.last_position = None
+            self.last_position_time = 0
+            self.wheel_encoder_stuck_start = None
             return False
 
         if self.stuck_cooldown > 0:
             self.stuck_cooldown -= 1
             return False
 
-        # Robot body appears at ~0.1-0.25m in side/back sectors
-        # Use same thresholds as compute_velocity() for consistency
-        BODY_THRESHOLD_FRONT = 0.12  # Front sectors: real obstacles can be close
-        BODY_THRESHOLD_SIDE = 0.25   # Side/back sectors: may have body readings
-
-        # Check front sectors only (what's in front of robot)
-        sectors_to_check = [
-            (0, self.sector_distances[0], BODY_THRESHOLD_FRONT),   # FRONT
-            (1, self.sector_distances[1], BODY_THRESHOLD_FRONT),   # F-L
-            (11, self.sector_distances[11], BODY_THRESHOLD_FRONT), # FRONT-R
-        ]
-
-        # Find minimum distance in front, filtering out body readings
-        front_min = 999
-        for sector, d, threshold in sectors_to_check:
-            if d > threshold:  # Skip body and blind readings
-                front_min = min(front_min, d)
-
-        # If front_min is still 999, no valid readings - don't trigger stuck
-        if front_min >= 999:
-            self.stuck_time_counter = 0
-            self.front_distance_unchanged_count = 0
-            self.prev_front_distance = None
+        # Get current odometry position
+        current_pos = self.get_odometry()
+        if current_pos is None:
             return False
 
-        # Method 1: Close obstacle detection
-        if front_min < 0.40:
-            self.stuck_time_counter += 1
-            # 2 iterations at 5Hz = ~0.4s of driving into close obstacle = stuck
-            if self.stuck_time_counter >= 2:
-                print(f"\n[STUCK] Driving into obstacle at {front_min:.2f}m!")
-                print(f"  Front sectors: s0={self.sector_distances[0]:.2f} s1={self.sector_distances[1]:.2f} s11={self.sector_distances[11]:.2f}")
-                self.stuck_position = self.get_odometry()
-                self.stuck_time_counter = 0
-                self.front_distance_unchanged_count = 0
-                self.prev_front_distance = None
-                return True
-        else:
-            self.stuck_time_counter = 0
+        current_time = time.time()
 
-        # Method 2: Distance not decreasing while driving forward
-        # If driving forward at positive velocity, front distance should DECREASE
-        # (getting closer to obstacle) or INCREASE (passing obstacle)
-        # If it stays SAME, robot is stuck (wheels spinning but not moving)
-        if self.prev_front_distance is not None:
-            distance_change = front_min - self.prev_front_distance
+        # Initialize tracking on first call
+        if self.last_position is None:
+            self.last_position = current_pos
+            self.last_position_time = current_time
+            return False
 
-            # Expected change when driving forward at commanded speed
-            # At 10Hz main loop, 0.06 m/s should give ~0.006m change per iteration
-            # Allow some tolerance for sensor noise
-            MIN_EXPECTED_CHANGE = 0.003  # 3mm minimum change expected
+        # Calculate distance moved since last check
+        diff_x = current_pos[0] - self.last_position[0]
+        diff_y = current_pos[1] - self.last_position[1]
+        distance_moved = math.hypot(diff_x, diff_y)
+        time_elapsed = current_time - self.last_position_time
 
-            # If driving forward and distance isn't changing (within noise)
-            if abs(distance_change) < MIN_EXPECTED_CHANGE and commanded_linear > 0.02:
-                self.front_distance_unchanged_count += 1
+        # Only check after enough time has passed (avoid false positives at start)
+        if time_elapsed < WHEEL_ENCODER_STUCK_TIME:
+            return False
 
-                # 6 iterations at 10Hz = ~0.6s of no distance change = stuck
-                if self.front_distance_unchanged_count >= 6:
-                    print(f"\n[STUCK] Distance not changing while driving!")
-                    print(f"  Front distance: {front_min:.3f}m, prev: {self.prev_front_distance:.3f}m")
-                    print(f"  Change: {distance_change:.4f}m (expected ~{commanded_linear * 0.1:.4f}m)")
-                    self.stuck_position = self.get_odometry()
-                    self.front_distance_unchanged_count = 0
-                    self.prev_front_distance = None
-                    return True
-            else:
-                # Distance is changing, reset counter
-                self.front_distance_unchanged_count = 0
+        # Calculate expected distance based on commanded velocity
+        expected_distance = commanded_linear * time_elapsed
 
-        # Update previous distance
-        self.prev_front_distance = front_min
+        # If we should have moved significantly but didn't, we're stuck
+        # Use 30% threshold like NAV2's progress checker
+        if expected_distance > 0.02 and distance_moved < expected_distance * 0.3:
+            print(f"\n[STUCK] Odometry shows no movement!")
+            print(f"  Expected: {expected_distance:.3f}m, Actual: {distance_moved:.3f}m in {time_elapsed:.1f}s")
+            print(f"  Position: ({current_pos[0]:.2f}, {current_pos[1]:.2f})")
+            self.stuck_position = current_pos
+            # Reset tracking for next check
+            self.last_position = current_pos
+            self.last_position_time = current_time
+            return True
 
-        # Method 3: Odometry-based stuck detection (for invisible/low obstacles)
-        # If robot is commanded to move but odometry shows no movement
-        current_pos = self.get_odometry()
-        if current_pos and self.last_position:
-            dx = current_pos[0] - self.last_position[0]
-            dy = current_pos[1] - self.last_position[1]
-            odom_dist = math.sqrt(dx*dx + dy*dy)
-            time_elapsed = time.time() - self.last_position_time
-
-            # Expected distance at commanded speed
-            expected_dist = commanded_linear * time_elapsed
-
-            # If we've been driving for >0.5s but haven't moved much
-            if time_elapsed > 0.5 and expected_dist > 0.02:
-                # Should have moved at least 50% of expected distance
-                if odom_dist < expected_dist * 0.3:
-                    print(f"\n[STUCK] Odometry shows no movement!")
-                    print(f"  Expected: {expected_dist:.3f}m, Actual: {odom_dist:.3f}m in {time_elapsed:.1f}s")
-                    self.stuck_position = current_pos
-                    self.last_position = current_pos
-                    self.last_position_time = time.time()
-                    return True
-
-        # Update position tracking
-        if current_pos:
-            if self.last_position is None:
-                self.last_position = current_pos
-                self.last_position_time = time.time()
-            elif time.time() - self.last_position_time > 1.0:
-                # Update every 1 second
-                self.last_position = current_pos
-                self.last_position_time = time.time()
+        # Robot is moving, update tracking periodically
+        if time_elapsed > 1.0:
+            self.last_position = current_pos
+            self.last_position_time = current_time
 
         return False
 
@@ -2415,21 +2390,24 @@ rclpy.shutdown()
                 dist_from_last = math.sqrt(dx*dx + dy*dy)
                 same_area = dist_from_last < 0.5
 
-            # Get clearance on both sides
-            # LEFT side: sectors 1 (front-left), 2, 3, 4 (left) - all reliable
-            # RIGHT side: sectors 11 (front-right), 8 (right), 7 (r-back)
-            # NOTE: Sectors 9, 10 are in LiDAR BLIND SPOT - don't use for clearance!
-            s1 = self.sector_distances[1] if self.sector_distances[1] > BODY_THRESHOLD_FRONT else 0
-            s2 = self.sector_distances[2] if self.sector_distances[2] > BODY_THRESHOLD_SIDE else 0
-            s3 = self.sector_distances[3] if self.sector_distances[3] > BODY_THRESHOLD_SIDE else 0
-            s4 = self.sector_distances[4] if self.sector_distances[4] > BODY_THRESHOLD_SIDE else 0
-            left_clearance = max(s1, s2, s3, s4)
+            # Get clearance on both sides - use MIN to find CLOSEST obstacle on each side
+            # LEFT side: sectors 1 (front-left), 2, 3, 4 (left)
+            # RIGHT side: sectors 11 (front-right), 10, 9, 8 (right)
+            left_dists = []
+            for s in [1, 2, 3, 4]:
+                d = self.sector_distances[s]
+                thresh = BODY_THRESHOLD_FRONT if s == 1 else BODY_THRESHOLD_SIDE
+                if d > thresh:
+                    left_dists.append(d)
+            left_clearance = min(left_dists) if left_dists else 0
 
-            # Right side - EXCLUDE sectors 9, 10 (blind spots!)
-            s11 = self.sector_distances[11] if self.sector_distances[11] > BODY_THRESHOLD_FRONT else 0
-            s8 = self.sector_distances[8] if self.sector_distances[8] > BODY_THRESHOLD_SIDE else 0
-            s7 = self.sector_distances[7] if self.sector_distances[7] > BODY_THRESHOLD_SIDE else 0
-            right_clearance = max(s11, s8, s7)
+            right_dists = []
+            for s in [11, 10, 9, 8]:
+                d = self.sector_distances[s]
+                thresh = BODY_THRESHOLD_FRONT if s == 11 else BODY_THRESHOLD_SIDE
+                if d > thresh:
+                    right_dists.append(d)
+            right_clearance = min(right_dists) if right_dists else 0
 
             # Get exploration scores to prefer unexplored directions
             map_scores = self.get_map_exploration_scores()
@@ -2446,41 +2424,12 @@ rclpy.shutdown()
             clearance_ratio = min(left_clearance, right_clearance) / max(left_clearance, right_clearance, 0.01)
             is_passage = clearance_ratio > 0.5 and left_clearance > 0.3 and right_clearance > 0.3
 
-            if same_area:
-                # We're stuck in same area - ALTERNATE direction!
-                self.avoidance_attempt_count += 1
-                if self.avoidance_attempt_count >= 2:
-                    # Tried same direction twice, switch!
-                    self.avoidance_direction = "right" if self.last_avoidance_direction == "left" else "left"
-                    self.avoidance_attempt_count = 0
-                    print(f"\n[PASSAGE] Alternating to {self.avoidance_direction} (attempt #{self.avoidance_attempt_count})")
-                else:
-                    # First attempt in this area, use combined score (clearance + exploration)
-                    if left_score >= right_score:
-                        self.avoidance_direction = "left"
-                    else:
-                        self.avoidance_direction = "right"
-            elif is_passage:
-                # Passage: pick the direction with more clearance (obstacle is on opposite side)
-                # Only alternate if clearances are VERY similar (within 10cm)
-                if abs(left_clearance - right_clearance) > 0.10:
-                    # Clear difference - go toward the more open side
-                    self.avoidance_direction = "left" if left_clearance > right_clearance else "right"
-                    print(f"\n[PASSAGE] Going {self.avoidance_direction} (clearer: L:{left_clearance:.2f}m R:{right_clearance:.2f}m)")
-                elif abs(left_explore - right_explore) > 0.2:
-                    # Similar clearance but different exploration - use exploration
-                    self.avoidance_direction = "left" if left_explore > right_explore else "right"
-                    print(f"\n[PASSAGE] Picking {self.avoidance_direction} (explore: L={left_explore:.2f} R={right_explore:.2f})")
-                else:
-                    # Very similar - alternate to escape
-                    self.avoidance_direction = "right" if self.last_avoidance_direction == "left" else "left"
-                    print(f"\n[PASSAGE] Alternating to {self.avoidance_direction} (similar: L:{left_clearance:.2f}m R:{right_clearance:.2f}m)")
+            # SIMPLE RULE: Always turn toward the side with MORE clearance
+            # This turns the robot AWAY from the obstacle
+            if left_clearance > right_clearance:
+                self.avoidance_direction = "left"
             else:
-                # Normal obstacle - use combined score (clearance + exploration)
-                if left_score >= right_score:
-                    self.avoidance_direction = "left"
-                else:
-                    self.avoidance_direction = "right"
+                self.avoidance_direction = "right"
 
             # Save state
             self.last_avoidance_direction = self.avoidance_direction
@@ -2490,8 +2439,8 @@ rclpy.shutdown()
             # Show which side has more clearance and which direction was chosen
             obstacle_side = "LEFT" if left_clearance < right_clearance else "RIGHT"
             print(f"\n[AVOID] Obstacle on {obstacle_side}, turning {self.avoidance_direction.upper()}")
-            print(f"        LEFT:  s1={s1:.2f} s2={s2:.2f} s3={s3:.2f} s4={s4:.2f} -> max={left_clearance:.2f}m")
-            print(f"        RIGHT: s11={s11:.2f} s8={s8:.2f} s7={s7:.2f} -> max={right_clearance:.2f}m")
+            print(f"        LEFT min:  {left_clearance:.2f}m from {left_dists}")
+            print(f"        RIGHT min: {right_clearance:.2f}m from {right_dists}")
 
             # Larger turn (45°) to properly escape obstacles
             turn_degrees = 45 if self.avoidance_direction == "left" else -45
