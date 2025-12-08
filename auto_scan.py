@@ -94,6 +94,12 @@ MIN_CORRIDOR_WIDTH = ROBOT_WIDTH + 0.10  # 28cm - robot width + 10cm clearance
 WHEEL_ENCODER_STUCK_THRESHOLD = 0.05  # Minimum encoder change expected when moving
 WHEEL_ENCODER_STUCK_TIME = 0.3  # Seconds of no encoder change to trigger stuck (reduced for faster response)
 
+# Adaptive speed control constants
+# Robot slows down as it approaches obstacles for tighter maneuvering
+SPEED_SCALE_FAR_DISTANCE = 1.0    # Distance (m) at which robot runs at full speed
+SPEED_SCALE_NEAR_DISTANCE = 0.5   # Distance (m) at which robot runs at minimum speed
+SPEED_SCALE_MIN_FACTOR = 0.4      # Minimum speed factor (40% of linear_speed)
+
 
 # ============================================================================
 # State Machine for Navigation
@@ -1004,6 +1010,39 @@ class SectorObstacleAvoider:
         self.last_angular = smoothed_angular
 
         return smoothed_linear, smoothed_angular
+
+    def compute_adaptive_speed(self, front_distance: float) -> float:
+        """
+        Calculate adaptive speed based on distance to nearest obstacle.
+
+        Robot slows down as it approaches obstacles, allowing for:
+        - Tighter maneuvering in close quarters
+        - More reaction time near obstacles
+        - Full speed in open areas
+
+        Args:
+            front_distance: Distance to nearest obstacle in front arc (meters)
+
+        Returns:
+            Scaled linear speed (between min_factor * linear_speed and linear_speed)
+        """
+        # Subtract LiDAR offset to get actual distance from robot front
+        actual_distance = front_distance - LIDAR_FRONT_OFFSET
+
+        # Clamp to valid range
+        if actual_distance >= SPEED_SCALE_FAR_DISTANCE:
+            # Far from obstacles - full speed
+            return self.linear_speed
+        elif actual_distance <= SPEED_SCALE_NEAR_DISTANCE:
+            # Very close to obstacle - minimum speed
+            return self.linear_speed * SPEED_SCALE_MIN_FACTOR
+        else:
+            # Linear interpolation between min and max speed
+            # speed_factor = min_factor + (1 - min_factor) * (dist - near) / (far - near)
+            distance_range = SPEED_SCALE_FAR_DISTANCE - SPEED_SCALE_NEAR_DISTANCE
+            distance_ratio = (actual_distance - SPEED_SCALE_NEAR_DISTANCE) / distance_range
+            speed_factor = SPEED_SCALE_MIN_FACTOR + (1.0 - SPEED_SCALE_MIN_FACTOR) * distance_ratio
+            return self.linear_speed * speed_factor
 
     def is_dead_end(self) -> bool:
         """
@@ -2130,12 +2169,15 @@ rclpy.shutdown()
             # Go forward with auto-centering toward a NAVIGABLE path
             # Key: steer toward a direction that allows movement (above threshold)
             # Not necessarily the clearest - just any viable path
-            linear = self.linear_speed
 
             # Check front arc clearances
             left_arc = min(self.sector_distances[1], self.sector_distances[2])
             right_arc = min(self.sector_distances[11], self.sector_distances[10])
             front = self.sector_distances[0]
+
+            # ADAPTIVE SPEED: Slow down near obstacles for tighter maneuvering
+            # Use minimum distance in front arc for speed calculation
+            linear = self.compute_adaptive_speed(front_arc_min)
 
             # Determine which directions are navigable (above dynamic threshold)
             front_ok = front >= dynamic_min_dist
@@ -2189,7 +2231,8 @@ rclpy.shutdown()
 
             self.emergency_maneuver = False
             nav_str = f"{'L' if left_ok else '.'}{'F' if front_ok else '.'}{'R' if right_ok else '.'}"
-            status = f"[FWD] f={front:.2f} L={left_arc:.2f} R={right_arc:.2f} nav={nav_str}"
+            speed_pct = int(100 * linear / self.linear_speed) if self.linear_speed > 0 else 100
+            status = f"[FWD] f={front:.2f} L={left_arc:.2f} R={right_arc:.2f} nav={nav_str} spd={speed_pct}%"
 
             # Clear avoidance state
             if self.avoidance_direction is not None:
@@ -2207,16 +2250,20 @@ rclpy.shutdown()
                 target_yaw=0.0  # Target is straight ahead
             )
 
+            # ADAPTIVE SPEED: Use slower speed when avoiding obstacles
+            adaptive_speed = self.compute_adaptive_speed(front_arc_min)
+
             if dwa_score > float('-inf'):
-                # Use DWA-computed velocity
-                linear = dwa_v
+                # Use DWA-computed velocity, but cap by adaptive speed
+                linear = min(dwa_v, adaptive_speed)
                 angular = dwa_w
-                status = f"[AVOID-DWA] v={dwa_v:.2f} w={dwa_w:.2f} score={dwa_score:.2f}"
+                status = f"[AVOID-DWA] v={linear:.2f} w={dwa_w:.2f} score={dwa_score:.2f}"
             else:
                 # Fallback to VFH sector steering if DWA finds no valid trajectory
                 sector_angle = self.sector_to_angle(best_sector)
                 turn_factor = abs(sector_angle) / math.pi
-                linear = self.linear_speed * (1.0 - turn_factor * 0.4)
+                # Apply both turn factor reduction AND adaptive speed
+                linear = adaptive_speed * (1.0 - turn_factor * 0.4)
                 angular = sector_angle * 0.4
                 status = f"[AVOID-VFH] s{best_sector} ang={math.degrees(sector_angle):.0f}°"
 
@@ -2707,9 +2754,10 @@ rclpy.shutdown()
         print("\n" + "="*60)
         print("AUTONOMOUS SCANNING MODE (Sector-based)")
         print("="*60)
-        print(f"Linear speed:    {self.linear_speed} m/s")
+        print(f"Linear speed:    {self.linear_speed} m/s (adaptive: {SPEED_SCALE_MIN_FACTOR*100:.0f}%-100%)")
         print(f"Min distance:    {self.min_distance} m (from robot front)")
         print(f"LiDAR threshold: {self.lidar_min_distance:.2f} m (min_dist + {LIDAR_FRONT_OFFSET:.2f}m offset)")
+        print(f"Adaptive speed:  Slows from {SPEED_SCALE_FAR_DISTANCE}m to {SPEED_SCALE_NEAR_DISTANCE}m distance")
         print(f"Scan duration:   {'unlimited' if self.duration == 0 else f'{self.duration}s'}")
         print(f"Sectors:         {NUM_SECTORS} ({self.sector_degrees}° each)")
         print(f"LiDAR rotation:  90° (corrected in software)")
