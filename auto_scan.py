@@ -92,7 +92,7 @@ MIN_CORRIDOR_WIDTH = ROBOT_WIDTH + 0.10  # 28cm - robot width + 10cm clearance
 # Wheel encoder stuck detection constants
 # If wheels should be moving but encoder delta is below threshold, robot is stuck
 WHEEL_ENCODER_STUCK_THRESHOLD = 0.05  # Minimum encoder change expected when moving
-WHEEL_ENCODER_STUCK_TIME = 0.8  # Seconds of no encoder change to trigger stuck
+WHEEL_ENCODER_STUCK_TIME = 0.3  # Seconds of no encoder change to trigger stuck (reduced for faster response)
 
 
 # ============================================================================
@@ -890,10 +890,17 @@ class SectorObstacleAvoider:
         self.prev_wheel_encoders = None  # Previous (left, right) encoder values
         self.wheel_encoder_stuck_start = None  # Time when encoder stopped changing
 
+        # Derivative-based stuck detection using sensor history
+        # If average readings don't change while driving, we're stuck at same place
+        self.sensor_history = []  # List of (time, avg_front_distance, odom_x, odom_y)
+        self.sensor_history_max_len = 20  # Keep last 20 samples (~0.67s at 30Hz)
+        self.derivative_stuck_threshold = 0.03  # If avg change < this, we're stuck
+        self.derivative_stuck_ratio = 0.2  # Stuck if actual change < 20% of expected
+
         # Smoothing parameters (based on DWA/VFH research)
         # Exponential Moving Average for velocity smoothing
         # At 30Hz, we can use higher alpha for faster response while still being smooth
-        self.ema_alpha = 0.4  # Higher = faster response (0.2-0.4 typical)
+        self.ema_alpha = 0.7  # Higher = faster response (increased from 0.4 to reduce pauses)
         self.last_linear = 0.0
         self.last_angular = 0.0
 
@@ -1102,8 +1109,13 @@ class SectorObstacleAvoider:
 
             # Check if current maneuver is done and get next from queue (thread-safe)
             with self.movement_lock:
+                maneuver_just_ended = False
+                ended_mode = None
+
                 if self.maneuver_mode is not None and current_time >= self.maneuver_end_time:
+                    ended_mode = self.maneuver_mode
                     self.maneuver_mode = None
+                    maneuver_just_ended = True
 
                 # If no active maneuver, check queue for next one
                 if self.maneuver_mode is None and self.maneuver_queue:
@@ -1111,8 +1123,20 @@ class SectorObstacleAvoider:
                     self.maneuver_mode = mode
                     self.maneuver_speed = speed
                     self.maneuver_end_time = current_time + duration
-                    # Debug: print when starting a new maneuver
-                    print(f"\r[MANEUVER] Starting {mode}: speed={speed:.2f}, duration={duration:.2f}s", end="", flush=True)
+                    print(f"[MANEUVER] Starting {mode}: speed={speed:.2f}, duration={duration:.2f}s", end="", flush=True)
+                    maneuver_just_ended = False  # We have a new maneuver, not ended
+
+                # If maneuver just ended and queue is empty, resume forward motion immediately
+                skip_smoothing = False
+                if maneuver_just_ended and not self.maneuver_queue and ended_mode == "turn":
+                    # After turn completes, immediately start moving forward
+                    # Don't wait for main loop's slow subprocess calls
+                    self.target_linear = self.linear_speed
+                    self.target_angular = 0.0
+                    # Set smoothing state to target so we start at full speed
+                    self.last_linear = self.linear_speed
+                    self.last_angular = 0.0
+                    skip_smoothing = True  # Bypass smoothing this iteration
 
             # Execute current maneuver or normal operation
             if self.maneuver_mode is not None:
@@ -1133,9 +1157,13 @@ class SectorObstacleAvoider:
                     target_lin = self.target_linear
                     target_ang = self.target_angular
 
-                # Apply smoothing and send command
-                smoothed_lin, smoothed_ang = self.smooth_velocity(target_lin, target_ang)
-                self.send_cmd(smoothed_lin, smoothed_ang)
+                # Apply smoothing (unless just finished a maneuver)
+                if skip_smoothing:
+                    # Send full speed immediately after maneuver
+                    self.send_cmd(target_lin, target_ang)
+                else:
+                    smoothed_lin, smoothed_ang = self.smooth_velocity(target_lin, target_ang)
+                    self.send_cmd(smoothed_lin, smoothed_ang)
 
             # Maintain loop rate
             elapsed = time.time() - loop_start
@@ -1156,6 +1184,10 @@ class SectorObstacleAvoider:
         calibrated_linear = linear_x / LINEAR_VEL_RATIO
         x_val = max(-1.0, min(1.0, -calibrated_linear / 0.3))  # INVERTED + Scale to -1 to 1
         z_val = max(-1.0, min(1.0, -angular_z / 1.0))  # INVERTED + Scale to -1 to 1
+
+        # DEBUG: Print if sending zero when we shouldn't be
+        if abs(linear_x) < 0.01 and self.maneuver_mode is None and not self.keyboard.emergency_stop:
+            pass  # print(f"[DEBUG] Sending zero: lin={linear_x:.3f} ang={angular_z:.3f}")
 
         serial_cmd = f'{{"T":"13","X":{x_val:.2f},"Z":{z_val:.2f}}}'
         try:
@@ -1252,19 +1284,17 @@ echo '{stop_cmd}' > /dev/ttyAMA0
 
         angular_speed = turn_speed if turn_degrees > 0 else -turn_speed
 
-        # Clear queue and interrupt current maneuver
+        # Clear queue and set up new maneuvers atomically
+        # This prevents any gap where movement thread might send wrong commands
         with self.movement_lock:
             self.maneuver_queue.clear()
-            self.maneuver_end_time = time.time()
-
-        time.sleep(0.02)  # Brief wait
-
-        with self.movement_lock:
+            # Queue the new maneuvers BEFORE clearing current mode
+            # This ensures movement thread always has something to do
+            self.maneuver_queue.append(("backup", self.linear_speed, backup_duration))
+            self.maneuver_queue.append(("turn", angular_speed, turn_duration))
+            # Now clear current maneuver - next iteration will pick up backup
             self.maneuver_mode = None
-
-        # Queue: BACKUP (brief) -> TURN (quick)
-        self.queue_maneuver("backup", self.linear_speed, backup_duration)
-        self.queue_maneuver("turn", angular_speed, turn_duration)
+            self.maneuver_end_time = time.time()  # Expire immediately
 
         # FULLY NON-BLOCKING: Return immediately, let movement thread handle maneuvers
         # No sleep here - main loop will continue but maneuver_mode blocks normal commands
@@ -1441,68 +1471,108 @@ rclpy.shutdown()
 
     def check_if_stuck(self, is_driving: bool, commanded_linear: float = 0.0) -> bool:
         """
-        Check if robot is stuck using odometry distance tracking.
+        Check if robot is stuck using multiple methods:
+        1. Odometry distance tracking (behavior_ctrl.py approach)
+        2. Derivative of sensor data - if average LiDAR/odometry isn't changing, we're stuck
+
         Returns True if stuck is detected.
-
-        Uses the same approach as behavior_ctrl.py from ugv_ws:
-        - Track distance moved using math.hypot(diff_x, diff_y)
-        - If robot should be moving but odometry shows no movement, we're stuck
-
-        This works for invisible/low obstacles that LiDAR can't see.
         """
         if not is_driving or commanded_linear <= 0.01:
             # Not driving forward, reset tracking
             self.last_position = None
             self.last_position_time = 0
             self.wheel_encoder_stuck_start = None
+            self.sensor_history = []  # Clear derivative history
             return False
 
         if self.stuck_cooldown > 0:
             self.stuck_cooldown -= 1
             return False
 
-        # Get current odometry position
-        current_pos = self.get_odometry()
+        # Use cached position from main loop instead of calling get_odometry() again
+        # This avoids an extra ~300ms subprocess call
+        current_pos = self.current_position
         if current_pos is None:
             return False
 
         current_time = time.time()
 
+        # Get current front distance for derivative-based detection
+        front_dist = self.sector_distances[0] if self.sector_distances else 10.0
+
         # Initialize tracking on first call
         if self.last_position is None:
             self.last_position = current_pos
             self.last_position_time = current_time
+            self.sensor_history = [(current_time, front_dist, current_pos[0], current_pos[1])]
             return False
 
-        # Calculate distance moved since last check
+        # --- METHOD 1: Odometry distance tracking ---
         diff_x = current_pos[0] - self.last_position[0]
         diff_y = current_pos[1] - self.last_position[1]
         distance_moved = math.hypot(diff_x, diff_y)
         time_elapsed = current_time - self.last_position_time
 
         # Only check after enough time has passed (avoid false positives at start)
-        if time_elapsed < WHEEL_ENCODER_STUCK_TIME:
-            return False
+        if time_elapsed >= WHEEL_ENCODER_STUCK_TIME:
+            # Calculate expected distance based on commanded velocity
+            expected_distance = commanded_linear * time_elapsed
 
-        # Calculate expected distance based on commanded velocity
-        expected_distance = commanded_linear * time_elapsed
+            # If we should have moved significantly but didn't, we're stuck
+            # Use 30% threshold like NAV2's progress checker
+            if expected_distance > 0.02 and distance_moved < expected_distance * 0.3:
+                print(f"\n[STUCK] Odometry shows no movement!")
+                print(f"  Expected: {expected_distance:.3f}m, Actual: {distance_moved:.3f}m in {time_elapsed:.1f}s")
+                print(f"  Position: ({current_pos[0]:.2f}, {current_pos[1]:.2f})")
+                self.stuck_position = current_pos
+                self.last_position = current_pos
+                self.last_position_time = current_time
+                self.sensor_history = []
+                return True
 
-        # If we should have moved significantly but didn't, we're stuck
-        # Use 30% threshold like NAV2's progress checker
-        if expected_distance > 0.02 and distance_moved < expected_distance * 0.3:
-            print(f"\n[STUCK] Odometry shows no movement!")
-            print(f"  Expected: {expected_distance:.3f}m, Actual: {distance_moved:.3f}m in {time_elapsed:.1f}s")
-            print(f"  Position: ({current_pos[0]:.2f}, {current_pos[1]:.2f})")
-            self.stuck_position = current_pos
-            # Reset tracking for next check
-            self.last_position = current_pos
-            self.last_position_time = current_time
-            return True
+            # Robot is moving, update tracking periodically
+            if time_elapsed > 1.0:
+                self.last_position = current_pos
+                self.last_position_time = current_time
 
-        # Robot is moving, update tracking periodically
-        if time_elapsed > 1.0:
-            self.last_position = current_pos
-            self.last_position_time = current_time
+        # --- METHOD 2: Derivative of sensor data ---
+        # Track history of sensor readings
+        self.sensor_history.append((current_time, front_dist, current_pos[0], current_pos[1]))
+
+        # Keep only recent samples
+        while len(self.sensor_history) > self.sensor_history_max_len:
+            self.sensor_history.pop(0)
+
+        # Need enough samples to compute derivative
+        if len(self.sensor_history) >= 10:
+            oldest = self.sensor_history[0]
+            newest = self.sensor_history[-1]
+            dt = newest[0] - oldest[0]
+
+            if dt > 0.2:  # At least 0.2 seconds of data for faster stuck detection
+                # Compute average change in front distance
+                front_delta = abs(newest[1] - oldest[1])
+
+                # Compute average change in position
+                odom_delta = math.hypot(newest[2] - oldest[2], newest[3] - oldest[3])
+
+                # Combined metric: both LiDAR and odometry should be changing when moving
+                combined_change = front_delta + odom_delta
+
+                # If robot is commanded to move but sensor data isn't changing, we're stuck
+                # Use BOTH absolute threshold AND ratio-based check for tolerance
+                expected_change = commanded_linear * dt
+                is_below_absolute = combined_change < self.derivative_stuck_threshold
+                is_below_ratio = expected_change > 0.02 and combined_change < expected_change * self.derivative_stuck_ratio
+
+                if is_below_absolute and is_below_ratio:
+                    print(f"\n[STUCK] Sensor derivative near zero!")
+                    print(f"  LiDAR front change: {front_delta:.4f}m, Odom change: {odom_delta:.4f}m")
+                    print(f"  Over {dt:.2f}s - Combined: {combined_change:.4f}m (threshold: {self.derivative_stuck_threshold:.3f}m)")
+                    print(f"  Expected: {expected_change:.3f}m, Actual ratio: {(combined_change/expected_change if expected_change > 0 else 0):.1%}")
+                    self.stuck_position = current_pos
+                    self.sensor_history = []
+                    return True
 
         return False
 
@@ -2368,9 +2438,11 @@ rclpy.shutdown()
         DANGER_DISTANCE = self.lidar_min_distance  # 0.82m (includes LiDAR offset)
 
         # Get FRONT sector only for danger check
+        # NOTE: Sector 0 (directly ahead) should NOT be filtered - robot body doesn't appear there
+        # Only filter if reading is impossibly close (< 0.02m = sensor noise)
         front_only = self.sector_distances[0]
-        if front_only < BODY_THRESHOLD_FRONT:
-            front_only = 10.0  # Ignore invalid reading
+        if front_only < 0.02:
+            front_only = 10.0  # Only ignore sensor noise, not real obstacles
 
         # Path is clear if front sector is above threshold
         path_clear = front_only >= self.lidar_min_distance
@@ -2445,8 +2517,25 @@ rclpy.shutdown()
             # Larger turn (45°) to properly escape obstacles
             turn_degrees = 45 if self.avoidance_direction == "left" else -45
 
-            # Quick backup + small turn
-            self.backup_then_turn(backup_duration=0.3, turn_degrees=turn_degrees)
+            # Track consecutive avoidance attempts - by position OR time
+            # If we avoided in the last 10 seconds, it's probably the same obstacle
+            time_since_last = time.time() - self.avoidance_start_time if self.avoidance_start_time > 0 else 999
+            recent_avoidance = time_since_last < 10.0  # Within 10 seconds
+
+            if same_area or recent_avoidance:
+                self.avoidance_attempt_count += 1
+            else:
+                self.avoidance_attempt_count = 1  # First attempt at new location/time
+
+            # Increase backup distance with each failed attempt - LARGER steps
+            # Base: 0.5s (~5cm), increases by 0.5s per attempt, max 2.5s (~25cm)
+            backup_dur = min(0.5 + (self.avoidance_attempt_count - 1) * 0.5, 2.5)
+            if self.avoidance_attempt_count > 1:
+                reason = "same area" if same_area else f"recent ({time_since_last:.1f}s ago)"
+                print(f"        (Attempt #{self.avoidance_attempt_count} - {reason} - backup {backup_dur:.1f}s)")
+
+            # Quick backup + turn
+            self.backup_then_turn(backup_duration=backup_dur, turn_degrees=turn_degrees)
 
             # Return None to indicate maneuver was executed
             return None, None
@@ -2637,6 +2726,9 @@ rclpy.shutdown()
         print("="*60 + "\n")
 
         self.keyboard.start()
+        # Initialize smoothing state to target speed for immediate start (no ramp-up)
+        self.last_linear = self.linear_speed
+        self.target_linear = self.linear_speed
         self.start_movement_thread()  # Start continuous movement for smooth motion
         last_status_time = time.time()
         dead_ends_found = 0
@@ -2661,7 +2753,18 @@ rclpy.shutdown()
                     time.sleep(0.2)
                     continue
 
-                # Update sensors
+                # Skip ALL processing if a maneuver is in progress
+                # This prevents blocking subprocess calls during maneuvers
+                with self.movement_lock:
+                    maneuver_active = self.maneuver_mode is not None or len(self.maneuver_queue) > 0
+
+                if maneuver_active:
+                    # Let the maneuver complete without interference
+                    # Don't call update_scan() or get_odometry() - they block!
+                    time.sleep(0.03)  # ~30Hz polling to check when maneuver ends
+                    continue
+
+                # Update sensors (only when NOT in a maneuver)
                 if not self.update_scan():
                     time.sleep(0.1)
                     continue
@@ -2684,16 +2787,6 @@ rclpy.shutdown()
                             print(f"\n[DEAD-END] Backing out of dead-end area!")
                             self.backup_then_turn(backup_duration=0.6, turn_degrees=90)
                             continue
-
-                # Skip computing velocity if a maneuver is in progress
-                # This prevents queueing duplicate maneuvers
-                with self.movement_lock:
-                    maneuver_active = self.maneuver_mode is not None or len(self.maneuver_queue) > 0
-
-                if maneuver_active:
-                    # Let the maneuver complete without interference
-                    time.sleep(0.05)
-                    continue
 
                 # Compute velocity using selected algorithm
                 if self.use_vfh:
@@ -2722,7 +2815,7 @@ rclpy.shutdown()
 
                     print(f"\n*** STUCK DETECTED! Blocking sectors: {self.blocked_sectors} ***")
                     self.stuck_counter = 0
-                    self.stuck_cooldown = 5  # Wait 5 iterations before checking again
+                    self.stuck_cooldown = 2  # Wait 2 iterations before checking again (reduced)
 
                     # Publish virtual obstacle marker at stuck position (visible in RViz)
                     if self.stuck_position:
