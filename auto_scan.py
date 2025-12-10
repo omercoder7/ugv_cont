@@ -2146,7 +2146,7 @@ rclpy.shutdown()
         else:
             # OPEN SPACE: More conservative threshold
             dynamic_min_dist = self.lidar_min_distance
-            DANGER_DISTANCE = self.lidar_min_distance + 0.10
+            DANGER_DISTANCE = self.lidar_min_distance + 0.20  # Start avoiding earlier (was 0.10)
 
         # Update state context
         self.update_state_context(
@@ -2190,8 +2190,9 @@ rclpy.shutdown()
                 # Too close! Need to back up
                 self.state_context.consecutive_avoidances += 1
                 self.transition_state(RobotState.BACKING_UP)
-            elif front_arc_min < DANGER_DISTANCE and not front_clear:
-                # In caution zone and VFH says blocked - try to steer around
+            elif front_arc_min < DANGER_DISTANCE:
+                # In caution zone - always try to steer around, don't wait for VFH
+                # This prevents driving into walls that raw LiDAR can see
                 self.transition_state(RobotState.AVOIDING)
 
         elif self.robot_state == RobotState.CORRIDOR:
