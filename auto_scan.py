@@ -2394,11 +2394,12 @@ rclpy.shutdown()
 
                 # Calculate turn angles to each clear sector
                 # Each sector is 30°, so sector 1 = 30°, sector 2 = 60°, etc.
-                left_turn_angle = (best_left_sector * 30 + 15) if best_left_sector else 180  # Add 15° margin + center
-                right_turn_angle = ((12 - best_right_sector) * 30 + 15) if best_right_sector else 180
+                # REDUCED: Removed 15° margin for tighter turns
+                left_turn_angle = (best_left_sector * 30) if best_left_sector else 180
+                right_turn_angle = ((12 - best_right_sector) * 30) if best_right_sector else 180
 
-                # Choose direction with smaller turn, plus some margin (10°)
-                margin = 10
+                # Choose direction with smaller turn, plus small margin
+                margin = 5  # REDUCED from 10° to 5° for tighter avoidance
 
                 # FORCED ALTERNATION: Always alternate direction to escape passages
                 # This prevents the robot from oscillating by trying same direction repeatedly
@@ -2418,8 +2419,9 @@ rclpy.shutdown()
 
                 self.last_avoidance_direction = self.avoidance_direction
 
-                # Clamp turn angle between 30° and 180°
-                turn_degrees = max(30, min(180, turn_degrees))
+                # Clamp turn angle between 20° and 120°
+                # REDUCED: minimum from 30° to 20°, max from 180° to 120° for tighter avoidance
+                turn_degrees = max(20, min(120, turn_degrees))
 
                 # Apply direction sign
                 if self.avoidance_direction == "right":

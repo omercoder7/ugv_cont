@@ -51,12 +51,29 @@ def generate_launch_description():
         executable='ugv_driver',
     )
 
-    # Include laser lidar launch file
-    laser_bringup_launch = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(
-            os.path.join(get_package_share_directory('ldlidar'), 'launch', 'ldlidar.launch.py')
-        )
+    # LiDAR node - launch directly instead of including ldlidar.launch.py
+    # This avoids the static transform conflict (ldlidar.launch.py publishes identity transform
+    # but URDF has -90° rotation for base_lidar_link)
+    ldlidar_node = Node(
+        package='ldlidar',
+        executable='ldlidar_node',
+        name='LD19',
+        output='screen',
+        parameters=[
+            {'product_name': 'LDLiDAR_LD19'},
+            {'topic_name': 'scan'},
+            {'frame_id': 'base_lidar_link'},
+            {'port_name': '/dev/ttyACM0'},
+            {'port_baudrate': 230400},
+            {'laser_scan_dir': True},
+            {'enable_angle_crop_func': True},
+            {'angle_crop_min': 225.0},
+            {'angle_crop_max': 315.0}
+        ]
     )
+    # NOTE: Do NOT include base_footprint_to_base_laser_ld19 static transform
+    # The robot_state_publisher (URDF) already publishes base_link->base_lidar_link
+    # with the correct -90° rotation
 
     # Include RF2O laser odometry - publishes to /odom_rf2o
     rf2o_laser_odometry_launch = IncludeLaunchDescription(
@@ -98,7 +115,7 @@ def generate_launch_description():
         robot_state_launch,
         bringup_node,
         driver_node,
-        laser_bringup_launch,
+        ldlidar_node,  # Direct node instead of laser_bringup_launch
         rf2o_laser_odometry_launch,
         base_node,
         ekf_node
