@@ -2354,9 +2354,11 @@ rclpy.shutdown()
 
         # Check if robot is INSIDE a dead-end (walls close on front, left, AND right)
         # In this case, back out directly - rotating in tight space is difficult
-        left_close = min(self.sector_distances[1], self.sector_distances[2]) < dynamic_min_dist + 0.15
-        right_close = min(self.sector_distances[10], self.sector_distances[11]) < dynamic_min_dist + 0.15
-        front_close = front_arc_min < dynamic_min_dist + 0.15
+        # Use larger margin (0.40m) to trigger backing out earlier with more room
+        DEAD_END_MARGIN = 0.40  # Back out when walls are within this margin of min distance
+        left_close = min(self.sector_distances[1], self.sector_distances[2]) < dynamic_min_dist + DEAD_END_MARGIN
+        right_close = min(self.sector_distances[10], self.sector_distances[11]) < dynamic_min_dist + DEAD_END_MARGIN
+        front_close = front_arc_min < dynamic_min_dist + DEAD_END_MARGIN
         rear_clear = min(self.sector_distances[5], self.sector_distances[6], self.sector_distances[7]) > dynamic_min_dist
 
         in_dead_end = front_close and left_close and right_close and rear_clear
@@ -2620,9 +2622,10 @@ rclpy.shutdown()
         elif self.robot_state == RobotState.BACKING_UP:
             # Check if we're trapped in dead-end (both sides blocked)
             # In that case, back straight out - no room to turn
+            # Use same margin as dead-end detection (0.40m)
             trapped_in_dead_end = (
-                min(self.sector_distances[1], self.sector_distances[2]) < self.lidar_min_distance + 0.1 and
-                min(self.sector_distances[10], self.sector_distances[11]) < self.lidar_min_distance + 0.1 and
+                min(self.sector_distances[1], self.sector_distances[2]) < self.lidar_min_distance + 0.40 and
+                min(self.sector_distances[10], self.sector_distances[11]) < self.lidar_min_distance + 0.40 and
                 min(self.sector_distances[5], self.sector_distances[6], self.sector_distances[7]) > self.lidar_min_distance
             )
 
