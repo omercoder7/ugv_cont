@@ -2740,6 +2740,14 @@ rclpy.shutdown()
                 angular = 0.0
                 status = f"[BACKUP] t={time_in_state:.1f}s dir={self.avoidance_direction}"
 
+            else:
+                # Direction already determined from previous iteration - continue backing up
+                # This fixes the critical bug where velocity was not set when avoidance_direction
+                # was already "left" or "right" (not None, not "straight", not trapped)
+                linear = -self.linear_speed
+                angular = 0.0
+                status = f"[BACKUP] t={time_in_state:.1f}s dir={self.avoidance_direction} (continuing)"
+
         elif self.robot_state == RobotState.TURNING:
             # Skip turning if we were backing straight out of dead-end
             if self.avoidance_direction == "straight":
