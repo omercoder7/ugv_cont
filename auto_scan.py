@@ -2147,9 +2147,10 @@ rclpy.shutdown()
         TARGET_WEIGHT = 1.0       # Slight preference for forward direction
         OPENNESS_WEIGHT = 1.5     # Prefer open directions (reduced - space_freedom is better)
         FREEDOM_WEIGHT = 4.0      # STRONGLY prefer unconstrained directions (avoid corners!)
-        MAP_EXPLORE_WEIGHT = 4.0  # Prefer unexplored map areas
+        MAP_EXPLORE_WEIGHT = 8.0  # DOUBLED: Strongly prefer unexplored map areas
         PREVIOUS_WEIGHT = 1.0     # Smooth trajectory (reduce oscillation)
-        UNVISITED_WEIGHT = 2.0    # Prefer unvisited areas (local tracking)
+        UNVISITED_WEIGHT = 0.5    # Reduced: local tracking less important than map exploration
+        FULLY_EXPLORED_PENALTY = 5.0  # Heavy penalty for fully-mapped directions
 
         best_sector = 0
         best_score = -999
@@ -2221,13 +2222,20 @@ rclpy.shutdown()
             else:
                 unvisited_cost = 0.0
 
+            # FULLY EXPLORED PENALTY: Heavily penalize directions with no unknown cells
+            # This prevents re-scanning areas that are already fully mapped
+            fully_explored_penalty = 0.0
+            if map_explore_cost < 0.05:  # Less than 5% unknown = fully explored
+                fully_explored_penalty = FULLY_EXPLORED_PENALTY
+
             # Combined score
             score = (TARGET_WEIGHT * target_cost +
                     OPENNESS_WEIGHT * openness_cost +
                     FREEDOM_WEIGHT * freedom_cost +
                     MAP_EXPLORE_WEIGHT * map_explore_cost +
                     PREVIOUS_WEIGHT * previous_cost +
-                    UNVISITED_WEIGHT * unvisited_cost)
+                    UNVISITED_WEIGHT * unvisited_cost -
+                    fully_explored_penalty)  # Subtract penalty!
 
             if score > best_score:
                 best_score = score
@@ -2582,8 +2590,10 @@ rclpy.shutdown()
                 else:
                     angular = -0.3
             else:
-                # Nothing navigable ahead - go straight (state machine will handle backup)
+                # Nothing navigable ahead - STOP and let state machine handle backup
+                # Don't drive into dead-ends or blocked areas
                 angular = 0.0
+                linear = 0.0  # Critical: stop moving forward!
 
             self.emergency_maneuver = False
             nav_str = f"{'L' if left_ok else '.'}{'F' if front_ok else '.'}{'R' if right_ok else '.'}"
@@ -2685,8 +2695,9 @@ rclpy.shutdown()
                 right_turn_angle = ((12 - best_right_sector) * 30) if best_right_sector else 180
 
                 # Penalize dead-end directions by adding angle penalty
-                left_dead_end = dead_ends[1] and dead_ends[2] and map_scores[1] < 0.1
-                right_dead_end = dead_ends[11] and dead_ends[10] and map_scores[11] < 0.1
+                # Consistent with FORWARD state: dead-end is dead-end regardless of exploration
+                left_dead_end = dead_ends[1] and dead_ends[2]
+                right_dead_end = dead_ends[11] and dead_ends[10]
                 if left_dead_end:
                     left_turn_angle += 60  # Heavy penalty for dead-end
                 if right_dead_end:
