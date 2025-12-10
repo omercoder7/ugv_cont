@@ -4,32 +4,37 @@ Control scripts and autonomous navigation for the UGV Beast robot with ROS2 Humb
 
 ## Quick Start
 
-### Basic Operation (SLAM with Laser Odometry)
+### Recommended: EKF Mode (Best Accuracy)
 ```bash
-# 1. Start SLAM with visualization
-./rviz.sh slam-opt
+# 1. Start ROS with EKF sensor fusion
+./start_ros.sh --ekf
 
-# 2. In another terminal, run autonomous scanning
-python3 auto_scan.py --speed 0.15
+# 2. Launch RViz for visualization
+./rviz.sh slam-ekf
+
+# 3. In another terminal, run autonomous scanning
+python3 auto_scan.py --duration 120
 ```
 
-### EKF Mode (Improved Localization)
+### Basic Operation (Without EKF)
 ```bash
-# 1. Start SLAM with EKF sensor fusion
-./rviz.sh slam-opt new_map --ekf
+# 1. Start ROS
+./start_ros.sh
 
-# 2. In another terminal, run autonomous scanning
-python3 auto_scan.py --speed 0.15
+# 2. Launch RViz with SLAM
+./rviz.sh slam-opt
+
+# 3. Run autonomous scanning
+python3 auto_scan.py --duration 120
 ```
 
 ## Scripts Overview
 
 | Script | Description |
 |--------|-------------|
-| `rviz.sh` | Main entry point - starts SLAM, bringup, and RViz visualization |
+| `start_ros.sh` | Start ROS nodes cleanly (use `--ekf` for sensor fusion) |
+| `rviz.sh` | Launch RViz visualization (various modes available) |
 | `auto_scan.py` | Autonomous room scanning with obstacle avoidance |
-| `restart_ros_DEBUG.sh` | Clean restart of ROS nodes (clears zombies) |
-| `switch_to_ekf.sh` | Switch running robot to EKF mode |
 | `ensure_bringup.sh` | Ensures robot bringup is running |
 
 ## rviz.sh Modes
@@ -144,14 +149,11 @@ The EKF fuses data from two sources:
 ### Enabling EKF
 
 ```bash
-# Option 1: Start with EKF from the beginning
-./rviz.sh slam-opt --ekf
+# Start ROS with EKF (recommended)
+./start_ros.sh --ekf
 
-# Option 2: Switch running robot to EKF
-./switch_to_ekf.sh
-
-# Option 3: Full restart with EKF
-./restart_ros_DEBUG.sh --ekf
+# Then launch RViz
+./rviz.sh slam-ekf
 ```
 
 ## Configuration Files
@@ -177,7 +179,7 @@ Symptoms: Odometry drift, Eigensolver errors, nodes listed multiple times
 
 ```bash
 # Full restart to clear zombies
-./restart_ros_DEBUG.sh
+./start_ros.sh --ekf
 ```
 
 ### SLAM Map Corruption
@@ -221,10 +223,10 @@ docker exec ugv_rpi_ros_humble bash -c "source /opt/ros/humble/setup.bash && ros
 
 ```
 Host Machine (/home/ws/ugv_cont/)
-├── rviz.sh              # Main control script
+├── start_ros.sh         # Start ROS nodes (use --ekf for sensor fusion)
+├── rviz.sh              # Launch RViz visualization
 ├── auto_scan.py         # Autonomous navigation
-├── restart_ros_DEBUG.sh # Clean restart
-├── switch_to_ekf.sh     # EKF mode switch
+├── ensure_bringup.sh    # Ensure bringup is running
 └── *.yaml               # Config files
 
 Docker Container (ugv_rpi_ros_humble)

@@ -118,26 +118,16 @@ cleanup_duplicate_nodes() {
     fi
 }
 
-# Function to ensure RF2O is running (call after bringup starts)
-ensure_rf2o_running() {
+# Function to verify RF2O is running (bringup_lidar.launch.py starts it)
+# DO NOT start RF2O here - it causes duplicates!
+verify_rf2o_running() {
     sleep 2  # Give bringup time to start RF2O
     RF2O_RUNNING=$(docker exec ${CONTAINER_NAME} pgrep -f "rf2o_laser_odometry_node" 2>/dev/null || echo "")
     if [ -z "${RF2O_RUNNING}" ]; then
-        echo "  RF2O not running - starting it..."
-        docker exec -d ${CONTAINER_NAME} bash -c "
-        source /opt/ros/humble/setup.bash && \
-        source /root/ugv_ws/install/setup.bash && \
-        ros2 launch rf2o_laser_odometry rf2o_laser_odometry.launch.py > /tmp/rf2o.log 2>&1
-        "
-        sleep 2
-        # Verify it started
-        if docker exec ${CONTAINER_NAME} pgrep -f "rf2o_laser_odometry_node" > /dev/null 2>&1; then
-            echo "  RF2O: STARTED"
-        else
-            echo "  RF2O: FAILED TO START - check /tmp/rf2o.log"
-        fi
+        echo "  WARNING: RF2O not running - bringup may have failed"
+        echo "  (RF2O should be started by bringup_lidar.launch.py)"
     else
-        echo "  RF2O: RUNNING"
+        echo "  RF2O: RUNNING (started by bringup)"
     fi
 }
 
@@ -395,7 +385,7 @@ case "${MODE}" in
             fi
 
             # Ensure RF2O is running (may have been killed)
-            ensure_rf2o_running
+            verify_rf2o_running
 
             # Verify odometry is near zero
             echo "Checking odometry reset..."
@@ -454,7 +444,7 @@ case "${MODE}" in
                     sleep 5
                 fi
                 # Ensure RF2O started with bringup
-                ensure_rf2o_running
+                verify_rf2o_running
             else
                 echo "Bringup already running, skipping..."
                 # Check if EKF is running when requested
@@ -468,7 +458,7 @@ case "${MODE}" in
                 fi
                 # Ensure RF2O is running even if bringup is running
                 # (RF2O might have been killed by OOM or other issues)
-                ensure_rf2o_running
+                verify_rf2o_running
             fi
 
             # Check if SLAM is already running
@@ -491,224 +481,37 @@ case "${MODE}" in
         launch_rviz "/tmp/view_slam_2d.rviz"
         ;;
     slam-ekf)
-        NEW_MAP="$2"
+        # SIMPLIFIED: Just launch RViz - assumes bringup was started via start_ros.sh --ekf
+        # DO NOT start any bringup/RF2O/EKF here - it causes duplicates!
 
-        echo "Starting SLAM with EKF triple sensor fusion (BEST ACCURACY)..."
+        echo "SLAM with EKF mode - launching RViz only"
         echo ""
-        echo "This uses:"
-        echo "  - Wheel encoders: velocity (knows when robot is actually moving)"
-        echo "  - LiDAR odometry: position correction"
-        echo "  - IMU: orientation and angular velocity"
+        echo "NOTE: Run './start_ros.sh --ekf' first to start all nodes"
         echo ""
-        echo "Using DISPLAY=${DISPLAY}"
 
         SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-        # Handle new_map option - restart container to clear zombie processes
-        if [ "${NEW_MAP}" = "new_map" ] || [ "${NEW_MAP}" = "new" ] || [ "${NEW_MAP}" = "--new-map" ]; then
+        # Copy RViz config
+        docker cp "${SCRIPT_DIR}/view_slam_2d.rviz" ${CONTAINER_NAME}:/tmp/view_slam_2d.rviz 2>/dev/null
+
+        # Just verify things are running (don't start anything!)
+        echo "Checking system status..."
+
+        RF2O_COUNT=$(docker exec ${CONTAINER_NAME} bash -c "ps aux | grep -c '[r]f2o_laser_odometry_node --ros-args'" 2>/dev/null || echo "0")
+        EKF_RUNNING=$(docker exec ${CONTAINER_NAME} pgrep -f "ekf_node" > /dev/null 2>&1 && echo "yes" || echo "no")
+        SLAM_RUNNING=$(docker exec ${CONTAINER_NAME} pgrep -f "slam_toolbox" > /dev/null 2>&1 && echo "yes" || echo "no")
+
+        echo "  RF2O processes: ${RF2O_COUNT} (should be 1)"
+        echo "  EKF running: ${EKF_RUNNING}"
+        echo "  SLAM running: ${SLAM_RUNNING}"
+
+        if [ "${RF2O_COUNT}" != "1" ] || [ "${EKF_RUNNING}" != "yes" ] || [ "${SLAM_RUNNING}" != "yes" ]; then
             echo ""
-            echo "*** NEW MAP MODE - Restarting container for clean slate ***"
+            echo "WARNING: System not fully running!"
+            echo "Run: ./start_ros.sh --ekf"
             echo ""
-
-            # Restart container for clean slate
-            echo "Restarting container..."
-            docker restart ${CONTAINER_NAME}
-            sleep 5
-
-            # Copy configs
-            docker cp "${SCRIPT_DIR}/slam_toolbox_optimized.yaml" ${CONTAINER_NAME}:/tmp/slam_toolbox_optimized.yaml
-            docker cp "${SCRIPT_DIR}/ekf_wheel_lidar_imu.yaml" ${CONTAINER_NAME}:/tmp/ekf_wheel_lidar_imu.yaml
-            docker cp "${SCRIPT_DIR}/view_slam_2d.rviz" ${CONTAINER_NAME}:/tmp/view_slam_2d.rviz 2>/dev/null
-
-            # Start bringup WITHOUT odom TF (EKF will publish it)
-            echo "Starting robot bringup (EKF handles odometry TF)..."
-            docker exec -d ${CONTAINER_NAME} /bin/bash -c "
-            source /opt/ros/humble/setup.bash && \
-            source /root/ugv_ws/install/setup.bash && \
-            export UGV_MODEL=ugv_beast && \
-            export LDLIDAR_MODEL=ld19 && \
-            ros2 launch ugv_bringup bringup_lidar.launch.py pub_odom_tf:=false > /tmp/bringup.log 2>&1
-            "
-            sleep 6
-
-            # Check bringup
-            if docker exec ${CONTAINER_NAME} pgrep -f "bringup_lidar" > /dev/null 2>&1; then
-                echo "  Bringup: RUNNING"
-            else
-                echo "  Bringup: FAILED"
-            fi
-
-            # Start RF2O laser odometry (CRITICAL for EKF)
-            echo "Starting RF2O laser odometry..."
-            docker exec -d ${CONTAINER_NAME} /bin/bash -c "
-            source /opt/ros/humble/setup.bash && \
-            source /root/ugv_ws/install/setup.bash && \
-            ros2 launch rf2o_laser_odometry rf2o_laser_odometry.launch.py > /tmp/rf2o.log 2>&1
-            "
-            sleep 3
-
-            # Wait for RF2O to actually publish (not just start)
-            echo "  Waiting for RF2O to publish /odom_rf2o..."
-            for i in {1..10}; do
-                RF2O_PUB=$(docker exec ${CONTAINER_NAME} bash -c "source /opt/ros/humble/setup.bash && timeout 1 ros2 topic echo /odom_rf2o --once 2>/dev/null" | grep -c "position" || echo "0")
-                if [ "${RF2O_PUB}" -gt 0 ]; then
-                    echo "  RF2O: PUBLISHING"
-                    break
-                fi
-                sleep 1
-            done
-            if [ "${RF2O_PUB}" -eq 0 ]; then
-                echo "  RF2O: WARNING - not publishing yet, EKF may be slow"
-            fi
-
-            # Start EKF fusion
-            echo "Starting EKF fusion (wheel + LiDAR + IMU)..."
-            docker exec -d ${CONTAINER_NAME} /bin/bash -c "
-            source /opt/ros/humble/setup.bash && \
-            source /root/ugv_ws/install/setup.bash && \
-            ros2 run robot_localization ekf_node \
-              --ros-args \
-              --params-file /tmp/ekf_wheel_lidar_imu.yaml \
-              -r /odometry/filtered:=/odom_fused > /tmp/ekf.log 2>&1
-            "
-            sleep 3
-
-            # Check EKF
-            if docker exec ${CONTAINER_NAME} pgrep -f "ekf_node" > /dev/null 2>&1; then
-                echo "  EKF: RUNNING"
-            else
-                echo "  EKF: FAILED - check /tmp/ekf.log"
-            fi
-
-            # Start SLAM
-            echo "Starting SLAM..."
-            docker exec -d ${CONTAINER_NAME} /bin/bash -c "
-            source /opt/ros/humble/setup.bash && \
-            source /root/ugv_ws/install/setup.bash && \
-            ros2 launch slam_toolbox online_async_launch.py \
-              use_sim_time:=false \
-              slam_params_file:=/tmp/slam_toolbox_optimized.yaml > /tmp/slam.log 2>&1
-            "
-            sleep 3
-
-            # Check SLAM
-            if docker exec ${CONTAINER_NAME} pgrep -f "slam_toolbox" > /dev/null 2>&1; then
-                echo "  SLAM: RUNNING"
-            else
-                echo "  SLAM: FAILED"
-            fi
-
-            # Verify no zombie processes
-            ZOMBIES=$(docker exec ${CONTAINER_NAME} ps aux 2>/dev/null | grep -c "<defunct>" || echo "0")
-            if [ "${ZOMBIES}" -gt 0 ]; then
-                echo "Warning: ${ZOMBIES} zombie processes found"
-            else
-                echo "Clean start - no zombie processes!"
-            fi
-        else
-            # Normal mode - continue existing session or start if not running
-            # Copy configs
-            docker cp "${SCRIPT_DIR}/slam_toolbox_optimized.yaml" ${CONTAINER_NAME}:/tmp/slam_toolbox_optimized.yaml
-            docker cp "${SCRIPT_DIR}/ekf_wheel_lidar_imu.yaml" ${CONTAINER_NAME}:/tmp/ekf_wheel_lidar_imu.yaml
-            docker cp "${SCRIPT_DIR}/view_slam_2d.rviz" ${CONTAINER_NAME}:/tmp/view_slam_2d.rviz 2>/dev/null
-
-            # Check if bringup is already running
-            if ! docker exec ${CONTAINER_NAME} pgrep -f "bringup_lidar" > /dev/null 2>&1; then
-                echo "Starting robot bringup (EKF handles odometry TF)..."
-                docker exec -d ${CONTAINER_NAME} /bin/bash -c "
-                source /opt/ros/humble/setup.bash && \
-                source /root/ugv_ws/install/setup.bash && \
-                export UGV_MODEL=ugv_beast && \
-                export LDLIDAR_MODEL=ld19 && \
-                ros2 launch ugv_bringup bringup_lidar.launch.py pub_odom_tf:=false > /tmp/bringup.log 2>&1
-                "
-                sleep 6
-            else
-                echo "Bringup already running, skipping..."
-            fi
-
-            # Check if RF2O is running (CRITICAL for EKF)
-            if ! docker exec ${CONTAINER_NAME} pgrep -f "rf2o_laser_odometry_node" > /dev/null 2>&1; then
-                echo "Starting RF2O laser odometry..."
-                docker exec -d ${CONTAINER_NAME} /bin/bash -c "
-                source /opt/ros/humble/setup.bash && \
-                source /root/ugv_ws/install/setup.bash && \
-                ros2 launch rf2o_laser_odometry rf2o_laser_odometry.launch.py > /tmp/rf2o.log 2>&1
-                "
-                sleep 3
-                # Wait for RF2O to publish
-                echo "  Waiting for RF2O to publish..."
-                for i in {1..10}; do
-                    RF2O_PUB=$(docker exec ${CONTAINER_NAME} bash -c "source /opt/ros/humble/setup.bash && timeout 1 ros2 topic echo /odom_rf2o --once 2>/dev/null" | grep -c "position" || echo "0")
-                    if [ "${RF2O_PUB}" -gt 0 ]; then
-                        echo "  RF2O: PUBLISHING"
-                        break
-                    fi
-                    sleep 1
-                done
-            else
-                echo "RF2O already running, skipping..."
-            fi
-
-            # Check if EKF is already running
-            if ! docker exec ${CONTAINER_NAME} pgrep -f "ekf_node" > /dev/null 2>&1; then
-                echo "Starting EKF fusion (wheel + LiDAR + IMU)..."
-                docker exec -d ${CONTAINER_NAME} /bin/bash -c "
-                source /opt/ros/humble/setup.bash && \
-                source /root/ugv_ws/install/setup.bash && \
-                ros2 run robot_localization ekf_node \
-                  --ros-args \
-                  --params-file /tmp/ekf_wheel_lidar_imu.yaml \
-                  -r /odometry/filtered:=/odom_fused > /tmp/ekf.log 2>&1
-                "
-                sleep 3
-            else
-                echo "EKF already running, skipping..."
-            fi
-
-            # Check if SLAM is already running
-            if ! docker exec ${CONTAINER_NAME} pgrep -f "slam_toolbox" > /dev/null 2>&1; then
-                echo "Starting SLAM..."
-                docker exec -d ${CONTAINER_NAME} /bin/bash -c "
-                source /opt/ros/humble/setup.bash && \
-                source /root/ugv_ws/install/setup.bash && \
-                ros2 launch slam_toolbox online_async_launch.py \
-                  use_sim_time:=false \
-                  slam_params_file:=/tmp/slam_toolbox_optimized.yaml > /tmp/slam.log 2>&1
-                "
-                sleep 3
-            else
-                echo "SLAM already running, skipping..."
-            fi
         fi
 
-        echo ""
-        echo "EKF fusion chain:"
-        echo "  Wheel + LiDAR + IMU -> EKF -> odom TF -> SLAM"
-        echo ""
-
-        # CRITICAL: Verify EKF is outputting at proper rate (should be ~10Hz, not 1Hz)
-        echo "Verifying EKF output rate..."
-        EKF_RATE=$(docker exec ${CONTAINER_NAME} bash -c "source /opt/ros/humble/setup.bash && timeout 3 ros2 topic hz /odom --window 3 2>&1 | grep 'average rate' | head -1 | awk '{print \$3}'" || echo "0")
-        EKF_RATE_INT=$(echo "${EKF_RATE}" | cut -d'.' -f1)
-        if [ -n "${EKF_RATE_INT}" ] && [ "${EKF_RATE_INT}" -ge 8 ]; then
-            echo "  EKF output: ${EKF_RATE} Hz ✓ (healthy)"
-        else
-            echo "  WARNING: EKF output rate is ${EKF_RATE} Hz (expected ~10Hz)"
-            echo "  This may cause 'queue is full' errors. Checking RF2O..."
-            # Try to restart RF2O if EKF rate is low
-            RF2O_RUNNING=$(docker exec ${CONTAINER_NAME} pgrep -f "rf2o_laser_odometry_node" 2>/dev/null || echo "")
-            if [ -z "${RF2O_RUNNING}" ]; then
-                echo "  RF2O is dead! Restarting..."
-                docker exec -d ${CONTAINER_NAME} bash -c "
-                source /opt/ros/humble/setup.bash && \
-                source /root/ugv_ws/install/setup.bash && \
-                ros2 launch rf2o_laser_odometry rf2o_laser_odometry.launch.py > /tmp/rf2o.log 2>&1
-                "
-                sleep 4
-                echo "  RF2O restarted. EKF should recover in a few seconds."
-            fi
-        fi
         echo ""
         echo "Launching RViz..."
         launch_rviz "/tmp/view_slam_2d.rviz"
@@ -754,7 +557,7 @@ case "${MODE}" in
             "
             sleep 6
 
-            if docker exec ${CONTAINER_NAME} pgrep -f "bringup_lidar" > /dev/null 2>&1; then
+            if docker exec ${CONTAINER_NAME} pgrep -f "bringup_lidar\|bringup_ekf" > /dev/null 2>&1; then
                 echo "  Bringup: RUNNING"
             else
                 echo "  Bringup: FAILED"
@@ -805,7 +608,7 @@ case "${MODE}" in
             docker cp "${SCRIPT_DIR}/cartographer_2d.lua" ${CONTAINER_NAME}:/tmp/cartographer_2d.lua
             docker cp "${SCRIPT_DIR}/view_slam_2d.rviz" ${CONTAINER_NAME}:/tmp/view_slam_2d.rviz 2>/dev/null
 
-            if ! docker exec ${CONTAINER_NAME} pgrep -f "bringup_lidar" > /dev/null 2>&1; then
+            if ! docker exec ${CONTAINER_NAME} pgrep -f "bringup_lidar\|bringup_ekf" > /dev/null 2>&1; then
                 echo "Starting robot bringup..."
                 docker exec -d ${CONTAINER_NAME} /bin/bash -c "
                 source /opt/ros/humble/setup.bash && \
