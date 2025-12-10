@@ -483,36 +483,94 @@ case "${MODE}" in
         launch_rviz "/tmp/view_slam_2d.rviz"
         ;;
     slam-ekf)
-        # SIMPLIFIED: Just launch RViz - assumes bringup was started via start_ros.sh --ekf
-        # DO NOT start any bringup/RF2O/EKF here - it causes duplicates!
-
-        echo "SLAM with EKF mode - launching RViz only"
-        echo ""
-        echo "NOTE: Run './start_ros.sh --ekf' first to start all nodes"
-        echo ""
+        NEW_MAP="$2"
 
         SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
         REPO_DIR="$(dirname "${SCRIPT_DIR}")"
 
-        # Copy RViz config
+        # Copy configs
         docker cp "${REPO_DIR}/config/view_slam_2d.rviz" ${CONTAINER_NAME}:/tmp/view_slam_2d.rviz 2>/dev/null
+        docker cp "${REPO_DIR}/config/slam_toolbox_optimized.yaml" ${CONTAINER_NAME}:/tmp/slam_toolbox_optimized.yaml 2>/dev/null
 
-        # Just verify things are running (don't start anything!)
-        echo "Checking system status..."
-
-        RF2O_COUNT=$(docker exec ${CONTAINER_NAME} bash -c "ps aux | grep -c '[r]f2o_laser_odometry_node --ros-args'" 2>/dev/null || echo "0")
-        EKF_RUNNING=$(docker exec ${CONTAINER_NAME} pgrep -f "ekf_node" > /dev/null 2>&1 && echo "yes" || echo "no")
-        SLAM_RUNNING=$(docker exec ${CONTAINER_NAME} pgrep -f "slam_toolbox" > /dev/null 2>&1 && echo "yes" || echo "no")
-
-        echo "  RF2O processes: ${RF2O_COUNT} (should be 1)"
-        echo "  EKF running: ${EKF_RUNNING}"
-        echo "  SLAM running: ${SLAM_RUNNING}"
-
-        if [ "${RF2O_COUNT}" != "1" ] || [ "${EKF_RUNNING}" != "yes" ] || [ "${SLAM_RUNNING}" != "yes" ]; then
+        # Handle new_map option - full restart for clean slate
+        if [ "${NEW_MAP}" = "new_map" ] || [ "${NEW_MAP}" = "new" ] || [ "${NEW_MAP}" = "--new-map" ]; then
+            echo "SLAM with EKF mode - NEW MAP (full restart)"
             echo ""
-            echo "WARNING: System not fully running!"
-            echo "Run: ./scripts/start_ros.sh --ekf"
+            echo "*** Restarting container for clean slate ***"
             echo ""
+
+            # Restart container to clear zombies
+            docker restart ${CONTAINER_NAME}
+            sleep 5
+
+            # Reset ROS2 daemon
+            docker exec ${CONTAINER_NAME} bash -c "source /opt/ros/humble/setup.bash && ros2 daemon stop && ros2 daemon start" 2>/dev/null
+
+            # Re-copy configs after restart
+            docker cp "${REPO_DIR}/config/slam_toolbox_optimized.yaml" ${CONTAINER_NAME}:/tmp/slam_toolbox_optimized.yaml
+            docker cp "${REPO_DIR}/config/view_slam_2d.rviz" ${CONTAINER_NAME}:/tmp/view_slam_2d.rviz 2>/dev/null
+            docker cp "${REPO_DIR}/launch/bringup_ekf_simple.launch.py" ${CONTAINER_NAME}:/root/ugv_ws/install/ugv_bringup/share/ugv_bringup/launch/ 2>/dev/null
+            docker cp /home/ws/ugv_ws/src/ugv_main/ugv_bringup/param/ekf.yaml ${CONTAINER_NAME}:/root/ugv_ws/install/ugv_bringup/share/ugv_bringup/param/ekf.yaml 2>/dev/null
+
+            # Start bringup with EKF
+            echo "Starting robot bringup with EKF..."
+            docker exec -d ${CONTAINER_NAME} /bin/bash -c "
+            source /opt/ros/humble/setup.bash && \
+            source /root/ugv_ws/install/setup.bash && \
+            export UGV_MODEL=ugv_beast && \
+            export LDLIDAR_MODEL=ld19 && \
+            ros2 launch ugv_bringup bringup_ekf_simple.launch.py > /tmp/bringup.log 2>&1
+            "
+            sleep 10
+
+            # Check bringup
+            if docker exec ${CONTAINER_NAME} pgrep -f "ugv_bringup" > /dev/null 2>&1; then
+                echo "  Bringup: RUNNING"
+            else
+                echo "  Bringup: FAILED - check /tmp/bringup.log"
+            fi
+
+            # Start SLAM
+            echo "Starting SLAM..."
+            docker exec -d ${CONTAINER_NAME} /bin/bash -c "
+            source /opt/ros/humble/setup.bash && \
+            source /root/ugv_ws/install/setup.bash && \
+            ros2 launch slam_toolbox online_async_launch.py \
+              use_sim_time:=false \
+              slam_params_file:=/tmp/slam_toolbox_optimized.yaml > /tmp/slam.log 2>&1
+            "
+            sleep 3
+
+            if docker exec ${CONTAINER_NAME} pgrep -f "slam_toolbox" > /dev/null 2>&1; then
+                echo "  SLAM: RUNNING"
+            else
+                echo "  SLAM: FAILED - check /tmp/slam.log"
+            fi
+        else
+            # No new_map - just verify and launch RViz
+            echo "SLAM with EKF mode - launching RViz only"
+            echo ""
+            echo "NOTE: Run './start_ros.sh --ekf' first to start all nodes"
+            echo "      Or use: ./rviz.sh slam-ekf new_map"
+            echo ""
+
+            # Just verify things are running (don't start anything!)
+            echo "Checking system status..."
+
+            RF2O_COUNT=$(docker exec ${CONTAINER_NAME} bash -c "ps aux | grep -c '[r]f2o_laser_odometry_node --ros-args'" 2>/dev/null || echo "0")
+            EKF_RUNNING=$(docker exec ${CONTAINER_NAME} pgrep -f "ekf_node" > /dev/null 2>&1 && echo "yes" || echo "no")
+            SLAM_RUNNING=$(docker exec ${CONTAINER_NAME} pgrep -f "slam_toolbox" > /dev/null 2>&1 && echo "yes" || echo "no")
+
+            echo "  RF2O processes: ${RF2O_COUNT} (should be 1)"
+            echo "  EKF running: ${EKF_RUNNING}"
+            echo "  SLAM running: ${SLAM_RUNNING}"
+
+            if [ "${RF2O_COUNT}" != "1" ] || [ "${EKF_RUNNING}" != "yes" ] || [ "${SLAM_RUNNING}" != "yes" ]; then
+                echo ""
+                echo "WARNING: System not fully running!"
+                echo "Run: ./start_ros.sh --ekf"
+                echo ""
+            fi
         fi
 
         echo ""
