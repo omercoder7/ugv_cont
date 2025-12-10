@@ -2352,9 +2352,24 @@ rclpy.shutdown()
         current_time = time.time()
         time_in_state = current_time - self.state_context.state_start_time
 
+        # Check if robot is INSIDE a dead-end (walls close on front, left, AND right)
+        # In this case, back out directly - rotating in tight space is difficult
+        left_close = min(self.sector_distances[1], self.sector_distances[2]) < dynamic_min_dist + 0.15
+        right_close = min(self.sector_distances[10], self.sector_distances[11]) < dynamic_min_dist + 0.15
+        front_close = front_arc_min < dynamic_min_dist + 0.15
+        rear_clear = min(self.sector_distances[5], self.sector_distances[6], self.sector_distances[7]) > dynamic_min_dist
+
+        in_dead_end = front_close and left_close and right_close and rear_clear
+
+        if in_dead_end and self.robot_state not in [RobotState.BACKING_UP, RobotState.TURNING]:
+            # Robot is trapped in dead-end - back out directly
+            print(f"\n[DEAD-END] Trapped! F={front_arc_min:.2f}m L={self.sector_distances[1]:.2f}m R={self.sector_distances[11]:.2f}m - backing out")
+            self.avoidance_direction = None  # Will be set to go straight back
+            self.transition_state(RobotState.BACKING_UP)
+
         # Evaluate state transitions based on current state
         # Use dynamic_min_dist which adapts to corridor vs open space
-        if self.robot_state == RobotState.STOPPED:
+        elif self.robot_state == RobotState.STOPPED:
             # From STOPPED: transition based on front clearance
             if front_arc_min >= dynamic_min_dist:
                 if is_corridor:
@@ -2603,8 +2618,24 @@ rclpy.shutdown()
             self.emergency_maneuver = False
 
         elif self.robot_state == RobotState.BACKING_UP:
+            # Check if we're trapped in dead-end (both sides blocked)
+            # In that case, back straight out - no room to turn
+            trapped_in_dead_end = (
+                min(self.sector_distances[1], self.sector_distances[2]) < self.lidar_min_distance + 0.1 and
+                min(self.sector_distances[10], self.sector_distances[11]) < self.lidar_min_distance + 0.1 and
+                min(self.sector_distances[5], self.sector_distances[6], self.sector_distances[7]) > self.lidar_min_distance
+            )
+
+            if trapped_in_dead_end:
+                # Back straight out - no turning in tight dead-end
+                self.avoidance_direction = "straight"
+                self.state_context.maneuver_duration = 0.0  # No turn after backing
+                status = f"[BACKUP-STRAIGHT] trapped, backing out t={time_in_state:.1f}s"
+                linear = -self.linear_speed
+                angular = 0.0
+
             # Determine avoidance direction based on VFH (do this every iteration to ensure it's set)
-            if self.avoidance_direction is None:
+            elif self.avoidance_direction is None or self.avoidance_direction == "straight":
                 # Use VFH to find the nearest clear sector and calculate minimum turn
                 # Start from front (sector 0) and scan outward in both directions
                 best_left_sector = None
@@ -2694,20 +2725,29 @@ rclpy.shutdown()
                 dead_str = f"L={'D' if left_dead_end else 'ok'} R={'D' if right_dead_end else 'ok'}"
                 print(f"\n[BACKUP] dir={self.avoidance_direction} turn={turn_degrees:.0f}° (L:{left_turn_angle}° R:{right_turn_angle}°) {dead_str}")
 
-            # Send backup command directly
-            linear = -self.linear_speed
-            angular = 0.0
-            status = f"[BACKUP] t={time_in_state:.1f}s"
+                # Send backup command
+                linear = -self.linear_speed
+                angular = 0.0
+                status = f"[BACKUP] t={time_in_state:.1f}s dir={self.avoidance_direction}"
 
         elif self.robot_state == RobotState.TURNING:
-            # Ensure direction is set (safety check)
-            if self.avoidance_direction is None:
-                self.avoidance_direction = "left"  # Default
-            # Execute turn
-            turn_speed = 1.0 if self.avoidance_direction == "left" else -1.0
-            linear = 0.0
-            angular = turn_speed
-            status = f"[TURN] dir={self.avoidance_direction} t={time_in_state:.1f}s"
+            # Skip turning if we were backing straight out of dead-end
+            if self.avoidance_direction == "straight":
+                # No turn needed - go back to FORWARD to reassess
+                self.avoidance_direction = None
+                self.transition_state(RobotState.FORWARD)
+                linear = 0.0
+                angular = 0.0
+                status = "[TURN->FWD] Exited dead-end"
+            else:
+                # Ensure direction is set (safety check)
+                if self.avoidance_direction is None:
+                    self.avoidance_direction = "left"  # Default
+                # Execute turn
+                turn_speed = 1.0 if self.avoidance_direction == "left" else -1.0
+                linear = 0.0
+                angular = turn_speed
+                status = f"[TURN] dir={self.avoidance_direction} t={time_in_state:.1f}s"
 
         elif self.robot_state == RobotState.CORRIDOR:
             # CORRIDOR mode: Baby steps through narrow passage
