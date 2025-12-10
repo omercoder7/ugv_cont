@@ -344,6 +344,94 @@ class VFHController:
         """Get inverse obstacle density for a sector (higher = more clear)"""
         return 1.0 - self.smoothed_histogram[sector]
 
+    def calculate_space_freedom(self, sector: int, sector_distances: List[float]) -> float:
+        """
+        Calculate "space freedom" for a direction - how open/unconstrained the space is.
+
+        Key insight: A direction with 2m to an obstacle in a corner is WORSE than
+        a direction with 1.5m to an obstacle in open space, because the corner
+        limits future movement options.
+
+        Space Freedom Score considers:
+        1. Distance in the target direction
+        2. Distances in neighboring sectors (±1, ±2 sectors = ±30°, ±60°)
+        3. Whether the path widens or narrows as we go forward
+
+        Returns: 0.0 (dead-end/constrained) to 1.0 (wide open space)
+        """
+        # Get distances for target sector and neighbors
+        target_dist = sector_distances[sector]
+
+        # Skip if target is blocked
+        if target_dist < 0.3:
+            return 0.0
+
+        # Get neighboring sector distances (±1 and ±2 sectors = ±30° and ±60°)
+        left_1 = sector_distances[(sector + 1) % self.num_sectors]
+        left_2 = sector_distances[(sector + 2) % self.num_sectors]
+        right_1 = sector_distances[(sector - 1) % self.num_sectors]
+        right_2 = sector_distances[(sector - 2) % self.num_sectors]
+
+        # Calculate "angular width" of open space
+        # Count how many adjacent sectors are also clear (distance > threshold)
+        clear_threshold = 0.6  # Consider sector clear if > 60cm
+
+        adjacent_clear = 0
+        for offset in [-2, -1, 1, 2]:
+            neighbor = (sector + offset) % self.num_sectors
+            if sector_distances[neighbor] >= clear_threshold:
+                adjacent_clear += 1
+
+        # Score 1: How wide is the opening? (0-4 adjacent sectors clear)
+        width_score = adjacent_clear / 4.0
+
+        # Score 2: Minimum distance in the arc (the limiting factor)
+        # If going into a corner, one side will be close
+        arc_distances = [target_dist, left_1, right_1]
+        min_arc_dist = min(arc_distances)
+        max_arc_dist = max(arc_distances)
+
+        # Normalize to 0-1 (cap at 3m for normalization)
+        min_dist_score = min(min_arc_dist / 3.0, 1.0)
+
+        # Score 3: Is the space widening or narrowing?
+        # Compare inner arc (±30°) to outer arc (±60°)
+        inner_avg = (left_1 + right_1) / 2.0
+        outer_avg = (left_2 + right_2) / 2.0
+
+        # Widening space (outer > inner) is better - indicates not a corner
+        if outer_avg >= inner_avg:
+            widening_score = 1.0  # Space is widening - good!
+        else:
+            # Narrowing - might be going into a corner
+            ratio = outer_avg / max(inner_avg, 0.1)
+            widening_score = max(0.2, ratio)  # 0.2 to 1.0
+
+        # Score 4: Symmetry - a corridor is OK, but a corner is bad
+        # Corner = one side much closer than the other
+        left_min = min(left_1, left_2)
+        right_min = min(right_1, right_2)
+
+        if max(left_min, right_min) > 0.1:
+            symmetry = min(left_min, right_min) / max(left_min, right_min)
+        else:
+            symmetry = 0.0  # Both sides blocked
+
+        # High symmetry = corridor (OK) or open space (great)
+        # Low symmetry = corner (bad)
+        symmetry_score = symmetry
+
+        # Combined space freedom score
+        # Weight: min_dist matters most, then width, then widening, then symmetry
+        freedom = (
+            0.35 * min_dist_score +    # How far to closest obstacle in arc
+            0.30 * width_score +       # How many adjacent sectors are clear
+            0.20 * widening_score +    # Is space opening up or closing in
+            0.15 * symmetry_score      # Is it symmetric (corridor/open) vs asymmetric (corner)
+        )
+
+        return freedom
+
     def detect_corridor(self, sector_distances: List[float], robot_width: float) -> Tuple[bool, float, int]:
         """
         Detect if robot is in a corridor/narrow passage.
@@ -1845,11 +1933,13 @@ rclpy.shutdown()
         """
         VFH-inspired algorithm: Find the best direction using a cost function.
 
-        Key insight: Prefer directions toward UNEXPLORED areas on the map.
-        Uses both LiDAR distance AND Cartographer map data to identify unexplored regions.
+        Key insight: Prefer directions toward OPEN, UNCONSTRAINED areas on the map.
+        A direction with 2m to an obstacle in a corner is WORSE than a direction
+        with 1.5m to an obstacle in open space.
 
         Cost = target_weight * target_cost
              + openness_weight * openness_cost   # LiDAR: prefer open space
+             + freedom_weight * freedom_cost     # Space freedom: avoid corners/dead-ends
              + map_explore_weight * map_explore_cost  # Map: prefer unknown cells
              + previous_weight * previous_cost
              + unvisited_weight * unvisited_cost
@@ -1858,8 +1948,9 @@ rclpy.shutdown()
         """
         # Weights (inspired by VFH + frontier exploration)
         TARGET_WEIGHT = 1.0       # Slight preference for forward direction
-        OPENNESS_WEIGHT = 2.0     # Prefer open directions (high LiDAR distance)
-        MAP_EXPLORE_WEIGHT = 5.0  # STRONGLY prefer unexplored map areas!
+        OPENNESS_WEIGHT = 1.5     # Prefer open directions (reduced - space_freedom is better)
+        FREEDOM_WEIGHT = 4.0      # STRONGLY prefer unconstrained directions (avoid corners!)
+        MAP_EXPLORE_WEIGHT = 4.0  # Prefer unexplored map areas
         PREVIOUS_WEIGHT = 1.0     # Smooth trajectory (reduce oscillation)
         UNVISITED_WEIGHT = 2.0    # Prefer unvisited areas (local tracking)
 
@@ -1898,6 +1989,10 @@ rclpy.shutdown()
             # OPENNESS COST: Prefer directions with HIGH LiDAR distance
             openness_cost = min(dist / max_dist, 1.0)  # 1.0 = farthest, 0.0 = closest
 
+            # SPACE FREEDOM COST: Prefer directions with wide open space, not corners
+            # This is the key insight: avoid directions that lead to constrained areas
+            freedom_cost = self.vfh.calculate_space_freedom(sector, self.sector_distances)
+
             # MAP EXPLORATION COST: From Cartographer map data
             # High score = lots of unknown cells = unexplored frontier!
             map_explore_cost = map_scores[sector]  # 0.0-1.0, 1.0 = all unknown
@@ -1932,6 +2027,7 @@ rclpy.shutdown()
             # Combined score
             score = (TARGET_WEIGHT * target_cost +
                     OPENNESS_WEIGHT * openness_cost +
+                    FREEDOM_WEIGHT * freedom_cost +
                     MAP_EXPLORE_WEIGHT * map_explore_cost +
                     PREVIOUS_WEIGHT * previous_cost +
                     UNVISITED_WEIGHT * unvisited_cost)
@@ -2779,6 +2875,7 @@ rclpy.shutdown()
         self.target_linear = self.linear_speed
         self.start_movement_thread()  # Start continuous movement for smooth motion
         last_status_time = time.time()
+        last_rf2o_check = time.time()
         dead_ends_found = 0
 
         try:
@@ -2800,6 +2897,11 @@ rclpy.shutdown()
                     self.set_target_velocity(0.0, 0.0)  # Stop via movement thread
                     time.sleep(0.2)
                     continue
+
+                # Periodic RF2O health check (every 30s) - prevents EKF from going slow
+                if time.time() - last_rf2o_check > 30:
+                    check_rf2o_health()
+                    last_rf2o_check = time.time()
 
                 # Skip ALL processing if a maneuver is in progress
                 # This prevents blocking subprocess calls during maneuvers
@@ -3005,6 +3107,42 @@ def start_driver():
     else:
         print("Warning: ugv_driver may not have started properly")
         return False
+
+
+def check_rf2o_health():
+    """
+    Check if RF2O is running and publishing. Restart if dead.
+    This prevents EKF from falling into prediction-only mode (1Hz).
+    """
+    # Check if RF2O process is running
+    result = subprocess.run(
+        ['docker', 'exec', CONTAINER_NAME, 'pgrep', '-f', 'rf2o_laser_odometry_node'],
+        capture_output=True, text=True
+    )
+
+    if result.returncode != 0:
+        print("\n[RF2O] Process dead! Restarting...")
+        subprocess.Popen(
+            ['docker', 'exec', '-d', CONTAINER_NAME, 'bash', '-c',
+             'source /opt/ros/humble/setup.bash && '
+             'source /root/ugv_ws/install/setup.bash && '
+             'ros2 launch rf2o_laser_odometry rf2o_laser_odometry.launch.py > /tmp/rf2o.log 2>&1'],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL
+        )
+        time.sleep(3)
+        # Verify it restarted
+        result = subprocess.run(
+            ['docker', 'exec', CONTAINER_NAME, 'pgrep', '-f', 'rf2o_laser_odometry_node'],
+            capture_output=True, text=True
+        )
+        if result.returncode == 0:
+            print("[RF2O] Restarted successfully")
+            return True
+        else:
+            print("[RF2O] FAILED TO RESTART - EKF will be slow!")
+            return False
+    return True
 
 
 def main():

@@ -538,6 +538,29 @@ case "${MODE}" in
                 echo "  Bringup: FAILED"
             fi
 
+            # Start RF2O laser odometry (CRITICAL for EKF)
+            echo "Starting RF2O laser odometry..."
+            docker exec -d ${CONTAINER_NAME} /bin/bash -c "
+            source /opt/ros/humble/setup.bash && \
+            source /root/ugv_ws/install/setup.bash && \
+            ros2 launch rf2o_laser_odometry rf2o_laser_odometry.launch.py > /tmp/rf2o.log 2>&1
+            "
+            sleep 3
+
+            # Wait for RF2O to actually publish (not just start)
+            echo "  Waiting for RF2O to publish /odom_rf2o..."
+            for i in {1..10}; do
+                RF2O_PUB=$(docker exec ${CONTAINER_NAME} bash -c "source /opt/ros/humble/setup.bash && timeout 1 ros2 topic echo /odom_rf2o --once 2>/dev/null" | grep -c "position" || echo "0")
+                if [ "${RF2O_PUB}" -gt 0 ]; then
+                    echo "  RF2O: PUBLISHING"
+                    break
+                fi
+                sleep 1
+            done
+            if [ "${RF2O_PUB}" -eq 0 ]; then
+                echo "  RF2O: WARNING - not publishing yet, EKF may be slow"
+            fi
+
             # Start EKF fusion
             echo "Starting EKF fusion (wheel + LiDAR + IMU)..."
             docker exec -d ${CONTAINER_NAME} /bin/bash -c "
@@ -604,6 +627,29 @@ case "${MODE}" in
                 echo "Bringup already running, skipping..."
             fi
 
+            # Check if RF2O is running (CRITICAL for EKF)
+            if ! docker exec ${CONTAINER_NAME} pgrep -f "rf2o_laser_odometry_node" > /dev/null 2>&1; then
+                echo "Starting RF2O laser odometry..."
+                docker exec -d ${CONTAINER_NAME} /bin/bash -c "
+                source /opt/ros/humble/setup.bash && \
+                source /root/ugv_ws/install/setup.bash && \
+                ros2 launch rf2o_laser_odometry rf2o_laser_odometry.launch.py > /tmp/rf2o.log 2>&1
+                "
+                sleep 3
+                # Wait for RF2O to publish
+                echo "  Waiting for RF2O to publish..."
+                for i in {1..10}; do
+                    RF2O_PUB=$(docker exec ${CONTAINER_NAME} bash -c "source /opt/ros/humble/setup.bash && timeout 1 ros2 topic echo /odom_rf2o --once 2>/dev/null" | grep -c "position" || echo "0")
+                    if [ "${RF2O_PUB}" -gt 0 ]; then
+                        echo "  RF2O: PUBLISHING"
+                        break
+                    fi
+                    sleep 1
+                done
+            else
+                echo "RF2O already running, skipping..."
+            fi
+
             # Check if EKF is already running
             if ! docker exec ${CONTAINER_NAME} pgrep -f "ekf_node" > /dev/null 2>&1; then
                 echo "Starting EKF fusion (wheel + LiDAR + IMU)..."
@@ -639,6 +685,30 @@ case "${MODE}" in
         echo ""
         echo "EKF fusion chain:"
         echo "  Wheel + LiDAR + IMU -> EKF -> odom TF -> SLAM"
+        echo ""
+
+        # CRITICAL: Verify EKF is outputting at proper rate (should be ~10Hz, not 1Hz)
+        echo "Verifying EKF output rate..."
+        EKF_RATE=$(docker exec ${CONTAINER_NAME} bash -c "source /opt/ros/humble/setup.bash && timeout 3 ros2 topic hz /odom --window 3 2>&1 | grep 'average rate' | head -1 | awk '{print \$3}'" || echo "0")
+        EKF_RATE_INT=$(echo "${EKF_RATE}" | cut -d'.' -f1)
+        if [ -n "${EKF_RATE_INT}" ] && [ "${EKF_RATE_INT}" -ge 8 ]; then
+            echo "  EKF output: ${EKF_RATE} Hz ✓ (healthy)"
+        else
+            echo "  WARNING: EKF output rate is ${EKF_RATE} Hz (expected ~10Hz)"
+            echo "  This may cause 'queue is full' errors. Checking RF2O..."
+            # Try to restart RF2O if EKF rate is low
+            RF2O_RUNNING=$(docker exec ${CONTAINER_NAME} pgrep -f "rf2o_laser_odometry_node" 2>/dev/null || echo "")
+            if [ -z "${RF2O_RUNNING}" ]; then
+                echo "  RF2O is dead! Restarting..."
+                docker exec -d ${CONTAINER_NAME} bash -c "
+                source /opt/ros/humble/setup.bash && \
+                source /root/ugv_ws/install/setup.bash && \
+                ros2 launch rf2o_laser_odometry rf2o_laser_odometry.launch.py > /tmp/rf2o.log 2>&1
+                "
+                sleep 4
+                echo "  RF2O restarted. EKF should recover in a few seconds."
+            fi
+        fi
         echo ""
         echo "Launching RViz..."
         launch_rviz "/tmp/view_slam_2d.rviz"
