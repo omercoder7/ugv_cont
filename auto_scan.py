@@ -1043,6 +1043,11 @@ class SectorObstacleAvoider:
         self._map_scores_cache_time = 0
         self._MAP_SCORES_CACHE_TTL = 3.0  # Refresh every 3 seconds
 
+        # Cache for dead-end detection
+        self._dead_end_cache = [False] * NUM_SECTORS
+        self._dead_end_cache_time = 0
+        self._DEAD_END_CACHE_TTL = 2.0  # Refresh every 2 seconds
+
         # State machine for cleaner navigation logic
         self.robot_state = RobotState.STOPPED
         self.state_context = StateContext()
@@ -1861,6 +1866,143 @@ rclpy.shutdown()
         except Exception as e:
             return self._map_scores_cache  # Return cached on error
 
+    def get_dead_end_sectors(self) -> List[bool]:
+        """
+        Detect dead-end sectors from the SLAM map.
+
+        A sector is a dead-end if:
+        - It's fully mapped (no unknown cells within 1.5m)
+        - There are occupied cells (walls) blocking the path within 1.5m
+        - The neighboring sectors are also blocked
+
+        Returns list of 12 booleans: True = dead-end (avoid!), False = passable
+        """
+        # Return cached result if fresh
+        if time.time() - self._dead_end_cache_time < self._DEAD_END_CACHE_TTL:
+            return self._dead_end_cache
+
+        try:
+            result = subprocess.run(
+                ['docker', 'exec', CONTAINER_NAME, 'bash', '-c',
+                 '''source /opt/ros/humble/setup.bash && python3 -c "
+import rclpy
+from nav_msgs.msg import OccupancyGrid
+import tf2_ros
+import math
+
+rclpy.init()
+node = rclpy.create_node('dead_end_detector')
+
+tf_buffer = tf2_ros.Buffer()
+tf_listener = tf2_ros.TransformListener(tf_buffer, node)
+
+# Wait for map
+map_msg = None
+def map_cb(m): global map_msg; map_msg = m
+sub = node.create_subscription(OccupancyGrid, '/map', map_cb, 1)
+
+for _ in range(30):
+    rclpy.spin_once(node, timeout_sec=0.1)
+    if map_msg: break
+
+if not map_msg:
+    print('NO_MAP')
+    node.destroy_node()
+    rclpy.shutdown()
+    exit()
+
+# Get robot position
+try:
+    trans = tf_buffer.lookup_transform('map', 'base_footprint', rclpy.time.Time(), timeout=rclpy.duration.Duration(seconds=1.0))
+    robot_x = trans.transform.translation.x
+    robot_y = trans.transform.translation.y
+    q = trans.transform.rotation
+    siny_cosp = 2 * (q.w * q.z + q.x * q.y)
+    cosy_cosp = 1 - 2 * (q.y * q.y + q.z * q.z)
+    robot_yaw = math.atan2(siny_cosp, cosy_cosp)
+except:
+    print('NO_TF')
+    node.destroy_node()
+    rclpy.shutdown()
+    exit()
+
+# Map parameters
+res = map_msg.info.resolution
+origin_x = map_msg.info.origin.position.x
+origin_y = map_msg.info.origin.position.y
+width = map_msg.info.width
+height = map_msg.info.height
+data = map_msg.data
+
+# Check each sector for dead-ends
+# A dead-end is: fully mapped + wall within 1.5m + no escape routes
+dead_ends = []
+CHECK_DIST = 1.5  # Check up to 1.5m ahead
+
+for sector in range(12):
+    sector_angle = sector * (math.pi / 6)
+    map_angle = robot_yaw + sector_angle
+
+    unknown_count = 0
+    wall_count = 0
+    free_count = 0
+    total_count = 0
+
+    # Sample multiple points along ray and also slightly to sides (cone)
+    for dist in [0.4, 0.6, 0.8, 1.0, 1.2, 1.5]:
+        for angle_offset in [-0.15, 0, 0.15]:  # ~9 degree cone
+            check_angle = map_angle + angle_offset
+            px = robot_x + dist * math.cos(check_angle)
+            py = robot_y + dist * math.sin(check_angle)
+
+            gx = int((px - origin_x) / res)
+            gy = int((py - origin_y) / res)
+
+            if 0 <= gx < width and 0 <= gy < height:
+                cell_val = data[gy * width + gx]
+                total_count += 1
+                if cell_val == -1:
+                    unknown_count += 1
+                elif cell_val >= 50:  # Occupied (wall)
+                    wall_count += 1
+                else:
+                    free_count += 1
+
+    # Dead-end criteria:
+    # 1. Area is mostly mapped (< 20% unknown)
+    # 2. Significant wall presence (> 30% walls)
+    # 3. Limited free space (< 40% free)
+    is_dead_end = False
+    if total_count > 0:
+        unknown_ratio = unknown_count / total_count
+        wall_ratio = wall_count / total_count
+        free_ratio = free_count / total_count
+
+        # It's a dead-end if well-mapped and blocked
+        if unknown_ratio < 0.2 and wall_ratio > 0.3 and free_ratio < 0.4:
+            is_dead_end = True
+
+    dead_ends.append('1' if is_dead_end else '0')
+
+print(','.join(dead_ends))
+node.destroy_node()
+rclpy.shutdown()
+"'''],
+                capture_output=True, text=True, timeout=5
+            )
+
+            if result.stdout.strip() and result.stdout.strip() not in ['NO_MAP', 'NO_TF']:
+                dead_ends = [x == '1' for x in result.stdout.strip().split(',')]
+                if len(dead_ends) == NUM_SECTORS:
+                    self._dead_end_cache = dead_ends
+                    self._dead_end_cache_time = time.time()
+                    return dead_ends
+
+            return self._dead_end_cache
+
+        except Exception as e:
+            return self._dead_end_cache
+
     def lidar_to_robot_sector(self, lidar_sector: int) -> int:
         """Convert LiDAR sector to robot-frame sector (accounting for 90° rotation)"""
         # LiDAR is rotated 90° CCW, so add rotation offset
@@ -2285,11 +2427,41 @@ rclpy.shutdown()
             map_scores = self.get_map_exploration_scores()
             left_explore = max(map_scores[1], map_scores[2], map_scores[3])
             right_explore = max(map_scores[10], map_scores[11], map_scores[9])
+            front_explore = max(map_scores[0], map_scores[11], map_scores[1])
+
+            # Get dead-end detection from map
+            dead_ends = self.get_dead_end_sectors()
+            front_dead_end = dead_ends[0] or (dead_ends[11] and dead_ends[1])
+            left_dead_end = dead_ends[1] and dead_ends[2]
+            right_dead_end = dead_ends[11] and dead_ends[10]
+
+            # Penalize dead-ends: mark as not OK even if physically clear
+            if front_dead_end and front_explore < 0.1:  # Front is dead-end with nothing to explore
+                front_ok = False
+            if left_dead_end and left_explore < 0.1:
+                left_ok = False
+            if right_dead_end and right_explore < 0.1:
+                right_ok = False
 
             # Auto-centering logic: steer toward unexplored areas + navigable paths
+            # AVOID dead-ends even if they appear clear
             if front_ok and left_ok and right_ok:
                 # All clear - steer toward UNEXPLORED area (exploration-driven)
+                # But penalize dead-ends heavily
                 explore_balance = left_explore - right_explore  # Positive = left more unexplored
+
+                # Apply dead-end penalties
+                if left_dead_end:
+                    explore_balance -= 0.5  # Penalize left
+                if right_dead_end:
+                    explore_balance += 0.5  # Penalize right (boost left)
+                if front_dead_end:
+                    # Front is dead-end - steer away from it
+                    if left_explore > right_explore and not left_dead_end:
+                        explore_balance += 0.3
+                    elif not right_dead_end:
+                        explore_balance -= 0.3
+
                 clearance_balance = left_arc - right_arc  # Positive = left more open
 
                 # Combined: exploration weighted higher than clearance
@@ -2302,22 +2474,35 @@ rclpy.shutdown()
                     angular = 0.0
             elif front_ok:
                 # Front clear but one side blocked - steer gently away from blocked side
-                if left_ok and not right_ok:
+                # Also consider dead-ends
+                if left_ok and not right_ok and not left_dead_end:
                     angular = 0.1  # Gentle left
-                elif right_ok and not left_ok:
+                elif right_ok and not left_ok and not right_dead_end:
                     angular = -0.1  # Gentle right
+                elif front_dead_end:
+                    # Front is dead-end, pick best side
+                    if left_ok and not left_dead_end:
+                        angular = 0.2
+                    elif right_ok and not right_dead_end:
+                        angular = -0.2
+                    else:
+                        angular = 0.0
                 else:
                     angular = 0.0
             elif left_ok and not right_ok:
-                # Only left is navigable - steer left
-                angular = 0.25
+                # Only left is navigable - steer left (if not dead-end)
+                angular = 0.25 if not left_dead_end else 0.0
             elif right_ok and not left_ok:
-                # Only right is navigable - steer right
-                angular = -0.25
+                # Only right is navigable - steer right (if not dead-end)
+                angular = -0.25 if not right_dead_end else 0.0
             elif left_ok and right_ok:
                 # Both sides navigable but not front - pick by exploration then clearance
-                if abs(left_explore - right_explore) > 0.1:
-                    angular = 0.3 if left_explore > right_explore else -0.3
+                # Avoid dead-ends
+                left_score = left_explore - (0.5 if left_dead_end else 0)
+                right_score = right_explore - (0.5 if right_dead_end else 0)
+
+                if abs(left_score - right_score) > 0.1:
+                    angular = 0.3 if left_score > right_score else -0.3
                 elif left_arc > right_arc:
                     angular = 0.3
                 else:
@@ -2328,8 +2513,9 @@ rclpy.shutdown()
 
             self.emergency_maneuver = False
             nav_str = f"{'L' if left_ok else '.'}{'F' if front_ok else '.'}{'R' if right_ok else '.'}"
+            dead_str = f"{'L' if left_dead_end else '.'}{'F' if front_dead_end else '.'}{'R' if right_dead_end else '.'}"
             speed_pct = int(100 * linear / self.linear_speed) if self.linear_speed > 0 else 100
-            status = f"[FWD] f={front:.2f} L={left_arc:.2f} R={right_arc:.2f} nav={nav_str} spd={speed_pct}%"
+            status = f"[FWD] f={front:.2f} L={left_arc:.2f} R={right_arc:.2f} nav={nav_str} dead={dead_str} spd={speed_pct}%"
 
             # Clear avoidance state
             if self.avoidance_direction is not None:
@@ -2374,13 +2560,19 @@ rclpy.shutdown()
                 best_left_sector = None
                 best_right_sector = None
 
+                # Get dead-end info to avoid turning toward dead-ends
+                dead_ends = self.get_dead_end_sectors()
+                map_scores = self.get_map_exploration_scores()
+
                 # Scan left (sectors 1, 2, 3, 4, 5, 6) - includes back-left
                 # Check both clearance AND if robot physically fits
+                # Also check for dead-ends
                 for sector in [1, 2, 3, 4, 5, 6]:
                     if (self.vfh.is_path_clear(sector) and
                         self.sector_distances[sector] >= self.lidar_min_distance and
                         self.vfh.robot_fits_in_direction(sector, self.sector_distances,
-                                                         ROBOT_HALF_WIDTH, self.lidar_min_distance)):
+                                                         ROBOT_HALF_WIDTH, self.lidar_min_distance) and
+                        not (dead_ends[sector] and map_scores[sector] < 0.1)):  # Skip dead-ends
                         best_left_sector = sector
                         break
 
@@ -2389,7 +2581,8 @@ rclpy.shutdown()
                     if (self.vfh.is_path_clear(sector) and
                         self.sector_distances[sector] >= self.lidar_min_distance and
                         self.vfh.robot_fits_in_direction(sector, self.sector_distances,
-                                                         ROBOT_HALF_WIDTH, self.lidar_min_distance)):
+                                                         ROBOT_HALF_WIDTH, self.lidar_min_distance) and
+                        not (dead_ends[sector] and map_scores[sector] < 0.1)):  # Skip dead-ends
                         best_right_sector = sector
                         break
 
@@ -2398,6 +2591,14 @@ rclpy.shutdown()
                 # REDUCED: Removed 15° margin for tighter turns
                 left_turn_angle = (best_left_sector * 30) if best_left_sector else 180
                 right_turn_angle = ((12 - best_right_sector) * 30) if best_right_sector else 180
+
+                # Penalize dead-end directions by adding angle penalty
+                left_dead_end = dead_ends[1] and dead_ends[2] and map_scores[1] < 0.1
+                right_dead_end = dead_ends[11] and dead_ends[10] and map_scores[11] < 0.1
+                if left_dead_end:
+                    left_turn_angle += 60  # Heavy penalty for dead-end
+                if right_dead_end:
+                    right_turn_angle += 60
 
                 # Choose direction with smaller turn, plus small margin
                 margin = 5  # REDUCED from 10° to 5° for tighter avoidance
@@ -2408,7 +2609,15 @@ rclpy.shutdown()
 
                 if force_alternate:
                     # Force opposite direction from last time
-                    self.avoidance_direction = "right" if self.last_avoidance_direction == "left" else "left"
+                    # BUT: don't turn into a dead-end if other direction is viable
+                    preferred = "right" if self.last_avoidance_direction == "left" else "left"
+                    if preferred == "left" and left_dead_end and not right_dead_end:
+                        preferred = "right"
+                        print(f"\n[DEAD-END] Avoiding left dead-end, going right")
+                    elif preferred == "right" and right_dead_end and not left_dead_end:
+                        preferred = "left"
+                        print(f"\n[DEAD-END] Avoiding right dead-end, going left")
+                    self.avoidance_direction = preferred
                     turn_degrees = right_turn_angle + margin if self.avoidance_direction == "right" else left_turn_angle + margin
                     print(f"\n[ALTERNATE] Forcing {self.avoidance_direction} (avoiding passage trap)")
                 elif left_turn_angle <= right_turn_angle:
@@ -2432,7 +2641,8 @@ rclpy.shutdown()
                 actual_vel = ACTUAL_MAX_ANGULAR_VEL * 1.0
                 self.state_context.maneuver_duration = abs(turn_degrees) * (math.pi / 180) / actual_vel
 
-                print(f"\n[BACKUP] dir={self.avoidance_direction} turn={turn_degrees:.0f}° (L:{left_turn_angle}° R:{right_turn_angle}°)")
+                dead_str = f"L={'D' if left_dead_end else 'ok'} R={'D' if right_dead_end else 'ok'}"
+                print(f"\n[BACKUP] dir={self.avoidance_direction} turn={turn_degrees:.0f}° (L:{left_turn_angle}° R:{right_turn_angle}°) {dead_str}")
 
             # Send backup command directly
             linear = -self.linear_speed
