@@ -2043,7 +2043,7 @@ print(','.join(dead_ends))
 node.destroy_node()
 rclpy.shutdown()
 "'''],
-                capture_output=True, text=True, timeout=5
+                capture_output=True, text=True, timeout=2
             )
 
             if result.stdout.strip() and result.stdout.strip() not in ['NO_MAP', 'NO_TF']:
@@ -2298,7 +2298,7 @@ rclpy.shutdown()
         self.state_context.best_distance = best_distance
         self.state_context.stuck_detected = stuck_detected
 
-    def compute_velocity_vfh(self) -> Tuple[Optional[float], Optional[float]]:
+    def compute_velocity_vfh(self) -> Tuple[float, float]:
         """
         VFH-based obstacle avoidance with state machine.
         Uses histogram smoothing and hysteresis for smoother behavior.
@@ -2629,11 +2629,12 @@ rclpy.shutdown()
         elif self.robot_state == RobotState.BACKING_UP:
             # Check if we're trapped in dead-end (both sides blocked)
             # In that case, back straight out - no room to turn
-            # Use same margin as dead-end detection (0.40m)
+            # Use same DEAD_END_MARGIN as dead-end detection for consistency
+            DEAD_END_MARGIN = 0.40
             trapped_in_dead_end = (
-                min(self.sector_distances[1], self.sector_distances[2]) < self.lidar_min_distance + 0.40 and
-                min(self.sector_distances[10], self.sector_distances[11]) < self.lidar_min_distance + 0.40 and
-                min(self.sector_distances[5], self.sector_distances[6], self.sector_distances[7]) > self.lidar_min_distance
+                min(self.sector_distances[1], self.sector_distances[2]) < dynamic_min_dist + DEAD_END_MARGIN and
+                min(self.sector_distances[10], self.sector_distances[11]) < dynamic_min_dist + DEAD_END_MARGIN and
+                min(self.sector_distances[5], self.sector_distances[6], self.sector_distances[7]) > dynamic_min_dist
             )
 
             if trapped_in_dead_end:
