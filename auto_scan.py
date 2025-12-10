@@ -1934,15 +1934,15 @@ width = map_msg.info.width
 height = map_msg.info.height
 data = map_msg.data
 
-# Check each sector for dead-ends
-# A TRUE dead-end requires a CONTINUOUS wall barrier with NO GAPS
-# We trace between wall hits to verify the wall is solid
+# Check each sector for dead-ends - CONSERVATIVE approach
+# Only flag as dead-end when VERY CLOSE and CERTAIN
+# If unsure, let robot approach and back up if needed
 dead_ends = []
-CHECK_DIST = 1.5  # Check up to 1.5m ahead
+CHECK_DIST = 0.8  # Only check within 0.8m - robot can get closer to verify
 
 def find_wall_hit(angle, max_dist):
     # Ray-cast to find first wall hit. Returns (x, y, dist) or None
-    for dist in [0.3, 0.5, 0.7, 0.9, 1.1, 1.3, 1.5]:
+    for dist in [0.25, 0.4, 0.55, 0.7, 0.8]:
         if dist > max_dist:
             break
         px = robot_x + dist * math.cos(angle)
@@ -1953,28 +1953,26 @@ def find_wall_hit(angle, max_dist):
             cell_val = data[gy * width + gx]
             if cell_val >= 50:  # Wall
                 return (px, py, dist)
-            elif cell_val == -1:  # Unknown - NOT a dead-end (unexplored!)
+            elif cell_val == -1:  # Unknown - NOT a dead-end (must explore!)
                 return None
     return None
 
 def trace_wall_continuous(hit1, hit2):
-    # Trace between two wall hits and check if wall is CONTINUOUS (no gaps)
-    # Returns True only if every point along the line is a wall
+    # Trace between two wall hits and check if wall is CONTINUOUS
     if hit1 is None or hit2 is None:
         return False
 
-    # Sample points along the line between hit1 and hit2
     dx = hit2[0] - hit1[0]
     dy = hit2[1] - hit1[1]
     dist = math.sqrt(dx*dx + dy*dy)
 
-    if dist < 0.05:  # Very close, consider connected
+    if dist < 0.05:
         return True
 
-    # Check every ~5cm along the line
-    num_samples = max(3, int(dist / 0.05))
+    # Check every ~3cm along the line (finer resolution)
+    num_samples = max(3, int(dist / 0.03))
     wall_count = 0
-    gap_count = 0
+    free_count = 0
 
     for i in range(num_samples + 1):
         t = i / num_samples
@@ -1986,17 +1984,16 @@ def trace_wall_continuous(hit1, hit2):
 
         if 0 <= gx < width and 0 <= gy < height:
             cell_val = data[gy * width + gx]
-            if cell_val >= 50:  # Wall
+            if cell_val >= 50:
                 wall_count += 1
-            elif cell_val == -1:  # Unknown = potential escape route
-                return False  # Gap in wall - NOT a dead end!
-            else:  # Free space
-                gap_count += 1
+            elif cell_val == -1:  # Unknown = MUST explore, not dead-end
+                return False
+            else:
+                free_count += 1
 
-    # Wall is continuous if mostly walls and very few gaps
-    # Allow small gaps (1-2 cells) due to map noise
-    total = wall_count + gap_count
-    if total > 0 and gap_count <= 2 and wall_count >= total * 0.7:
+    # STRICT: Must be 90%+ wall with max 1 free cell gap
+    total = wall_count + free_count
+    if total > 0 and free_count <= 1 and wall_count >= total * 0.9:
         return True
     return False
 
@@ -2004,29 +2001,36 @@ for sector in range(12):
     sector_angle = sector * (math.pi / 6)
     map_angle = robot_yaw + sector_angle
 
-    # Cast 5 rays to better cover the sector width (~30 degrees)
+    # Cast 5 rays to cover sector width
     angles = [
-        map_angle - 0.20,  # ~12 deg left
-        map_angle - 0.10,  # ~6 deg left
-        map_angle,         # center
-        map_angle + 0.10,  # ~6 deg right
-        map_angle + 0.20,  # ~12 deg right
+        map_angle - 0.20,
+        map_angle - 0.10,
+        map_angle,
+        map_angle + 0.10,
+        map_angle + 0.20,
     ]
 
     hits = [find_wall_hit(a, CHECK_DIST) for a in angles]
 
-    # Dead-end requires ALL rays to hit walls AND walls to be continuous
+    # Dead-end ONLY if ALL of these are true:
+    # 1. All 5 rays hit walls within 0.8m
+    # 2. All walls are continuous (no gaps)
+    # 3. Walls are close (all within 0.8m)
     is_dead_end = False
     if all(h is not None for h in hits):
-        # Check that wall is continuous between adjacent hits
-        continuous = True
-        for i in range(len(hits) - 1):
-            if not trace_wall_continuous(hits[i], hits[i+1]):
-                continuous = False
-                break
+        # All hits must be close (within 0.8m)
+        all_close = all(h[2] <= 0.8 for h in hits)
 
-        if continuous:
-            is_dead_end = True
+        if all_close:
+            # Check wall continuity between all adjacent rays
+            continuous = True
+            for i in range(len(hits) - 1):
+                if not trace_wall_continuous(hits[i], hits[i+1]):
+                    continuous = False
+                    break
+
+            if continuous:
+                is_dead_end = True
 
     dead_ends.append('1' if is_dead_end else '0')
 
