@@ -69,7 +69,7 @@ docker exec ${CONTAINER_NAME} bash -c "source /opt/ros/humble/setup.bash && ros2
 # Verify zombies are cleared
 echo ""
 echo "Verifying clean state..."
-ZOMBIES_AFTER=$(docker exec ${CONTAINER_NAME} bash -c "ps aux | grep -c '<defunct>'" 2>/dev/null || echo "0")
+ZOMBIES_AFTER=$(docker exec ${CONTAINER_NAME} bash -c "ps aux | grep '<defunct>' | grep -v grep | wc -l" 2>/dev/null || echo "0")
 if [ "${ZOMBIES_AFTER}" -gt 0 ]; then
     echo "  WARNING: Still ${ZOMBIES_AFTER} zombies (unexpected)"
 else
