@@ -62,6 +62,10 @@ echo "Restarting container to clear all processes and zombies..."
 docker restart ${CONTAINER_NAME}
 sleep 5
 
+# Reset ROS2 daemon inside container to clear DDS discovery cache
+echo "Resetting ROS2 daemon (clears DDS cache)..."
+docker exec ${CONTAINER_NAME} bash -c "source /opt/ros/humble/setup.bash && ros2 daemon stop && ros2 daemon start" 2>/dev/null
+
 # Verify zombies are cleared
 echo ""
 echo "Verifying clean state..."
