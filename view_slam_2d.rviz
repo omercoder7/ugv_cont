@@ -58,7 +58,7 @@ Visualization Manager:
         History Policy: Keep Last
         Reliability Policy: Reliable
         Value: /ugv/robot_description
-      Enabled: true
+      Enabled: false
       Links:
         All Links Enabled: true
         Expand Joint Details: false
@@ -67,8 +67,8 @@ Visualization Manager:
         Link Tree Style: Links in Alphabetic Order
         base_footprint:
           Alpha: 1
-          Show Axes: false
-          Show Trail: false
+          Show Axes: true
+          Show Trail: true
         base_imu_link:
           Alpha: 1
           Show Axes: false
