@@ -1,24 +1,29 @@
 #!/bin/bash
 # rviz.sh - Launch RViz with different visualization modes
-# Usage: ./rviz.sh [mode]
+# Usage: ./rviz.sh [mode] [options]
 #
-# Modes:
-#   lidar      - View LiDAR scan data
+# Recommended modes:
+#   slam-ekf [new_map]  - SLAM with EKF sensor fusion (IMU + LiDAR odom)
+#   slam-opt [new_map]  - SLAM with optimized parameters
+#   slam-carto [new_map]- Google Cartographer SLAM (best accuracy)
+#
+# Other modes:
+#   lidar      - View LiDAR scan data only
 #   bringup    - Basic robot bringup view (lidar + odom + tf)
-#   ekf        - Start EKF sensor fusion (LiDAR + IMU) without SLAM
-#   slam       - SLAM mapping view (2D) with EKF fusion
-#   slam3d     - SLAM mapping view (3D)
-#   nav        - Navigation view (2D)
-#   nav3d      - Navigation view (3D)
+#   ekf        - EKF sensor fusion without SLAM
+#   slam       - Full SLAM+Nav2 (manufacturer's launch)
+#   slam-simple- SLAM without Nav2 (requires bringup running)
+#   slam3d     - SLAM with 3D visualization
+#   nav/nav3d  - Navigation view (2D/3D)
 #   camera     - Camera image view
 #   imu        - IMU data view
-#   full       - Full sensor view (lidar + camera + imu)
-#   custom     - Launch with custom .rviz file (provide path as 2nd arg)
+#   full       - Full sensor view
+#   custom     - Launch with custom .rviz file
 #
 # Examples:
-#   ./rviz.sh lidar
-#   ./rviz.sh slam
-#   ./rviz.sh custom /path/to/config.rviz
+#   ./rviz.sh slam-ekf new_map   # Recommended: EKF + SLAM with fresh map
+#   ./rviz.sh slam-opt new_map   # SLAM with optimized params
+#   ./rviz.sh lidar              # Just view LiDAR
 
 CONTAINER_NAME="ugv_rpi_ros_humble"
 MODE="${1:-bringup}"
@@ -153,8 +158,8 @@ show_help() {
     echo "  slam-opt    - OPTIMIZED SLAM with better parameters"
     echo "                Use 'slam-opt new_map' to start with a fresh map"
     echo "                Use 'slam-opt new_map --ekf' for EKF sensor fusion"
-    echo "  slam-ekf    - SLAM with EKF triple fusion"
-    echo "                Uses wheel encoders + LiDAR + IMU"
+    echo "  slam-ekf    - SLAM with EKF sensor fusion (IMU + LiDAR odometry)"
+    echo "                Use 'slam-ekf new_map' to restart container and start fresh"
     echo "  slam-carto  - Google Cartographer SLAM (BEST ACCURACY)"
     echo "                More accurate than slam_toolbox, less reliant on odometry"
     echo "                Use 'slam-carto new_map' to start fresh"
@@ -169,10 +174,11 @@ show_help() {
     echo "  custom      - Custom .rviz file (provide path as 2nd arg)"
     echo ""
     echo "Examples:"
-    echo "  ./rviz.sh lidar             # Just view LiDAR"
-    echo "  ./rviz.sh slam-carto new_map # BEST: Cartographer SLAM (fresh map)"
-    echo "  ./rviz.sh slam-opt new_map  # Optimized slam_toolbox"
-    echo "  ./rviz.sh slam-opt          # Continue existing map"
+    echo "  ./rviz.sh lidar              # Just view LiDAR"
+    echo "  ./rviz.sh slam-ekf new_map   # RECOMMENDED: EKF + SLAM (fresh map)"
+    echo "  ./rviz.sh slam-carto new_map # Cartographer SLAM (fresh map)"
+    echo "  ./rviz.sh slam-opt new_map   # Optimized slam_toolbox"
+    echo "  ./rviz.sh slam-opt           # Continue existing map"
     echo "  ./rviz.sh custom /path/to/my_config.rviz"
 }
 
