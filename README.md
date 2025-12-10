@@ -219,16 +219,45 @@ docker exec ugv_rpi_ros_humble bash -c "source /opt/ros/humble/setup.bash && ros
 docker exec ugv_rpi_ros_humble bash -c "source /opt/ros/humble/setup.bash && ros2 topic echo /imu/data --once"
 ```
 
+## Repository Structure
+
+```
+ugv_cont/
+├── start_ros.sh         # Wrapper → scripts/start_ros.sh
+├── rviz.sh              # Wrapper → scripts/rviz.sh
+├── auto_scan.py         # Main autonomous navigation script
+├── README.md
+│
+├── scripts/             # Main operational scripts
+│   ├── start_ros.sh     # Start ROS nodes (--ekf for sensor fusion)
+│   ├── rviz.sh          # Launch RViz (various modes)
+│   └── ensure_bringup.sh
+│
+├── config/              # Configuration files
+│   ├── slam_toolbox_optimized.yaml
+│   ├── ekf_lidar_imu.yaml
+│   ├── view_slam_2d.rviz
+│   └── cartographer_2d.lua
+│
+├── launch/              # ROS2 launch files
+│   └── bringup_ekf_simple.launch.py
+│
+├── tools/               # Calibration and testing
+│   ├── calibrate_*.py
+│   ├── test_rotation.py
+│   └── keyboard_control.*
+│
+├── docker/              # Docker configuration
+│   ├── Dockerfile
+│   ├── docker-compose.yaml
+│   └── entrypoint.sh
+│
+└── deprecated/          # Legacy scripts (for reference)
+```
+
 ## Architecture
 
 ```
-Host Machine (/home/ws/ugv_cont/)
-├── start_ros.sh         # Start ROS nodes (use --ekf for sensor fusion)
-├── rviz.sh              # Launch RViz visualization
-├── auto_scan.py         # Autonomous navigation
-├── ensure_bringup.sh    # Ensure bringup is running
-└── *.yaml               # Config files
-
 Docker Container (ugv_rpi_ros_humble)
 ├── /root/ugv_ws/        # ROS2 workspace
 │   └── install/         # Built packages
