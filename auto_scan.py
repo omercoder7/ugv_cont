@@ -2365,6 +2365,12 @@ rclpy.shutdown()
         current_time = time.time()
         time_in_state = current_time - self.state_context.state_start_time
 
+        # Get dead-end info EARLY for state transitions (before checking in_dead_end)
+        dead_ends = self.get_dead_end_sectors()
+        map_front_dead_end = dead_ends[0] or (dead_ends[11] and dead_ends[1])
+        map_left_dead_end = dead_ends[1] and dead_ends[2]
+        map_right_dead_end = dead_ends[11] and dead_ends[10]
+
         # Check if robot is INSIDE a dead-end (walls close on front, left, AND right)
         # In this case, back out directly - rotating in tight space is difficult
         # Use larger margin (0.40m) to trigger backing out earlier with more room
@@ -2415,6 +2421,11 @@ rclpy.shutdown()
             elif front_arc_min < DANGER_DISTANCE:
                 # In caution zone - always try to steer around, don't wait for VFH
                 # This prevents driving into walls that raw LiDAR can see
+                self.transition_state(RobotState.AVOIDING)
+            elif map_front_dead_end:
+                # Map shows dead-end ahead - avoid BEFORE getting close
+                # This is the key fix: don't wait for LiDAR to show obstacle
+                print(f"\n[DEAD-END] Map shows dead-end ahead (front_dist={front_arc_min:.2f}m), avoiding early")
                 self.transition_state(RobotState.AVOIDING)
 
         elif self.robot_state == RobotState.CORRIDOR:
@@ -2509,11 +2520,11 @@ rclpy.shutdown()
             right_explore = max(map_scores[10], map_scores[11], map_scores[9])
             front_explore = max(map_scores[0], map_scores[11], map_scores[1])
 
-            # Get dead-end detection from map
-            dead_ends = self.get_dead_end_sectors()
-            front_dead_end = dead_ends[0] or (dead_ends[11] and dead_ends[1])
-            left_dead_end = dead_ends[1] and dead_ends[2]
-            right_dead_end = dead_ends[11] and dead_ends[10]
+            # Use pre-computed dead-end info from state transition logic above
+            # (dead_ends already fetched at start of state machine section)
+            front_dead_end = map_front_dead_end
+            left_dead_end = map_left_dead_end
+            right_dead_end = map_right_dead_end
 
             # Penalize dead-ends: mark as not OK even if physically clear
             # Don't require low exploration score - if it's a dead-end, avoid it
@@ -2590,10 +2601,17 @@ rclpy.shutdown()
                 else:
                     angular = -0.3
             else:
-                # Nothing navigable ahead - STOP and let state machine handle backup
+                # Nothing navigable ahead - STOP and FORCE BACKUP
                 # Don't drive into dead-ends or blocked areas
                 angular = 0.0
                 linear = 0.0  # Critical: stop moving forward!
+
+                # Force immediate state change to BACKING_UP
+                print(f"\n[BLOCKED] All directions blocked/dead-end! Forcing backup")
+                self.state_context.consecutive_avoidances += 1
+                # Bypass min_state_duration by resetting start time
+                self.state_context.state_start_time = 0
+                self.transition_state(RobotState.BACKING_UP)
 
             self.emergency_maneuver = False
             nav_str = f"{'L' if left_ok else '.'}{'F' if front_ok else '.'}{'R' if right_ok else '.'}"
