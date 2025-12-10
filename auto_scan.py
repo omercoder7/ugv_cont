@@ -1935,51 +1935,55 @@ height = map_msg.info.height
 data = map_msg.data
 
 # Check each sector for dead-ends
-# A dead-end is: fully mapped + wall within 1.5m + no escape routes
+# A TRUE dead-end requires: walls on left, center, AND right rays that are CONNECTED
+# This prevents false positives from scattered obstacles
 dead_ends = []
 CHECK_DIST = 1.5  # Check up to 1.5m ahead
+CONNECT_DIST = 0.3  # Max distance between wall hits to be considered connected
+
+def find_wall_hit(angle, max_dist):
+    # Ray-cast to find first wall hit. Returns (x, y, dist) or None
+    for dist in [0.3, 0.5, 0.7, 0.9, 1.1, 1.3, 1.5]:
+        if dist > max_dist:
+            break
+        px = robot_x + dist * math.cos(angle)
+        py = robot_y + dist * math.sin(angle)
+        gx = int((px - origin_x) / res)
+        gy = int((py - origin_y) / res)
+        if 0 <= gx < width and 0 <= gy < height:
+            cell_val = data[gy * width + gx]
+            if cell_val >= 50:  # Wall
+                return (px, py, dist)
+            elif cell_val == -1:  # Unknown - not a dead-end
+                return None
+    return None
+
+def walls_connected(hit1, hit2):
+    # Check if two wall hits are close enough to be part of same wall
+    if hit1 is None or hit2 is None:
+        return False
+    dx = hit1[0] - hit2[0]
+    dy = hit1[1] - hit2[1]
+    return math.sqrt(dx*dx + dy*dy) < CONNECT_DIST
 
 for sector in range(12):
     sector_angle = sector * (math.pi / 6)
     map_angle = robot_yaw + sector_angle
 
-    unknown_count = 0
-    wall_count = 0
-    free_count = 0
-    total_count = 0
+    # Cast 3 rays: left (-15 deg), center, right (+15 deg)
+    left_hit = find_wall_hit(map_angle - 0.26, CHECK_DIST)   # ~15 degrees left
+    center_hit = find_wall_hit(map_angle, CHECK_DIST)
+    right_hit = find_wall_hit(map_angle + 0.26, CHECK_DIST)  # ~15 degrees right
 
-    # Sample multiple points along ray and also slightly to sides (cone)
-    for dist in [0.4, 0.6, 0.8, 1.0, 1.2, 1.5]:
-        for angle_offset in [-0.15, 0, 0.15]:  # ~9 degree cone
-            check_angle = map_angle + angle_offset
-            px = robot_x + dist * math.cos(check_angle)
-            py = robot_y + dist * math.sin(check_angle)
-
-            gx = int((px - origin_x) / res)
-            gy = int((py - origin_y) / res)
-
-            if 0 <= gx < width and 0 <= gy < height:
-                cell_val = data[gy * width + gx]
-                total_count += 1
-                if cell_val == -1:
-                    unknown_count += 1
-                elif cell_val >= 50:  # Occupied (wall)
-                    wall_count += 1
-                else:
-                    free_count += 1
-
-    # Dead-end criteria:
-    # 1. Area is mostly mapped (< 20% unknown)
-    # 2. Significant wall presence (> 30% walls)
-    # 3. Limited free space (< 40% free)
+    # Dead-end ONLY if all 3 rays hit walls AND they're connected (continuous barrier)
     is_dead_end = False
-    if total_count > 0:
-        unknown_ratio = unknown_count / total_count
-        wall_ratio = wall_count / total_count
-        free_ratio = free_count / total_count
+    if left_hit and center_hit and right_hit:
+        # Check if left-center and center-right walls are connected
+        left_center_connected = walls_connected(left_hit, center_hit)
+        center_right_connected = walls_connected(center_hit, right_hit)
 
-        # It's a dead-end if well-mapped and blocked
-        if unknown_ratio < 0.2 and wall_ratio > 0.3 and free_ratio < 0.4:
+        # Must form a continuous wall (U-shape blocking path)
+        if left_center_connected and center_right_connected:
             is_dead_end = True
 
     dead_ends.append('1' if is_dead_end else '0')
