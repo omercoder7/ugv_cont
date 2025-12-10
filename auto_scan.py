@@ -1934,15 +1934,14 @@ width = map_msg.info.width
 height = map_msg.info.height
 data = map_msg.data
 
-# Check each sector for dead-ends - CONSERVATIVE approach
-# Only flag as dead-end when VERY CLOSE and CERTAIN
-# If unsure, let robot approach and back up if needed
+# Check each sector for dead-ends
+# Flag as dead-end when walls block the path ahead
 dead_ends = []
-CHECK_DIST = 0.8  # Only check within 0.8m - robot can get closer to verify
+CHECK_DIST = 1.2  # Check up to 1.2m ahead to detect dead-ends earlier
 
 def find_wall_hit(angle, max_dist):
     # Ray-cast to find first wall hit. Returns (x, y, dist) or None
-    for dist in [0.25, 0.4, 0.55, 0.7, 0.8]:
+    for dist in [0.3, 0.5, 0.7, 0.9, 1.1, 1.2]:
         if dist > max_dist:
             break
         px = robot_x + dist * math.cos(angle)
@@ -1991,9 +1990,9 @@ def trace_wall_continuous(hit1, hit2):
             else:
                 free_count += 1
 
-    # STRICT: Must be 90%+ wall with max 1 free cell gap
+    # Wall is continuous if mostly walls (70%+) with few gaps
     total = wall_count + free_count
-    if total > 0 and free_count <= 1 and wall_count >= total * 0.9:
+    if total > 0 and wall_count >= total * 0.7:
         return True
     return False
 
@@ -2012,24 +2011,30 @@ for sector in range(12):
 
     hits = [find_wall_hit(a, CHECK_DIST) for a in angles]
 
-    # Dead-end ONLY if ALL of these are true:
-    # 1. All 5 rays hit walls within 0.8m
-    # 2. All walls are continuous (no gaps)
-    # 3. Walls are close (all within 0.8m)
+    # Dead-end if:
+    # 1. At least 4 out of 5 rays hit walls within CHECK_DIST
+    # 2. Center ray must hit a wall
+    # 3. Walls form a mostly continuous barrier
     is_dead_end = False
-    if all(h is not None for h in hits):
-        # All hits must be close (within 0.8m)
-        all_close = all(h[2] <= 0.8 for h in hits)
+    hit_count = sum(1 for h in hits if h is not None)
+    center_hit = hits[2]  # Center ray
 
-        if all_close:
-            # Check wall continuity between all adjacent rays
-            continuous = True
-            for i in range(len(hits) - 1):
-                if not trace_wall_continuous(hits[i], hits[i+1]):
-                    continuous = False
-                    break
+    if hit_count >= 4 and center_hit is not None:
+        # Get valid hits for continuity check
+        valid_hits = [h for h in hits if h is not None]
 
-            if continuous:
+        # Check if walls are reasonably close (within 1.2m)
+        all_close = all(h[2] <= 1.2 for h in valid_hits)
+
+        if all_close and len(valid_hits) >= 3:
+            # Check wall continuity between adjacent valid hits
+            continuous_count = 0
+            for i in range(len(valid_hits) - 1):
+                if trace_wall_continuous(valid_hits[i], valid_hits[i+1]):
+                    continuous_count += 1
+
+            # Mostly continuous (at least half the segments)
+            if continuous_count >= len(valid_hits) // 2:
                 is_dead_end = True
 
     dead_ends.append('1' if is_dead_end else '0')
@@ -2503,11 +2508,13 @@ rclpy.shutdown()
             right_dead_end = dead_ends[11] and dead_ends[10]
 
             # Penalize dead-ends: mark as not OK even if physically clear
-            if front_dead_end and front_explore < 0.1:  # Front is dead-end with nothing to explore
+            # Don't require low exploration score - if it's a dead-end, avoid it
+            if front_dead_end:
                 front_ok = False
-            if left_dead_end and left_explore < 0.1:
+                print(f"[DEAD-END] Front blocked by map")
+            if left_dead_end:
                 left_ok = False
-            if right_dead_end and right_explore < 0.1:
+            if right_dead_end:
                 right_ok = False
 
             # Auto-centering logic: steer toward unexplored areas + navigable paths
