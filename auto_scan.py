@@ -1935,11 +1935,10 @@ height = map_msg.info.height
 data = map_msg.data
 
 # Check each sector for dead-ends
-# A TRUE dead-end requires: walls on left, center, AND right rays that are CONNECTED
-# This prevents false positives from scattered obstacles
+# A TRUE dead-end requires a CONTINUOUS wall barrier with NO GAPS
+# We trace between wall hits to verify the wall is solid
 dead_ends = []
 CHECK_DIST = 1.5  # Check up to 1.5m ahead
-CONNECT_DIST = 0.3  # Max distance between wall hits to be considered connected
 
 def find_wall_hit(angle, max_dist):
     # Ray-cast to find first wall hit. Returns (x, y, dist) or None
@@ -1954,36 +1953,79 @@ def find_wall_hit(angle, max_dist):
             cell_val = data[gy * width + gx]
             if cell_val >= 50:  # Wall
                 return (px, py, dist)
-            elif cell_val == -1:  # Unknown - not a dead-end
+            elif cell_val == -1:  # Unknown - NOT a dead-end (unexplored!)
                 return None
     return None
 
-def walls_connected(hit1, hit2):
-    # Check if two wall hits are close enough to be part of same wall
+def trace_wall_continuous(hit1, hit2):
+    # Trace between two wall hits and check if wall is CONTINUOUS (no gaps)
+    # Returns True only if every point along the line is a wall
     if hit1 is None or hit2 is None:
         return False
-    dx = hit1[0] - hit2[0]
-    dy = hit1[1] - hit2[1]
-    return math.sqrt(dx*dx + dy*dy) < CONNECT_DIST
+
+    # Sample points along the line between hit1 and hit2
+    dx = hit2[0] - hit1[0]
+    dy = hit2[1] - hit1[1]
+    dist = math.sqrt(dx*dx + dy*dy)
+
+    if dist < 0.05:  # Very close, consider connected
+        return True
+
+    # Check every ~5cm along the line
+    num_samples = max(3, int(dist / 0.05))
+    wall_count = 0
+    gap_count = 0
+
+    for i in range(num_samples + 1):
+        t = i / num_samples
+        px = hit1[0] + t * dx
+        py = hit1[1] + t * dy
+
+        gx = int((px - origin_x) / res)
+        gy = int((py - origin_y) / res)
+
+        if 0 <= gx < width and 0 <= gy < height:
+            cell_val = data[gy * width + gx]
+            if cell_val >= 50:  # Wall
+                wall_count += 1
+            elif cell_val == -1:  # Unknown = potential escape route
+                return False  # Gap in wall - NOT a dead end!
+            else:  # Free space
+                gap_count += 1
+
+    # Wall is continuous if mostly walls and very few gaps
+    # Allow small gaps (1-2 cells) due to map noise
+    total = wall_count + gap_count
+    if total > 0 and gap_count <= 2 and wall_count >= total * 0.7:
+        return True
+    return False
 
 for sector in range(12):
     sector_angle = sector * (math.pi / 6)
     map_angle = robot_yaw + sector_angle
 
-    # Cast 3 rays: left (-15 deg), center, right (+15 deg)
-    left_hit = find_wall_hit(map_angle - 0.26, CHECK_DIST)   # ~15 degrees left
-    center_hit = find_wall_hit(map_angle, CHECK_DIST)
-    right_hit = find_wall_hit(map_angle + 0.26, CHECK_DIST)  # ~15 degrees right
+    # Cast 5 rays to better cover the sector width (~30 degrees)
+    angles = [
+        map_angle - 0.20,  # ~12 deg left
+        map_angle - 0.10,  # ~6 deg left
+        map_angle,         # center
+        map_angle + 0.10,  # ~6 deg right
+        map_angle + 0.20,  # ~12 deg right
+    ]
 
-    # Dead-end ONLY if all 3 rays hit walls AND they're connected (continuous barrier)
+    hits = [find_wall_hit(a, CHECK_DIST) for a in angles]
+
+    # Dead-end requires ALL rays to hit walls AND walls to be continuous
     is_dead_end = False
-    if left_hit and center_hit and right_hit:
-        # Check if left-center and center-right walls are connected
-        left_center_connected = walls_connected(left_hit, center_hit)
-        center_right_connected = walls_connected(center_hit, right_hit)
+    if all(h is not None for h in hits):
+        # Check that wall is continuous between adjacent hits
+        continuous = True
+        for i in range(len(hits) - 1):
+            if not trace_wall_continuous(hits[i], hits[i+1]):
+                continuous = False
+                break
 
-        # Must form a continuous wall (U-shape blocking path)
-        if left_center_connected and center_right_connected:
+        if continuous:
             is_dead_end = True
 
     dead_ends.append('1' if is_dead_end else '0')
