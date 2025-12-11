@@ -35,6 +35,13 @@ from dataclasses import dataclass
 import json
 import os
 
+# Optional sensor logging for two-phase mapping
+try:
+    from mapping.robot.sensor_logger import SensorLogger
+    HAS_SENSOR_LOGGER = True
+except ImportError:
+    HAS_SENSOR_LOGGER = False
+
 # Try to import numpy for VFH smoothing, fall back to pure Python if not available
 try:
     import numpy as np
@@ -928,11 +935,18 @@ class SectorObstacleAvoider:
     """
 
     def __init__(self, linear_speed: float = 0.04, min_distance: float = 0.45,
-                 duration: float = 60.0, clear_visited: bool = False, use_vfh: bool = False):
+                 duration: float = 60.0, clear_visited: bool = False, use_vfh: bool = False,
+                 log_sensors: bool = False, log_output_dir: str = "/tmp/exploration_data"):
         # Cap max speed at 0.10 m/s - rf2o odometry overestimates at higher speeds
         # causing mismatch between RViz display and actual robot position
         self.linear_speed = min(linear_speed, 0.10)
         self.use_vfh = use_vfh  # Use VFH algorithm with state machine
+
+        # Sensor logging for two-phase mapping
+        self.log_sensors = log_sensors and HAS_SENSOR_LOGGER
+        self.sensor_logger: Optional[SensorLogger] = None
+        if self.log_sensors:
+            self.sensor_logger = SensorLogger(output_dir=log_output_dir)
         # Reduced min distance to 0.35m floor (robot is ~17cm wide, need clearance)
         self.min_distance = max(min_distance, 0.35)
         # LiDAR threshold = min_distance + LiDAR offset from robot front
@@ -3240,6 +3254,8 @@ rclpy.shutdown()
         print(f"Motion smooth:   Continuous thread @30Hz + EMA(α={self.ema_alpha})")
         print(f"Algorithm:       {'VFH + State Machine' if self.use_vfh else 'Sector-based discrete'}")
         print(f"Dead-end detect: Enabled (skip 3+ blocked directions)")
+        if self.log_sensors and self.sensor_logger:
+            print(f"Sensor logging: Enabled (for offline mapping)")
         print("-"*60)
         print("Controls:")
         print("  SPACE/s  - Emergency stop")
@@ -3247,6 +3263,12 @@ rclpy.shutdown()
         print("  r        - Resume after stop")
         print("  q        - Quit")
         print("="*60 + "\n")
+
+        # Start sensor logging if enabled
+        sensor_log_dir = None
+        if self.log_sensors and self.sensor_logger:
+            sensor_log_dir = self.sensor_logger.start()
+            print(f"[LOGGER] Recording sensors to: {sensor_log_dir}")
 
         self.keyboard.start()
         # Initialize smoothing state to target speed for immediate start (no ramp-up)
@@ -3307,6 +3329,11 @@ rclpy.shutdown()
                     if is_new:
                         stats = self.visited_tracker.get_coverage_stats()
                         print(f"\n[EXPLORE] New cell! Total: {stats['cells_visited']} cells, {stats['area_covered']:.1f}m²")
+
+                    # Log sensor data for offline mapping (reuses already-fetched data)
+                    if self.log_sensors and self.sensor_logger:
+                        self.sensor_logger.log_scan_sync(self.scan_ranges)
+                        self.sensor_logger.log_odom_sync(pos[0], pos[1])
 
                     # Check for dead-end at current position
                     if self.is_dead_end():
@@ -3395,6 +3422,10 @@ rclpy.shutdown()
             self.keyboard.stop()
             self.running = False
 
+            # Stop sensor logging
+            if self.log_sensors and self.sensor_logger:
+                log_stats = self.sensor_logger.stop()
+
             # Save visited locations for next run
             self.visited_tracker.save()
 
@@ -3415,6 +3446,12 @@ rclpy.shutdown()
             print(f"  Area covered:     {stats['area_covered']:.2f} m²")
             print(f"  Total visits:     {stats.get('total_visits', 0)}")
             print(f"  Revisit rate:     {stats.get('revisit_rate', 0)*100:.1f}%")
+            if self.log_sensors and self.sensor_logger and sensor_log_dir:
+                print("-"*60)
+                print("SENSOR LOGGING:")
+                print(f"  Output dir:       {sensor_log_dir}")
+                print(f"  Scans recorded:   {log_stats.get('scan_count', 0)}")
+                print(f"  Odom recorded:    {log_stats.get('odom_count', 0)}")
             print("="*60)
 
 
@@ -3593,6 +3630,10 @@ Algorithm:
                         help='Test front sector calibration (place obstacle in front)')
     parser.add_argument('--vfh', action='store_true',
                         help='Use VFH algorithm with state machine (smoother navigation)')
+    parser.add_argument('--log-sensors', '-l', action='store_true',
+                        help='Enable sensor logging for offline mapping')
+    parser.add_argument('--log-dir', type=str, default='/tmp/exploration_data',
+                        help='Output directory for sensor logs (default: /tmp/exploration_data)')
     args = parser.parse_args()
 
     if not check_prerequisites():
@@ -3609,7 +3650,9 @@ Algorithm:
         min_distance=args.min_dist,
         duration=args.duration,
         clear_visited=args.clear_visited,
-        use_vfh=args.vfh
+        use_vfh=args.vfh,
+        log_sensors=args.log_sensors,
+        log_output_dir=args.log_dir
     )
 
     # Run calibration test if requested
