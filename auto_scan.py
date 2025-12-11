@@ -2126,6 +2126,93 @@ rclpy.shutdown()
         else:
             return (sector - 12) * (math.pi / 6)  # -π to 0
 
+    def find_frontier_direction(self) -> Tuple[Optional[int], float]:
+        """
+        FRONTIER-BASED EXPLORATION: Find the direction with most unexplored space.
+
+        Simple rule: Go where LiDAR sees the FARTHEST!
+        - Farthest LiDAR reading = unexplored open space = go there!
+        - Short LiDAR reading = wall/obstacle = don't go there
+
+        This naturally:
+        - Avoids dead-ends (short readings)
+        - Seeks unexplored areas (long readings)
+        - Completes when everywhere has short readings (walls)
+
+        Returns: (best_sector, frontier_score) or (None, 0) if all blocked
+        """
+        best_sector = None
+        best_score = 0.0
+
+        for sector in range(NUM_SECTORS):
+            dist = self.sector_distances[sector]
+
+            # Skip blind spots (sensor noise)
+            if dist < 0.1:
+                continue
+
+            # Skip blocked directions
+            if dist < self.lidar_min_distance:
+                continue
+
+            # FRONTIER SCORE: How far can we see?
+            # Farther = more unexplored = higher score!
+            # Cap at 3m for scoring (beyond that is equally good)
+            frontier_score = min(dist / 3.0, 1.0)
+
+            # FORWARD BONUS: When scores are similar, prefer forward
+            # This gives more natural movement instead of spinning
+            if sector in [0, 1, 11]:  # Front sectors
+                frontier_score += 0.15
+            elif sector in [2, 10]:  # Front-side sectors
+                frontier_score += 0.05
+
+            if frontier_score > best_score:
+                best_score = frontier_score
+                best_sector = sector
+
+        return best_sector, best_score
+
+    def get_frontier_visualization(self) -> str:
+        """
+        Create a visual representation of frontier scores for each sector.
+        █ = unexplored (far), ▒ = partial, ░ = explored (close), X = blocked
+        """
+        viz = []
+        for sector in range(NUM_SECTORS):
+            dist = self.sector_distances[sector]
+            if dist < 0.1:
+                viz.append('?')  # Blind spot
+            elif dist < self.lidar_min_distance:
+                viz.append('X')  # Blocked
+            elif dist > 2.0:
+                viz.append('█')  # Far = unexplored frontier!
+            elif dist > 1.0:
+                viz.append('▒')  # Medium
+            else:
+                viz.append('░')  # Close = explored
+        return ''.join(viz)
+
+    def is_exploration_complete(self) -> bool:
+        """
+        Check if all reachable areas have been explored.
+
+        Exploration is complete when:
+        - No direction has a long LiDAR reading (>2m)
+        - All directions are either blocked or show nearby walls
+
+        This means we've seen everything we can reach.
+        """
+        for sector in range(NUM_SECTORS):
+            dist = self.sector_distances[sector]
+            # Skip blind spots
+            if dist < 0.1:
+                continue
+            # If any direction has open space (>2m), keep exploring
+            if dist > 2.0:
+                return False
+        return True
+
     def find_best_direction(self) -> Tuple[int, float]:
         """
         VFH-inspired algorithm: Find the best direction using a cost function.
@@ -2500,124 +2587,65 @@ rclpy.shutdown()
             # Key: steer toward a direction that allows movement (above threshold)
             # Not necessarily the clearest - just any viable path
 
-            # Check front arc clearances
-            left_arc = min(self.sector_distances[1], self.sector_distances[2])
-            right_arc = min(self.sector_distances[11], self.sector_distances[10])
-            front = self.sector_distances[0]
+            # =================================================================
+            # FRONTIER-BASED EXPLORATION: Go where LiDAR sees farthest!
+            # Simple rule: Farthest = unexplored = go there!
+            # =================================================================
 
-            # ADAPTIVE SPEED: Slow down near obstacles for tighter maneuvering
-            # Use minimum distance in front arc for speed calculation
-            linear = self.compute_adaptive_speed(front_arc_min)
-
-            # Determine which directions are navigable (above dynamic threshold)
-            front_ok = front >= dynamic_min_dist
-            left_ok = left_arc >= dynamic_min_dist
-            right_ok = right_arc >= dynamic_min_dist
-
-            # Get exploration scores to prefer unexplored areas
-            map_scores = self.get_map_exploration_scores()
-            left_explore = max(map_scores[1], map_scores[2], map_scores[3])
-            right_explore = max(map_scores[10], map_scores[11], map_scores[9])
-            front_explore = max(map_scores[0], map_scores[11], map_scores[1])
-
-            # Use pre-computed dead-end info from state transition logic above
-            # (dead_ends already fetched at start of state machine section)
-            front_dead_end = map_front_dead_end
-            left_dead_end = map_left_dead_end
-            right_dead_end = map_right_dead_end
-
-            # Penalize dead-ends: mark as not OK even if physically clear
-            # Don't require low exploration score - if it's a dead-end, avoid it
-            if front_dead_end:
-                front_ok = False
-                print(f"[DEAD-END] Front blocked by map")
-            if left_dead_end:
-                left_ok = False
-            if right_dead_end:
-                right_ok = False
-
-            # Auto-centering logic: steer toward unexplored areas + navigable paths
-            # AVOID dead-ends even if they appear clear
-            if front_ok and left_ok and right_ok:
-                # All clear - steer toward UNEXPLORED area (exploration-driven)
-                # But penalize dead-ends heavily
-                explore_balance = left_explore - right_explore  # Positive = left more unexplored
-
-                # Apply dead-end penalties
-                if left_dead_end:
-                    explore_balance -= 0.5  # Penalize left
-                if right_dead_end:
-                    explore_balance += 0.5  # Penalize right (boost left)
-                if front_dead_end:
-                    # Front is dead-end - steer away from it
-                    if left_explore > right_explore and not left_dead_end:
-                        explore_balance += 0.3
-                    elif not right_dead_end:
-                        explore_balance -= 0.3
-
-                clearance_balance = left_arc - right_arc  # Positive = left more open
-
-                # Combined: exploration weighted higher than clearance
-                combined_balance = explore_balance * 2.0 + clearance_balance * 0.5
-
-                if abs(combined_balance) > 0.15:
-                    max_correction = 0.20  # Moderate correction toward exploration
-                    angular = max(-max_correction, min(max_correction, combined_balance * 0.3))
-                else:
-                    angular = 0.0
-            elif front_ok:
-                # Front clear but one side blocked - steer gently away from blocked side
-                # Also consider dead-ends
-                if left_ok and not right_ok and not left_dead_end:
-                    angular = 0.1  # Gentle left
-                elif right_ok and not left_ok and not right_dead_end:
-                    angular = -0.1  # Gentle right
-                elif front_dead_end:
-                    # Front is dead-end, pick best side
-                    if left_ok and not left_dead_end:
-                        angular = 0.2
-                    elif right_ok and not right_dead_end:
-                        angular = -0.2
-                    else:
-                        angular = 0.0
-                else:
-                    angular = 0.0
-            elif left_ok and not right_ok:
-                # Only left is navigable - steer left (if not dead-end)
-                angular = 0.25 if not left_dead_end else 0.0
-            elif right_ok and not left_ok:
-                # Only right is navigable - steer right (if not dead-end)
-                angular = -0.25 if not right_dead_end else 0.0
-            elif left_ok and right_ok:
-                # Both sides navigable but not front - pick by exploration then clearance
-                # Avoid dead-ends
-                left_score = left_explore - (0.5 if left_dead_end else 0)
-                right_score = right_explore - (0.5 if right_dead_end else 0)
-
-                if abs(left_score - right_score) > 0.1:
-                    angular = 0.3 if left_score > right_score else -0.3
-                elif left_arc > right_arc:
-                    angular = 0.3
-                else:
-                    angular = -0.3
-            else:
-                # Nothing navigable ahead - STOP and FORCE BACKUP
-                # Don't drive into dead-ends or blocked areas
+            # Check if exploration is complete
+            if self.is_exploration_complete():
+                print(f"\n[COMPLETE] All reachable areas explored!")
+                linear = 0.0
                 angular = 0.0
-                linear = 0.0  # Critical: stop moving forward!
+                self.transition_state(RobotState.STOPPED)
 
-                # Force immediate state change to BACKING_UP
-                print(f"\n[BLOCKED] All directions blocked/dead-end! Forcing backup")
+            # Find the frontier (direction with most unexplored space)
+            frontier_sector, frontier_score = self.find_frontier_direction()
+
+            if frontier_sector is None:
+                # All directions blocked - will be handled by else branch below
+                linear = 0.0
+                angular = 0.0
+            elif frontier_sector == 0:
+                # Frontier is straight ahead - go forward!
+                linear = self.compute_adaptive_speed(front_arc_min)
+                angular = 0.0
+            elif frontier_sector in [1, 11]:
+                # Frontier is slightly to the side - gentle curve
+                linear = self.compute_adaptive_speed(front_arc_min)
+                angular = 0.15 if frontier_sector == 1 else -0.15
+            elif frontier_sector in [2, 10]:
+                # Frontier is more to the side - sharper curve
+                linear = self.compute_adaptive_speed(front_arc_min) * 0.8
+                angular = 0.25 if frontier_sector == 2 else -0.25
+            elif frontier_sector in [3, 9]:
+                # Frontier is to the side - turn while moving slowly
+                linear = self.compute_adaptive_speed(front_arc_min) * 0.5
+                angular = 0.35 if frontier_sector == 3 else -0.35
+            else:
+                # Frontier is behind (sectors 4-8) - need to turn around
+                # Stop forward motion and turn toward frontier
+                linear = 0.0
+                if frontier_sector <= 6:
+                    angular = 0.5  # Turn left
+                else:
+                    angular = -0.5  # Turn right
+
+            # Safety check: if no frontier found (all blocked), force backup
+            if frontier_sector is None:
+                print(f"\n[BLOCKED] No frontier found - all directions blocked!")
                 self.state_context.consecutive_avoidances += 1
-                # Bypass min_state_duration by resetting start time
                 self.state_context.state_start_time = 0
                 self.transition_state(RobotState.BACKING_UP)
 
             self.emergency_maneuver = False
-            nav_str = f"{'L' if left_ok else '.'}{'F' if front_ok else '.'}{'R' if right_ok else '.'}"
-            dead_str = f"{'L' if left_dead_end else '.'}{'F' if front_dead_end else '.'}{'R' if right_dead_end else '.'}"
+
+            # Show frontier visualization
+            frontier_viz = self.get_frontier_visualization()
+            front_dist = self.sector_distances[0]
             speed_pct = int(100 * linear / self.linear_speed) if self.linear_speed > 0 else 100
-            status = f"[FWD] f={front:.2f} L={left_arc:.2f} R={right_arc:.2f} nav={nav_str} dead={dead_str} spd={speed_pct}%"
+            target_str = f"s{frontier_sector}" if frontier_sector is not None else "NONE"
+            status = f"[EXPLORE] f={front_dist:.2f}m [{frontier_viz}] target={target_str} spd={speed_pct}%"
 
             # Clear avoidance state
             if self.avoidance_direction is not None:
