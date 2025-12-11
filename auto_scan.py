@@ -3280,6 +3280,7 @@ rclpy.shutdown()
                 # Periodic RF2O health check (every 30s) - prevents EKF from going slow
                 if time.time() - last_rf2o_check > 30:
                     check_rf2o_health()
+                    ensure_slam_running()  # Also check SLAM is still running
                     last_rf2o_check = time.time()
 
                 # Skip ALL processing if a maneuver is in progress
@@ -3415,6 +3416,44 @@ rclpy.shutdown()
             print(f"  Total visits:     {stats.get('total_visits', 0)}")
             print(f"  Revisit rate:     {stats.get('revisit_rate', 0)*100:.1f}%")
             print("="*60)
+
+
+def ensure_slam_running():
+    """Check if SLAM is running and publishing map, restart if needed"""
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    ensure_slam_script = os.path.join(script_dir, 'ensure_slam.sh')
+
+    if os.path.exists(ensure_slam_script):
+        print("Checking SLAM status...")
+        result = subprocess.run(
+            [ensure_slam_script, '--check'],
+            capture_output=True, text=True,
+            timeout=30
+        )
+        print(result.stdout.strip())
+        return result.returncode == 0
+    else:
+        # Fallback: basic check
+        try:
+            result = subprocess.run(
+                ['docker', 'exec', CONTAINER_NAME, 'pgrep', '-f', 'slam_toolbox'],
+                capture_output=True, text=True, timeout=5
+            )
+            if result.returncode != 0:
+                print("SLAM not running, starting...")
+                subprocess.Popen(
+                    ['docker', 'exec', '-d', CONTAINER_NAME, 'bash', '-c',
+                     'source /opt/ros/humble/setup.bash && '
+                     'source /root/ugv_ws/install/setup.bash && '
+                     'ros2 launch slam_toolbox online_async_launch.py > /tmp/slam.log 2>&1'],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL
+                )
+                time.sleep(5)
+            return True
+        except Exception as e:
+            print(f"SLAM check failed: {e}")
+            return False
 
 
 def check_prerequisites():
@@ -3561,6 +3600,9 @@ Algorithm:
 
     # Start motor driver if needed
     start_driver()
+
+    # Ensure SLAM is running and publishing map
+    ensure_slam_running()
 
     avoider = SectorObstacleAvoider(
         linear_speed=args.speed,
