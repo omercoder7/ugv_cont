@@ -1824,9 +1824,13 @@ for sector in range(12):
 
     unknown_count = 0
     total_count = 0
+    hit_obstacle = False
 
     # Sample points along ray from 0.5m to 2m
+    # STOP if we hit an obstacle - don't count unknown cells behind walls!
     for dist in [0.5, 0.8, 1.0, 1.3, 1.6, 2.0]:
+        if hit_obstacle:
+            break
         px = robot_x + dist * math.cos(map_angle)
         py = robot_y + dist * math.sin(map_angle)
 
@@ -1839,6 +1843,8 @@ for sector in range(12):
             total_count += 1
             if cell_val == -1:  # Unknown
                 unknown_count += 1
+            elif cell_val >= 50:  # Occupied cell - stop here!
+                hit_obstacle = True
 
     # Score: ratio of unknown cells
     if total_count > 0:
@@ -2139,10 +2145,16 @@ rclpy.shutdown()
         - Seeks unexplored areas (long readings)
         - Completes when everywhere has short readings (walls)
 
+        SAFETY: Requires good clearance beyond minimum distance.
+        Robot must also physically fit in the chosen direction.
+
         Returns: (best_sector, frontier_score) or (None, 0) if all blocked
         """
         best_sector = None
         best_score = 0.0
+
+        # Safety margin beyond minimum distance - don't go toward barely-passable areas
+        SAFETY_MARGIN = 0.3  # Extra buffer beyond min distance
 
         for sector in range(NUM_SECTORS):
             dist = self.sector_distances[sector]
@@ -2151,8 +2163,14 @@ rclpy.shutdown()
             if dist < 0.1:
                 continue
 
-            # Skip blocked directions
-            if dist < self.lidar_min_distance:
+            # Skip blocked directions - with safety margin!
+            # Don't consider directions where robot will immediately need to avoid
+            if dist < self.lidar_min_distance + SAFETY_MARGIN:
+                continue
+
+            # Skip directions where robot won't physically fit
+            if not self.vfh.robot_fits_in_direction(sector, self.sector_distances,
+                                                     ROBOT_HALF_WIDTH, self.lidar_min_distance):
                 continue
 
             # FRONTIER SCORE: How far can we see?
@@ -2231,13 +2249,14 @@ rclpy.shutdown()
         Returns (best_sector, best_score)
         """
         # Weights (inspired by VFH + frontier exploration)
+        # SAFETY FIRST: Openness is critical to avoid obstacles
         TARGET_WEIGHT = 1.0       # Slight preference for forward direction
-        OPENNESS_WEIGHT = 1.5     # Prefer open directions (reduced - space_freedom is better)
+        OPENNESS_WEIGHT = 6.0     # INCREASED: This is immediate safety - avoid obstacles!
         FREEDOM_WEIGHT = 4.0      # STRONGLY prefer unconstrained directions (avoid corners!)
-        MAP_EXPLORE_WEIGHT = 8.0  # DOUBLED: Strongly prefer unexplored map areas
+        MAP_EXPLORE_WEIGHT = 2.0  # REDUCED: Exploration is secondary to safety
         PREVIOUS_WEIGHT = 1.0     # Smooth trajectory (reduce oscillation)
-        UNVISITED_WEIGHT = 0.5    # Reduced: local tracking less important than map exploration
-        FULLY_EXPLORED_PENALTY = 5.0  # Heavy penalty for fully-mapped directions
+        UNVISITED_WEIGHT = 0.5    # Local tracking less important than map exploration
+        FULLY_EXPLORED_PENALTY = 3.0  # Reduced: was too aggressive with Fix 1
 
         best_sector = 0
         best_score = -999
@@ -2263,6 +2282,11 @@ rclpy.shutdown()
 
             # Skip sectors that led to being stuck (invisible obstacles)
             if sector in self.blocked_sectors:
+                continue
+
+            # Skip directions where robot won't physically fit
+            if not self.vfh.robot_fits_in_direction(sector, self.sector_distances,
+                                                     ROBOT_HALF_WIDTH, self.lidar_min_distance):
                 continue
 
             # Calculate angle from front (0 = front, ±π = back)
