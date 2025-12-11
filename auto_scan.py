@@ -103,7 +103,7 @@ WHEEL_ENCODER_STUCK_TIME = 0.3  # Seconds of no encoder change to trigger stuck 
 
 # Adaptive speed control constants
 # Robot slows down as it approaches obstacles for tighter maneuvering
-SPEED_SCALE_FAR_DISTANCE = 1.0    # Distance (m) at which robot runs at full speed
+SPEED_SCALE_FAR_DISTANCE = 1.5    # Distance (m) at which robot runs at full speed (increased for earlier slowdown)
 SPEED_SCALE_NEAR_DISTANCE = 0.5   # Distance (m) at which robot runs at minimum speed
 SPEED_SCALE_MIN_FACTOR = 0.4      # Minimum speed factor (40% of linear_speed)
 
@@ -2144,19 +2144,25 @@ rclpy.shutdown()
         """
         FRONTIER-BASED EXPLORATION: Find the direction with most unexplored space.
 
-        Simple rule: Go where LiDAR sees the FARTHEST!
-        - Farthest LiDAR reading = unexplored open space = go there!
-        - Short LiDAR reading = wall/obstacle = don't go there
+        Combines multiple signals:
+        1. LiDAR distance: Farthest = more open space
+        2. Map exploration: Unknown cells = unexplored frontier
+        3. Obstacle density: Fewer obstacles = easier path
 
         This naturally:
-        - Avoids dead-ends (short readings)
-        - Seeks unexplored areas (long readings)
+        - Avoids dead-ends (short readings, low map scores)
+        - Seeks unexplored areas (long readings, high map scores)
+        - Prefers obstacle-sparse paths (higher map exploration scores)
         - Completes when everywhere has short readings (walls)
 
         Returns: (best_sector, frontier_score) or (None, 0) if all blocked
         """
         best_sector = None
         best_score = 0.0
+
+        # Get map-based scores for obstacle density / exploration
+        map_scores = self.get_map_exploration_scores()
+        dead_ends = self.get_dead_end_sectors()
 
         for sector in range(NUM_SECTORS):
             dist = self.sector_distances[sector]
@@ -2169,10 +2175,23 @@ rclpy.shutdown()
             if dist < self.lidar_min_distance:
                 continue
 
+            # Skip dead-ends detected from map
+            if dead_ends[sector]:
+                continue
+
             # FRONTIER SCORE: How far can we see?
             # Farther = more unexplored = higher score!
             # Cap at 3m for scoring (beyond that is equally good)
-            frontier_score = min(dist / 3.0, 1.0)
+            lidar_score = min(dist / 3.0, 1.0)
+
+            # MAP EXPLORATION SCORE: Prefer directions with unknown/free cells
+            # High score = more unknown cells = unexplored frontier!
+            # This helps avoid obstacle-dense areas
+            map_score = map_scores[sector]  # 0.0-1.0
+
+            # COMBINED SCORE: Weight LiDAR and map equally
+            # LiDAR gives immediate obstacle info, map gives exploration info
+            frontier_score = 0.5 * lidar_score + 0.5 * map_score
 
             # FORWARD BONUS: When scores are similar, prefer forward
             # This gives more natural movement instead of spinning
@@ -2452,7 +2471,7 @@ rclpy.shutdown()
         else:
             # OPEN SPACE: More conservative threshold
             dynamic_min_dist = self.lidar_min_distance
-            DANGER_DISTANCE = self.lidar_min_distance + 0.20  # Start avoiding earlier (was 0.10)
+            DANGER_DISTANCE = self.lidar_min_distance + 0.30  # Start avoiding earlier (was 0.20, ~1.12m total)
 
         # Update state context
         self.update_state_context(
