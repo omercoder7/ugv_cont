@@ -100,7 +100,7 @@ MIN_CORRIDOR_WIDTH = ROBOT_WIDTH + 0.10  # 28cm - robot width + 10cm clearance
 # Wheel encoder stuck detection constants
 # If wheels should be moving but encoder delta is below threshold, robot is stuck
 WHEEL_ENCODER_STUCK_THRESHOLD = 0.05  # Minimum encoder change expected when moving
-WHEEL_ENCODER_STUCK_TIME = 0.3  # Seconds of no encoder change to trigger stuck (reduced for faster response)
+WHEEL_ENCODER_STUCK_TIME = 0.2  # Seconds of no encoder change to trigger stuck (lowered for faster response)
 
 # Adaptive speed control constants
 # Robot slows down as it approaches obstacles for tighter maneuvering
