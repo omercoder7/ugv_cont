@@ -97,6 +97,12 @@ ROBOT_HALF_WIDTH = ROBOT_WIDTH / 2  # 0.09m - for corridor width checking
 # Minimum corridor width the robot can fit through
 MIN_CORRIDOR_WIDTH = ROBOT_WIDTH + 0.10  # 28cm - robot width + 10cm clearance
 
+# Safe turning clearance - minimum front distance needed to safely turn in place
+# Robot needs enough space in front to turn without hitting obstacles
+# This is used by BACKING_UP state to know when to stop backing and start turning
+SAFE_TURN_CLEARANCE = 0.45  # 45cm - enough space to turn safely
+MAX_BACKUP_TIME = 3.0  # Maximum backup duration (safety limit)
+
 # Wheel encoder stuck detection constants
 # If wheels should be moving but encoder delta is below threshold, robot is stuck
 WHEEL_ENCODER_STUCK_THRESHOLD = 0.05  # Minimum encoder change expected when moving
@@ -1773,6 +1779,14 @@ class SectorObstacleAvoider:
         self.front_distance_unchanged_count = 0  # How many times front distance didn't change
         self.stuck_position = None  # Position where we got stuck (for virtual obstacle)
 
+        # Virtual obstacle tracking - stores invisible obstacles the robot has encountered
+        # Each entry is (x, y, timestamp, confidence)
+        # These are used to adjust clearance calculations when lidar shows clear but robot knows there's something
+        self.virtual_obstacles: List[Tuple[float, float, float, int]] = []
+        self.virtual_obstacle_radius = 0.25  # How far to stay from virtual obstacles (25cm)
+        self.virtual_obstacle_max_age = 300.0  # Forget virtual obstacles after 5 minutes
+        self.virtual_obstacle_max_count = 20  # Maximum stored virtual obstacles
+
         # Wheel encoder stuck detection
         self.prev_wheel_encoders = None  # Previous (left, right) encoder values
         self.wheel_encoder_stuck_start = None  # Time when encoder stopped changing
@@ -2427,6 +2441,83 @@ print('Published virtual obstacle at {x:.2f}, {y:.2f}')
             print(f"\n[OBSTACLE] Marked virtual obstacle at ({x:.2f}, {y:.2f})")
         except Exception as e:
             print(f"\nFailed to publish virtual obstacle: {e}")
+
+    def add_virtual_obstacle(self, x: float, y: float):
+        """
+        Add a virtual obstacle at the given position.
+        Called when robot gets stuck but lidar shows clear path.
+        """
+        now = time.time()
+
+        # Check if there's already a virtual obstacle nearby (avoid duplicates)
+        for i, (ox, oy, ts, conf) in enumerate(self.virtual_obstacles):
+            dist = math.sqrt((x - ox)**2 + (y - oy)**2)
+            if dist < 0.3:  # Within 30cm - update existing
+                # Increase confidence and update timestamp
+                self.virtual_obstacles[i] = (ox, oy, now, min(conf + 1, 5))
+                print(f"\n[VIRTUAL-OBS] Reinforced obstacle at ({ox:.2f}, {oy:.2f}), conf={conf+1}")
+                return
+
+        # Add new virtual obstacle
+        self.virtual_obstacles.append((x, y, now, 1))
+        print(f"\n[VIRTUAL-OBS] Added new obstacle at ({x:.2f}, {y:.2f})")
+
+        # Limit total count
+        if len(self.virtual_obstacles) > self.virtual_obstacle_max_count:
+            # Remove oldest
+            self.virtual_obstacles.sort(key=lambda o: o[2])  # Sort by timestamp
+            self.virtual_obstacles = self.virtual_obstacles[-self.virtual_obstacle_max_count:]
+
+        # Also publish for visualization
+        self.publish_virtual_obstacle(x, y)
+
+    def cleanup_virtual_obstacles(self):
+        """Remove old virtual obstacles"""
+        now = time.time()
+        self.virtual_obstacles = [
+            (x, y, ts, conf) for x, y, ts, conf in self.virtual_obstacles
+            if now - ts < self.virtual_obstacle_max_age
+        ]
+
+    def get_virtual_obstacle_clearance(self, robot_x: float, robot_y: float, robot_heading: float) -> float:
+        """
+        Get the minimum clearance to any virtual obstacle in front of the robot.
+        Returns the distance to the nearest virtual obstacle in the front arc,
+        or a large value if no virtual obstacles are in the way.
+        """
+        if not self.virtual_obstacles or robot_x is None:
+            return float('inf')
+
+        min_clearance = float('inf')
+
+        for ox, oy, ts, conf in self.virtual_obstacles:
+            # Calculate relative position
+            dx = ox - robot_x
+            dy = oy - robot_y
+            dist = math.sqrt(dx*dx + dy*dy)
+
+            if dist < 0.1:  # Too close to matter
+                continue
+
+            # Check if obstacle is in front of robot (within ±60 degrees)
+            angle_to_obs = math.atan2(dy, dx)
+            angle_diff = angle_to_obs - robot_heading
+
+            # Normalize to [-pi, pi]
+            while angle_diff > math.pi:
+                angle_diff -= 2 * math.pi
+            while angle_diff < -math.pi:
+                angle_diff += 2 * math.pi
+
+            # Check if in front arc (±60 degrees = ±1.05 radians)
+            if abs(angle_diff) < 1.05:
+                # Virtual obstacle is in front - consider it
+                # Subtract obstacle radius to get clearance
+                clearance = dist - self.virtual_obstacle_radius
+                if clearance < min_clearance:
+                    min_clearance = clearance
+
+        return min_clearance
 
     def get_imu_acceleration(self) -> Optional[float]:
         """Get current linear acceleration magnitude from IMU"""
@@ -3516,11 +3607,26 @@ rclpy.shutdown()
                     self.transition_state(RobotState.FORWARD)
 
         elif self.robot_state == RobotState.BACKING_UP:
-            # From BACKING_UP: execute backup maneuver, then turn
-            # INCREASED: 0.8s -> 1.2s for longer backup distance when stuck
-            if time_in_state < 1.2:  # Still backing up
-                pass  # Continue backup (handled below)
-            else:
+            # From BACKING_UP: back up until we have enough clearance to turn safely
+            # Instead of fixed time, check front distance to know when to stop
+
+            # Check if we have enough clearance in front to turn safely
+            has_turn_clearance = front_arc_min >= SAFE_TURN_CLEARANCE
+
+            # Safety limit: don't backup forever
+            exceeded_max_time = time_in_state >= MAX_BACKUP_TIME
+
+            # Minimum backup time before checking clearance (let robot start moving first)
+            MIN_BACKUP_TIME = 0.3
+            past_minimum = time_in_state >= MIN_BACKUP_TIME
+
+            if past_minimum and has_turn_clearance:
+                # We have enough clearance - stop backing up and start turning
+                print(f"\n[BACKUP-DONE] Clearance reached: {front_arc_min:.2f}m >= {SAFE_TURN_CLEARANCE:.2f}m (took {time_in_state:.1f}s)")
+                self.transition_state(RobotState.TURNING)
+            elif exceeded_max_time:
+                # Safety limit reached - stop backing even without full clearance
+                print(f"\n[BACKUP-TIMEOUT] Max time {MAX_BACKUP_TIME:.1f}s reached, front={front_arc_min:.2f}m")
                 self.transition_state(RobotState.TURNING)
 
         elif self.robot_state == RobotState.TURNING:
@@ -3831,10 +3937,10 @@ rclpy.shutdown()
                 self.state_context.maneuver_duration = abs(turn_degrees) * (math.pi / 180) / actual_vel
 
                 # Lock the backup action to prevent race conditions
-                # Lock for backup duration (1.2s) to ensure complete execution
+                # Lock for max backup duration - will be cleared early when clearance is reached
                 self.state_context.lock_action(
                     action="backup",
-                    duration=1.2,
+                    duration=MAX_BACKUP_TIME,
                     direction=self.avoidance_direction,
                     velocity=(-self.linear_speed, 0.0)
                 )
@@ -3845,7 +3951,7 @@ rclpy.shutdown()
                 # Send backup command
                 linear = -self.linear_speed
                 angular = 0.0
-                status = f"[BACKUP] t={time_in_state:.1f}s dir={self.avoidance_direction}"
+                status = f"[BACKUP] t={time_in_state:.1f}s front={front_arc_min:.2f}m/{SAFE_TURN_CLEARANCE:.2f}m dir={self.avoidance_direction}"
 
             else:
                 # Direction already determined from previous iteration - continue backing up
@@ -3853,7 +3959,7 @@ rclpy.shutdown()
                 # was already "left" or "right" (not None, not "straight", not trapped)
                 linear = -self.linear_speed
                 angular = 0.0
-                status = f"[BACKUP] t={time_in_state:.1f}s dir={self.avoidance_direction} (continuing)"
+                status = f"[BACKUP] t={time_in_state:.1f}s front={front_arc_min:.2f}m/{SAFE_TURN_CLEARANCE:.2f}m dir={self.avoidance_direction}"
 
         elif self.robot_state == RobotState.TURNING:
             # Skip turning if we were backing straight out of dead-end
@@ -4379,8 +4485,21 @@ rclpy.shutdown()
                 front_arc_min = min(self.sector_distances[0], self.sector_distances[1],
                                    self.sector_distances[11]) if self.sector_distances else 10.0
 
+                # Check virtual obstacles - these are invisible obstacles the robot has learned about
+                # Take minimum of lidar distance and virtual obstacle distance
+                if self.current_position and self.current_heading is not None:
+                    virtual_clearance = self.get_virtual_obstacle_clearance(
+                        self.current_position[0], self.current_position[1], self.current_heading)
+                    if virtual_clearance < front_arc_min:
+                        print(f"\r[VIRTUAL-OBS] Reducing clearance from {front_arc_min:.2f}m to {virtual_clearance:.2f}m", end="")
+                        front_arc_min = virtual_clearance
+
                 iteration_count = getattr(self, '_iteration_count', 0)
                 self._iteration_count = iteration_count + 1
+
+                # Cleanup old virtual obstacles periodically (every 100 iterations = ~10 seconds)
+                if iteration_count % 100 == 0:
+                    self.cleanup_virtual_obstacles()
 
                 skip_scan = False
                 if front_arc_min > 1.0 and iteration_count % 2 == 1:
@@ -4464,10 +4583,17 @@ rclpy.shutdown()
                     self.stuck_counter = 0
                     self.stuck_cooldown = 2  # Wait 2 iterations before checking again (reduced)
 
-                    # Publish virtual obstacle marker at stuck position (visible in RViz)
+                    # Add virtual obstacle at stuck position
+                    # This helps robot remember invisible obstacles and avoid them in the future
                     if self.stuck_position:
                         stuck_x, stuck_y = self.stuck_position
-                        self.publish_virtual_obstacle(stuck_x, stuck_y)
+                        # Check if lidar shows clear - if so, this is truly an invisible obstacle
+                        if front_arc_min > self.lidar_min_distance + 0.1:
+                            print(f"\n[INVISIBLE-OBS] LiDAR shows {front_arc_min:.2f}m clear but robot stuck!")
+                            self.add_virtual_obstacle(stuck_x, stuck_y)
+                        else:
+                            # Visible obstacle - just publish marker for visualization
+                            self.publish_virtual_obstacle(stuck_x, stuck_y)
 
                     # Use calibrated backup + turn maneuver
                     # Pick direction based on committed direction or default
