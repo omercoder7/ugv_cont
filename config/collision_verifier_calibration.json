@@ -124,63 +124,41 @@
         "efficiency": 0.00423157227817535,
         "front_dist": 10.0,
         "timestamp": 1765532822.8451169
-      }
-    ],
-    "low_stand_support": [
+      },
       {
-        "efficiency": 1.1771542011926024,
+        "efficiency": 1.2576664190502191,
         "front_dist": 10.0,
-        "timestamp": 1765532872.961333
-      },
-      {
-        "efficiency": 0.7059225338116945,
-        "front_dist": 1.118,
-        "timestamp": 1765532876.8602843
-      },
-      {
-        "efficiency": 0.020197742085927742,
-        "front_dist": 1.124,
-        "timestamp": 1765532879.3330564
-      },
-      {
-        "efficiency": 0.024475810071816314,
-        "front_dist": 1.11,
-        "timestamp": 1765532881.8442554
-      },
-      {
-        "efficiency": 0.05716161318117611,
-        "front_dist": 1.103,
-        "timestamp": 1765532883.5232587
-      },
-      {
-        "efficiency": 0.013787646539242686,
-        "front_dist": 1.107,
-        "timestamp": 1765532890.9609323
-      },
-      {
-        "efficiency": 0.06257099944492846,
-        "front_dist": 1.12,
-        "timestamp": 1765532898.85225
-      },
-      {
-        "efficiency": 0.04032314019489782,
-        "front_dist": 1.102,
-        "timestamp": 1765532901.9959862
+        "timestamp": 1765533466.342148
       },
       {
         "efficiency": 2.0,
-        "front_dist": 1.088,
-        "timestamp": 1765533389.9968874
+        "front_dist": 10.0,
+        "timestamp": 1765533468.237835
       },
       {
-        "efficiency": 2.0,
-        "front_dist": 0.526,
-        "timestamp": 1765533393.1444764
+        "efficiency": 0.4694819836796127,
+        "front_dist": 10.0,
+        "timestamp": 1765533471.290226
       },
       {
-        "efficiency": 2.0,
-        "front_dist": 0.46,
-        "timestamp": 1765533396.1483395
+        "efficiency": 0.0606617893942212,
+        "front_dist": 10.0,
+        "timestamp": 1765533473.8036764
+      },
+      {
+        "efficiency": 0.24138279220827386,
+        "front_dist": 10.0,
+        "timestamp": 1765533475.4902382
+      },
+      {
+        "efficiency": 1.348755500416537,
+        "front_dist": 10.0,
+        "timestamp": 1765533483.339009
+      },
+      {
+        "efficiency": 0.765323463936844,
+        "front_dist": 10.0,
+        "timestamp": 1765533490.9864218
       }
     ],
     "robot_vaccum_docking_station": [
@@ -239,6 +217,68 @@
         "front_dist": 10.0,
         "timestamp": 1765533334.234457
       }
+    ],
+    "low_stand_support": [
+      {
+        "efficiency": 0.15984936966384997,
+        "front_dist": 1.135,
+        "timestamp": 1765533556.993991
+      },
+      {
+        "efficiency": 0.13869782979128187,
+        "front_dist": 1.165,
+        "timestamp": 1765533559.144547
+      },
+      {
+        "efficiency": 0.08318213242811727,
+        "front_dist": 1.131,
+        "timestamp": 1765533561.3335588
+      },
+      {
+        "efficiency": 0.040695196796005306,
+        "front_dist": 10.0,
+        "timestamp": 1765533565.3366752
+      },
+      {
+        "efficiency": 0.02381981202247629,
+        "front_dist": 1.121,
+        "timestamp": 1765533569.4369273
+      },
+      {
+        "efficiency": 0.06993000259116167,
+        "front_dist": 1.127,
+        "timestamp": 1765533572.635662
+      },
+      {
+        "efficiency": 0.1680010494724562,
+        "front_dist": 1.118,
+        "timestamp": 1765533574.6416059
+      },
+      {
+        "efficiency": 0.07684609174793679,
+        "front_dist": 1.091,
+        "timestamp": 1765533577.993705
+      },
+      {
+        "efficiency": 0.12236898488998553,
+        "front_dist": 1.129,
+        "timestamp": 1765533592.6475093
+      },
+      {
+        "efficiency": 0.10993257889307938,
+        "front_dist": 1.127,
+        "timestamp": 1765533596.2602696
+      },
+      {
+        "efficiency": 0.07662651725634241,
+        "front_dist": 10.0,
+        "timestamp": 1765533598.4336898
+      },
+      {
+        "efficiency": 0.02780817374480756,
+        "front_dist": 1.093,
+        "timestamp": 1765533602.3151085
+      }
     ]
   },
   "obstacle_categories": {
@@ -246,20 +286,20 @@
     "hard_block": "hard",
     "clear_path": "clear",
     "pillow_chair": "soft",
-    "low_stand_support": "hard",
-    "robot_vaccum_docking_station": "hard"
+    "robot_vaccum_docking_station": "hard",
+    "low_stand_support": "hard"
   },
   "metadata": {
     "robot_id": "ugv_beast",
-    "calibrated_at": "2025-12-12 11:56:39",
-    "samples_collected": 45,
+    "calibrated_at": "2025-12-12 12:00:05",
+    "samples_collected": 53,
     "obstacles_calibrated": [
       "clear_path",
       "soft_block",
       "hard_block",
       "pillow_chair",
-      "low_stand_support",
-      "robot_vaccum_docking_station"
+      "robot_vaccum_docking_station",
+      "low_stand_support"
     ]
   }
 }
