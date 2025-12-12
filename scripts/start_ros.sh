@@ -208,7 +208,11 @@ start_slam() {
 }
 
 verify_slam_process() {
-    docker exec ${CONTAINER_NAME} pgrep -f "slam_toolbox\|async_slam" > /dev/null 2>&1
+    # Check for LIVE slam process (not zombies which show as <defunct>)
+    # The actual process name is async_slam_toolbox_node
+    local live_count
+    live_count=$(docker exec ${CONTAINER_NAME} bash -c "ps aux | grep -E 'async_slam_toolbox_node|slam_toolbox' | grep -v '<defunct>' | grep -v grep | wc -l" 2>/dev/null || echo "0")
+    [ "${live_count}" -gt 0 ]
 }
 
 verify_map_topic() {
@@ -230,9 +234,10 @@ for attempt in $(seq 1 ${SLAM_MAX_RETRIES}); do
 
     start_slam
 
-    # Wait for SLAM to initialize (shorter initial wait)
+    # Wait for SLAM to initialize
+    # SLAM needs ~5-6 seconds to fully start the async_slam_toolbox_node
     log "  Waiting for SLAM to initialize..."
-    sleep 4
+    sleep 6
 
     # Quick check: is process running?
     if ! verify_slam_process; then
