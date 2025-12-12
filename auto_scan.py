@@ -29,6 +29,7 @@ import threading
 import select
 import termios
 import tty
+import heapq
 from typing import List, Tuple, Optional, Set, Dict
 from enum import Enum, auto
 from dataclasses import dataclass
@@ -125,7 +126,7 @@ class RobotState(Enum):
 
 @dataclass
 class StateContext:
-    """Context data for state transitions"""
+    """Context data for state transitions with committed action locking"""
     front_clearance: float = 10.0
     best_sector: int = 0
     best_distance: float = 10.0
@@ -136,6 +137,74 @@ class StateContext:
     consecutive_avoidances: int = 0  # Track repeated avoidance attempts
     in_corridor: bool = False  # True if robot is in a narrow passage
     corridor_width: float = 10.0  # Estimated corridor width
+
+    # Committed action locking - prevents race conditions
+    committed_action: Optional[str] = None  # Current locked action type
+    committed_until: float = 0.0  # Timestamp when lock expires
+    committed_direction: Optional[str] = None  # Locked direction (left/right)
+    committed_velocity: Tuple[float, float] = (0.0, 0.0)  # Locked (linear, angular)
+
+    def lock_action(self, action: str, duration: float,
+                    direction: Optional[str] = None,
+                    velocity: Optional[Tuple[float, float]] = None):
+        """
+        Lock an action for a specified duration.
+
+        Args:
+            action: Action type (e.g., "backup", "turn", "avoid")
+            duration: How long to lock (seconds)
+            direction: Optional direction lock ("left" or "right")
+            velocity: Optional velocity lock (linear, angular)
+        """
+        self.committed_action = action
+        self.committed_until = time.time() + duration
+        self.committed_direction = direction
+        if velocity:
+            self.committed_velocity = velocity
+
+    def is_action_locked(self) -> bool:
+        """Check if there's an active action lock."""
+        if self.committed_action is None:
+            return False
+        if time.time() >= self.committed_until:
+            self.clear_lock()
+            return False
+        return True
+
+    def get_lock_remaining(self) -> float:
+        """Get remaining lock time in seconds."""
+        if not self.is_action_locked():
+            return 0.0
+        return max(0.0, self.committed_until - time.time())
+
+    def clear_lock(self):
+        """Clear the action lock."""
+        self.committed_action = None
+        self.committed_until = 0.0
+        self.committed_direction = None
+        self.committed_velocity = (0.0, 0.0)
+
+    def can_transition(self, new_state: 'RobotState') -> bool:
+        """
+        Check if transition to new state is allowed.
+
+        Some transitions are allowed even during lock:
+        - Emergency transitions (STUCK_RECOVERY)
+        - Same state (no-op)
+
+        Returns True if transition is allowed.
+        """
+        if not self.is_action_locked():
+            return True
+
+        # Always allow emergency recovery
+        from enum import auto
+        # Note: RobotState is imported at module level, referenced here
+        # Allow STUCK_RECOVERY transitions during lock
+        if hasattr(new_state, 'name') and new_state.name == 'STUCK_RECOVERY':
+            return True
+
+        return False
 
 
 # ============================================================================
@@ -744,6 +813,485 @@ class TrajectoryScorer:
         return best_v, best_w, best_score
 
 
+# ============================================================================
+# Unified Direction Scorer
+# ============================================================================
+
+class UnifiedDirectionScorer:
+    """
+    Unified scoring system that consolidates all direction evaluation criteria.
+
+    Combines:
+    - VFH valley detection (obstacle avoidance)
+    - Frontier exploration (LiDAR distance + map exploration)
+    - Space freedom (avoid corners/constrained areas)
+    - Visited tracking (avoid revisiting)
+    - Trajectory continuity (smooth movement)
+
+    Use Cases:
+    - FORWARD: exploration mode with map scores
+    - AVOIDING: safety mode with clearance emphasis
+    - CORRIDOR: tight space mode with centering
+    """
+
+    # Weight presets for different navigation modes
+    PRESETS = {
+        "exploration": {
+            "clearance": 1.0,      # Basic obstacle safety
+            "distance": 1.5,       # Prefer open directions
+            "freedom": 3.0,        # Avoid corners/constrained areas
+            "frontier": 4.0,       # Strongly prefer unexplored areas
+            "visited": 2.0,        # Penalize revisiting
+            "continuity": 0.5,     # Mild smoothing
+            "forward_bias": 0.3,   # Slight forward preference
+        },
+        "safety": {
+            "clearance": 4.0,      # Strong obstacle avoidance
+            "distance": 2.0,       # Keep distance from obstacles
+            "freedom": 2.0,        # Avoid tight spaces
+            "frontier": 0.5,       # Exploration secondary
+            "visited": 0.5,        # Don't worry about revisiting
+            "continuity": 1.0,     # Smooth trajectory
+            "forward_bias": 0.2,   # Less forward bias when avoiding
+        },
+        "corridor": {
+            "clearance": 3.0,      # Stay clear of walls
+            "distance": 1.0,       # Moderate distance weight
+            "freedom": 1.0,        # Accept narrow spaces
+            "frontier": 2.0,       # Still explore
+            "visited": 1.0,        # Track visits
+            "continuity": 2.0,     # Stay centered, smooth
+            "forward_bias": 0.5,   # Prefer forward in corridors
+        },
+    }
+
+    def __init__(self, num_sectors: int = 12):
+        self.num_sectors = num_sectors
+        self.previous_sector: Optional[int] = None
+        self.weights = self.PRESETS["exploration"].copy()
+
+    def set_mode(self, mode: str):
+        """Set scoring weights based on navigation mode."""
+        if mode in self.PRESETS:
+            self.weights = self.PRESETS[mode].copy()
+
+    def set_weights(self, **kwargs):
+        """Override individual weights."""
+        for key, value in kwargs.items():
+            if key in self.weights:
+                self.weights[key] = value
+
+    def score_sector(
+        self,
+        sector: int,
+        sector_distances: List[float],
+        min_distance: float,
+        vfh_controller: 'VFHController',
+        map_scores: Optional[List[float]] = None,
+        dead_ends: Optional[List[bool]] = None,
+        visit_counts: Optional[List[int]] = None,
+        current_position: Optional[Tuple[float, float]] = None,
+    ) -> Tuple[float, Dict[str, float]]:
+        """
+        Score a single sector using unified criteria.
+
+        Args:
+            sector: Sector index (0 = front)
+            sector_distances: LiDAR distances per sector
+            min_distance: Minimum safe distance
+            vfh_controller: VFH controller for histogram/freedom calculations
+            map_scores: Optional map exploration scores per sector
+            dead_ends: Optional dead-end flags per sector
+            visit_counts: Optional visit count per sector
+            current_position: Robot's current (x, y) position
+
+        Returns:
+            (total_score, score_breakdown) where breakdown shows each component
+        """
+        dist = sector_distances[sector]
+        breakdown = {}
+
+        # Skip invalid sectors
+        if dist < 0.1:  # Blind spot
+            return -1000.0, {"invalid": -1000.0}
+        if dist < min_distance:  # Blocked
+            return -500.0, {"blocked": -500.0}
+        if dead_ends and dead_ends[sector]:  # Dead-end
+            return -200.0, {"dead_end": -200.0}
+
+        # 1. CLEARANCE SCORE: Is path clear? (binary from VFH)
+        clearance = 1.0 if vfh_controller.is_path_clear(sector) else 0.3
+        breakdown["clearance"] = clearance
+
+        # 2. DISTANCE SCORE: How far can we see? (normalized 0-1)
+        max_dist = 3.0  # Cap scoring at 3m
+        distance_score = min(dist / max_dist, 1.0)
+        breakdown["distance"] = distance_score
+
+        # 3. FREEDOM SCORE: How unconstrained is this direction?
+        freedom = vfh_controller.calculate_space_freedom(sector, sector_distances)
+        breakdown["freedom"] = freedom
+
+        # 4. FRONTIER SCORE: How unexplored is this direction?
+        frontier = map_scores[sector] if map_scores else 0.5
+        breakdown["frontier"] = frontier
+
+        # 5. VISITED SCORE: Penalize revisiting (1.0 = unvisited, 0.0 = heavily visited)
+        if visit_counts and visit_counts[sector] is not None:
+            vc = visit_counts[sector]
+            if vc == 0:
+                visited_score = 1.0
+            elif vc == 1:
+                visited_score = 0.5
+            elif vc == 2:
+                visited_score = 0.25
+            else:
+                visited_score = 0.1
+        else:
+            visited_score = 0.7  # Default when unknown
+        breakdown["visited"] = visited_score
+
+        # 6. CONTINUITY SCORE: Preference for continuing previous direction
+        if self.previous_sector is not None:
+            angle_diff = abs(sector - self.previous_sector)
+            if angle_diff > self.num_sectors // 2:
+                angle_diff = self.num_sectors - angle_diff
+            continuity = 1.0 - (angle_diff / (self.num_sectors // 2))
+        else:
+            continuity = 0.5  # Neutral for first call
+        breakdown["continuity"] = continuity
+
+        # 7. FORWARD BIAS: Slight preference for forward-facing sectors
+        if sector in [0]:
+            forward_bias = 1.0
+        elif sector in [1, 11]:
+            forward_bias = 0.8
+        elif sector in [2, 10]:
+            forward_bias = 0.5
+        else:
+            forward_bias = 0.2
+        breakdown["forward_bias"] = forward_bias
+
+        # Calculate weighted total
+        total = (
+            self.weights["clearance"] * clearance +
+            self.weights["distance"] * distance_score +
+            self.weights["freedom"] * freedom +
+            self.weights["frontier"] * frontier +
+            self.weights["visited"] * visited_score +
+            self.weights["continuity"] * continuity +
+            self.weights["forward_bias"] * forward_bias
+        )
+
+        return total, breakdown
+
+    def find_best_sector(
+        self,
+        sector_distances: List[float],
+        min_distance: float,
+        vfh_controller: 'VFHController',
+        map_scores: Optional[List[float]] = None,
+        dead_ends: Optional[List[bool]] = None,
+        visited_tracker: Optional['VisitedTracker'] = None,
+        current_position: Optional[Tuple[float, float]] = None,
+    ) -> Tuple[Optional[int], float, Dict[str, float]]:
+        """
+        Find the best sector to move toward.
+
+        Returns:
+            (best_sector, best_score, score_breakdown) or (None, 0, {}) if all blocked
+        """
+        best_sector = None
+        best_score = float('-inf')
+        best_breakdown = {}
+
+        # Pre-calculate visit counts per sector if tracker provided
+        visit_counts = None
+        if visited_tracker and current_position:
+            visit_counts = []
+            for sector in range(self.num_sectors):
+                dist = sector_distances[sector]
+                if dist > 0.1:
+                    sector_angle = sector * (2 * math.pi / self.num_sectors)
+                    look_ahead = min(dist, 1.5)
+                    target_x = current_position[0] + look_ahead * math.cos(sector_angle)
+                    target_y = current_position[1] + look_ahead * math.sin(sector_angle)
+                    visit_counts.append(visited_tracker.get_visit_count(target_x, target_y))
+                else:
+                    visit_counts.append(None)
+
+        for sector in range(self.num_sectors):
+            score, breakdown = self.score_sector(
+                sector, sector_distances, min_distance, vfh_controller,
+                map_scores, dead_ends, visit_counts, current_position
+            )
+            if score > best_score:
+                best_score = score
+                best_sector = sector
+                best_breakdown = breakdown
+
+        # Update previous sector for continuity
+        if best_sector is not None:
+            self.previous_sector = best_sector
+
+        return best_sector, best_score, best_breakdown
+
+
+# ============================================================================
+# A* Path Planner
+# ============================================================================
+
+class AStarPlanner:
+    """
+    A* path planner for smarter navigation using occupancy grid data.
+
+    Uses the SLAM map to plan paths around obstacles rather than purely
+    reactive obstacle avoidance. Integrates with the existing sector-based
+    navigation by providing waypoint directions.
+
+    Features:
+    - Grid-based A* search on occupancy grid
+    - Caches paths for efficiency
+    - Falls back to reactive navigation if no path found
+    - Considers robot width for collision checking
+    """
+
+    # Grid cell states
+    FREE = 0
+    OCCUPIED = 1
+    UNKNOWN = 2
+
+    def __init__(self, resolution: float = 0.1, robot_radius: float = 0.2):
+        """
+        Args:
+            resolution: Grid cell size in meters
+            robot_radius: Robot collision radius (half-width + margin)
+        """
+        self.resolution = resolution
+        self.robot_radius = robot_radius
+        self.robot_cells = int(math.ceil(robot_radius / resolution))
+
+        # Cached path data
+        self.current_path: List[Tuple[float, float]] = []
+        self.path_goal: Optional[Tuple[float, float]] = None
+        self.path_timestamp: float = 0.0
+        self.path_cache_ttl: float = 2.0  # Replan every 2 seconds max
+
+        # Grid map (updated from SLAM)
+        self.grid: Optional[np.ndarray] = None
+        self.grid_origin: Tuple[float, float] = (0.0, 0.0)
+        self.grid_resolution: float = 0.05  # From SLAM map
+
+    def world_to_grid(self, x: float, y: float) -> Tuple[int, int]:
+        """Convert world coordinates to grid cell indices."""
+        gx = int((x - self.grid_origin[0]) / self.grid_resolution)
+        gy = int((y - self.grid_origin[1]) / self.grid_resolution)
+        return (gx, gy)
+
+    def grid_to_world(self, gx: int, gy: int) -> Tuple[float, float]:
+        """Convert grid cell indices to world coordinates (cell center)."""
+        x = gx * self.grid_resolution + self.grid_origin[0] + self.grid_resolution / 2
+        y = gy * self.grid_resolution + self.grid_origin[1] + self.grid_resolution / 2
+        return (x, y)
+
+    def update_grid(self, occupancy_grid: np.ndarray, origin: Tuple[float, float],
+                    resolution: float):
+        """
+        Update the internal grid from SLAM occupancy grid.
+
+        Args:
+            occupancy_grid: 2D numpy array (-1=unknown, 0=free, 100=occupied)
+            origin: World coordinates of grid[0,0]
+            resolution: Grid cell size
+        """
+        self.grid = occupancy_grid.copy()
+        self.grid_origin = origin
+        self.grid_resolution = resolution
+
+    def is_cell_free(self, gx: int, gy: int) -> bool:
+        """Check if a grid cell and surrounding area is free for robot."""
+        if self.grid is None:
+            return True  # Assume free if no map
+
+        h, w = self.grid.shape
+
+        # Check robot footprint (circle of robot_cells radius)
+        for dx in range(-self.robot_cells, self.robot_cells + 1):
+            for dy in range(-self.robot_cells, self.robot_cells + 1):
+                if dx*dx + dy*dy <= self.robot_cells * self.robot_cells:
+                    nx, ny = gx + dx, gy + dy
+                    if nx < 0 or nx >= w or ny < 0 or ny >= h:
+                        return False  # Out of bounds = not free
+                    cell_val = self.grid[ny, nx]
+                    if cell_val > 50:  # Occupied threshold
+                        return False
+        return True
+
+    def heuristic(self, a: Tuple[int, int], b: Tuple[int, int]) -> float:
+        """A* heuristic: Euclidean distance."""
+        return math.sqrt((a[0] - b[0])**2 + (a[1] - b[1])**2)
+
+    def get_neighbors(self, pos: Tuple[int, int]) -> List[Tuple[Tuple[int, int], float]]:
+        """Get valid neighboring cells with movement cost."""
+        gx, gy = pos
+        neighbors = []
+
+        # 8-connected grid
+        directions = [
+            (1, 0, 1.0), (-1, 0, 1.0), (0, 1, 1.0), (0, -1, 1.0),  # Cardinal
+            (1, 1, 1.414), (1, -1, 1.414), (-1, 1, 1.414), (-1, -1, 1.414)  # Diagonal
+        ]
+
+        for dx, dy, cost in directions:
+            nx, ny = gx + dx, gy + dy
+            if self.is_cell_free(nx, ny):
+                neighbors.append(((nx, ny), cost))
+
+        return neighbors
+
+    def find_path(self, start: Tuple[float, float],
+                  goal: Tuple[float, float]) -> List[Tuple[float, float]]:
+        """
+        Find path from start to goal using A*.
+
+        Args:
+            start: Start position in world coordinates (x, y)
+            goal: Goal position in world coordinates (x, y)
+
+        Returns:
+            List of waypoints [(x, y), ...] or empty list if no path
+        """
+        if self.grid is None:
+            return []
+
+        start_cell = self.world_to_grid(*start)
+        goal_cell = self.world_to_grid(*goal)
+
+        # Check if start/goal are valid
+        if not self.is_cell_free(*start_cell):
+            return []  # Start is blocked
+        if not self.is_cell_free(*goal_cell):
+            return []  # Goal is blocked
+
+        # A* search
+        open_set = []
+        heapq.heappush(open_set, (0, start_cell))
+
+        came_from: Dict[Tuple[int, int], Tuple[int, int]] = {}
+        g_score: Dict[Tuple[int, int], float] = {start_cell: 0}
+        f_score: Dict[Tuple[int, int], float] = {start_cell: self.heuristic(start_cell, goal_cell)}
+
+        max_iterations = 10000  # Prevent infinite loops
+        iterations = 0
+
+        while open_set and iterations < max_iterations:
+            iterations += 1
+            current = heapq.heappop(open_set)[1]
+
+            if current == goal_cell:
+                # Reconstruct path
+                path = []
+                while current in came_from:
+                    path.append(self.grid_to_world(*current))
+                    current = came_from[current]
+                path.append(start)
+                path.reverse()
+                return path
+
+            for neighbor, cost in self.get_neighbors(current):
+                tentative_g = g_score[current] + cost
+
+                if neighbor not in g_score or tentative_g < g_score[neighbor]:
+                    came_from[neighbor] = current
+                    g_score[neighbor] = tentative_g
+                    f_score[neighbor] = tentative_g + self.heuristic(neighbor, goal_cell)
+                    heapq.heappush(open_set, (f_score[neighbor], neighbor))
+
+        return []  # No path found
+
+    def get_next_waypoint(self, current_pos: Tuple[float, float],
+                          goal: Tuple[float, float],
+                          lookahead: float = 0.5) -> Optional[Tuple[float, float]]:
+        """
+        Get the next waypoint to navigate toward.
+
+        Args:
+            current_pos: Current robot position (x, y)
+            goal: Goal position (x, y)
+            lookahead: Distance ahead on path to look
+
+        Returns:
+            Next waypoint (x, y) or None if no path
+        """
+        # Check if we need to replan
+        now = time.time()
+        if (self.path_goal != goal or
+            now - self.path_timestamp > self.path_cache_ttl or
+            not self.current_path):
+            # Replan
+            self.current_path = self.find_path(current_pos, goal)
+            self.path_goal = goal
+            self.path_timestamp = now
+
+        if not self.current_path:
+            return None
+
+        # Find the waypoint that's approximately lookahead distance ahead
+        accumulated_dist = 0.0
+        prev_point = current_pos
+
+        for waypoint in self.current_path:
+            dist = math.sqrt((waypoint[0] - prev_point[0])**2 +
+                           (waypoint[1] - prev_point[1])**2)
+            accumulated_dist += dist
+
+            if accumulated_dist >= lookahead:
+                return waypoint
+
+            prev_point = waypoint
+
+        # Return final waypoint if path is shorter than lookahead
+        return self.current_path[-1] if self.current_path else None
+
+    def get_direction_to_waypoint(self, current_pos: Tuple[float, float],
+                                  current_heading: float,
+                                  waypoint: Tuple[float, float]) -> int:
+        """
+        Convert waypoint to sector direction.
+
+        Args:
+            current_pos: Current robot position (x, y)
+            current_heading: Current robot heading (radians)
+            waypoint: Target waypoint (x, y)
+
+        Returns:
+            Sector index (0-11) pointing toward waypoint
+        """
+        # Calculate direction to waypoint in world frame
+        dx = waypoint[0] - current_pos[0]
+        dy = waypoint[1] - current_pos[1]
+        world_angle = math.atan2(dy, dx)
+
+        # Convert to robot-relative angle
+        relative_angle = world_angle - current_heading
+
+        # Normalize to -π to π
+        while relative_angle > math.pi:
+            relative_angle -= 2 * math.pi
+        while relative_angle < -math.pi:
+            relative_angle += 2 * math.pi
+
+        # Convert to sector (0 = front, positive = left)
+        sector = int(round(relative_angle / (math.pi / 6))) % 12
+
+        return sector
+
+    def clear_path(self):
+        """Clear cached path (force replan on next call)."""
+        self.current_path = []
+        self.path_goal = None
+
+
 class KeyboardMonitor:
     """Non-blocking keyboard input monitor"""
 
@@ -1288,6 +1836,17 @@ class SectorObstacleAvoider:
 
         # DWA-style trajectory scorer for the AVOIDING state
         self.trajectory_scorer = TrajectoryScorer(max_speed=self.linear_speed, max_yaw_rate=1.0)
+
+        # Unified direction scorer - consolidates all scoring systems
+        self.unified_scorer = UnifiedDirectionScorer(num_sectors=NUM_SECTORS)
+
+        # A* path planner for smarter navigation
+        self.path_planner = AStarPlanner(
+            resolution=0.05,  # Match SLAM map resolution
+            robot_radius=ROBOT_HALF_WIDTH + 0.05  # Robot half-width + safety margin
+        )
+        self.current_goal: Optional[Tuple[float, float]] = None  # Current navigation goal
+        self.use_path_planning: bool = True  # Enable/disable path planning
 
         # Cache for map exploration scores (expensive subprocess call)
         self._map_scores_cache = [0.5] * NUM_SECTORS
@@ -2430,18 +2989,38 @@ rclpy.shutdown()
         """
         FRONTIER-BASED EXPLORATION: Find the direction with most unexplored space.
 
-        Combines multiple signals:
+        Uses unified scoring system with "exploration" preset which combines:
         1. LiDAR distance: Farthest = more open space
         2. Map exploration: Unknown cells = unexplored frontier
-        3. Obstacle density: Fewer obstacles = easier path
-
-        This naturally:
-        - Avoids dead-ends (short readings, low map scores)
-        - Seeks unexplored areas (long readings, high map scores)
-        - Prefers obstacle-sparse paths (higher map exploration scores)
-        - Completes when everywhere has short readings (walls)
+        3. Space freedom: Avoid corners/constrained areas
+        4. Visited tracking: Penalize revisiting areas
+        5. Forward bias: Slight preference for forward movement
 
         Returns: (best_sector, frontier_score) or (None, 0) if all blocked
+        """
+        # Use unified scorer in exploration mode
+        self.unified_scorer.set_mode("exploration")
+
+        # Get map-based scores for obstacle density / exploration
+        map_scores = self.get_map_exploration_scores()
+        dead_ends = self.get_dead_end_sectors()
+
+        # Use unified scoring
+        best_sector, best_score, breakdown = self.unified_scorer.find_best_sector(
+            sector_distances=self.sector_distances,
+            min_distance=self.lidar_min_distance,
+            vfh_controller=self.vfh,
+            map_scores=map_scores,
+            dead_ends=dead_ends,
+            visited_tracker=self.visited_tracker,
+            current_position=self.current_position,
+        )
+
+        return best_sector, best_score
+
+    def find_frontier_direction_legacy(self) -> Tuple[Optional[int], float]:
+        """
+        Legacy frontier direction finder (kept for reference/fallback).
         """
         best_sector = None
         best_score = 0.0
@@ -2551,120 +3130,124 @@ rclpy.shutdown()
 
     def find_best_direction(self) -> Tuple[int, float]:
         """
-        VFH-inspired algorithm: Find the best direction using a cost function.
+        VFH-inspired algorithm: Find the best direction using unified scoring.
 
-        Key insight: Prefer directions toward OPEN, UNCONSTRAINED areas on the map.
-        A direction with 2m to an obstacle in a corner is WORSE than a direction
-        with 1.5m to an obstacle in open space.
-
-        Cost = target_weight * target_cost
-             + openness_weight * openness_cost   # LiDAR: prefer open space
-             + freedom_weight * freedom_cost     # Space freedom: avoid corners/dead-ends
-             + map_explore_weight * map_explore_cost  # Map: prefer unknown cells
-             + previous_weight * previous_cost
-             + unvisited_weight * unvisited_cost
+        Uses unified scorer with "safety" preset which emphasizes:
+        - Clearance: Strong obstacle avoidance
+        - Distance: Keep distance from obstacles
+        - Freedom: Avoid tight spaces
+        - Continuity: Smooth trajectory
 
         Returns (best_sector, best_score)
         """
-        # Weights (inspired by VFH + frontier exploration)
-        TARGET_WEIGHT = 1.0       # Slight preference for forward direction
-        OPENNESS_WEIGHT = 1.5     # Prefer open directions (reduced - space_freedom is better)
-        FREEDOM_WEIGHT = 4.0      # STRONGLY prefer unconstrained directions (avoid corners!)
-        MAP_EXPLORE_WEIGHT = 8.0  # DOUBLED: Strongly prefer unexplored map areas
-        PREVIOUS_WEIGHT = 1.0     # Smooth trajectory (reduce oscillation)
-        UNVISITED_WEIGHT = 0.5    # Reduced: local tracking less important than map exploration
-        FULLY_EXPLORED_PENALTY = 5.0  # Heavy penalty for fully-mapped directions
+        # Use unified scorer in safety mode
+        self.unified_scorer.set_mode("safety")
 
-        best_sector = 0
-        best_score = -999
-
-        # Get current position for visited checking
-        current_x, current_y = 0.0, 0.0
-        if self.current_position:
-            current_x, current_y = self.current_position
-
-        # Find max distance to normalize openness cost
-        max_dist = max(d for d in self.sector_distances if d < 10.0) if any(d < 10.0 for d in self.sector_distances) else 3.0
-        max_dist = max(max_dist, 1.0)  # Avoid division by zero
-
-        # Get map exploration scores (which sectors have unknown/unexplored cells)
+        # Get map-based scores
         map_scores = self.get_map_exploration_scores()
+        dead_ends = self.get_dead_end_sectors()
+
+        # Use unified scoring
+        best_sector, best_score, breakdown = self.unified_scorer.find_best_sector(
+            sector_distances=self.sector_distances,
+            min_distance=self.lidar_min_distance,
+            vfh_controller=self.vfh,
+            map_scores=map_scores,
+            dead_ends=dead_ends,
+            visited_tracker=self.visited_tracker,
+            current_position=self.current_position,
+        )
+
+        # Default to sector 0 if all blocked
+        if best_sector is None:
+            best_sector = 0
+            best_score = -999
+
+        return best_sector, best_score
+
+    def find_frontier_goal(self) -> Optional[Tuple[float, float]]:
+        """
+        Find the best frontier goal for path planning.
+
+        Uses map exploration scores to identify the most promising
+        unexplored area, then returns a goal position to navigate to.
+
+        Returns:
+            (x, y) goal position or None if no frontier found
+        """
+        if not self.current_position:
+            return None
+
+        x, y = self.current_position
+        map_scores = self.get_map_exploration_scores()
+
+        # Find direction with highest exploration potential
+        best_sector = None
+        best_score = 0.0
 
         for sector in range(NUM_SECTORS):
             dist = self.sector_distances[sector]
-
-            # Skip blind spots and blocked sectors
             if dist < self.lidar_min_distance:
                 continue
 
-            # Skip sectors that led to being stuck (invisible obstacles)
-            if sector in self.blocked_sectors:
-                continue
-
-            # Calculate angle from front (0 = front, ±π = back)
-            angle = abs(self.sector_to_angle(sector))
-
-            # Target cost: slight preference for forward direction (angle = 0)
-            target_cost = 1.0 - (angle / math.pi)  # 1.0 at front, 0.0 at back
-
-            # OPENNESS COST: Prefer directions with HIGH LiDAR distance
-            openness_cost = min(dist / max_dist, 1.0)  # 1.0 = farthest, 0.0 = closest
-
-            # SPACE FREEDOM COST: Prefer directions with wide open space, not corners
-            # This is the key insight: avoid directions that lead to constrained areas
-            freedom_cost = self.vfh.calculate_space_freedom(sector, self.sector_distances)
-
-            # MAP EXPLORATION COST: From Cartographer map data
-            # High score = lots of unknown cells = unexplored frontier!
-            map_explore_cost = map_scores[sector]  # 0.0-1.0, 1.0 = all unknown
-
-            # Previous direction cost: prefer continuing in same direction
-            if hasattr(self, 'previous_sector'):
-                prev_angle = abs(self.sector_to_angle(self.previous_sector))
-                curr_angle = abs(self.sector_to_angle(sector))
-                # Smaller difference = higher score
-                angle_diff = abs(curr_angle - prev_angle)
-                previous_cost = 1.0 - (angle_diff / math.pi)
-            else:
-                previous_cost = 0.5  # Neutral for first iteration
-
-            # UNVISITED COST: Check if direction leads to unvisited area
-            # Calculate target position in this direction
-            sector_angle = sector * (2 * math.pi / NUM_SECTORS)
-            look_ahead = min(dist, 1.5)  # Look 1.5m ahead or to obstacle
-            target_x = current_x + look_ahead * math.cos(sector_angle)
-            target_y = current_y + look_ahead * math.sin(sector_angle)
-
-            visit_count = self.visited_tracker.get_visit_count(target_x, target_y)
-
-            # Score: unvisited = 1.0, visited once = 0.3, visited more = 0.0
-            if visit_count == 0:
-                unvisited_cost = 1.0
-            elif visit_count == 1:
-                unvisited_cost = 0.3
-            else:
-                unvisited_cost = 0.0
-
-            # FULLY EXPLORED PENALTY: Heavily penalize directions with no unknown cells
-            # This prevents re-scanning areas that are already fully mapped
-            fully_explored_penalty = 0.0
-            if map_explore_cost < 0.05:  # Less than 5% unknown = fully explored
-                fully_explored_penalty = FULLY_EXPLORED_PENALTY
-
-            # Combined score
-            score = (TARGET_WEIGHT * target_cost +
-                    OPENNESS_WEIGHT * openness_cost +
-                    FREEDOM_WEIGHT * freedom_cost +
-                    MAP_EXPLORE_WEIGHT * map_explore_cost +
-                    PREVIOUS_WEIGHT * previous_cost +
-                    UNVISITED_WEIGHT * unvisited_cost -
-                    fully_explored_penalty)  # Subtract penalty!
+            score = map_scores[sector]
+            # Bonus for longer distances (more unexplored space)
+            score += min(dist / 3.0, 1.0) * 0.5
 
             if score > best_score:
                 best_score = score
                 best_sector = sector
 
-        return best_sector, best_score
+        if best_sector is None:
+            return None
+
+        # Calculate goal position in that direction
+        dist = min(self.sector_distances[best_sector], 2.0)  # Max 2m goal
+        sector_angle = best_sector * (2 * math.pi / NUM_SECTORS)
+
+        # Account for robot heading if available
+        heading = self.current_heading if self.current_heading else 0.0
+        world_angle = heading + sector_angle
+
+        goal_x = x + dist * math.cos(world_angle)
+        goal_y = y + dist * math.sin(world_angle)
+
+        return (goal_x, goal_y)
+
+    def get_path_planned_direction(self) -> Optional[int]:
+        """
+        Use A* path planning to get optimal direction.
+
+        Returns:
+            Sector index (0-11) to move toward, or None if no path
+        """
+        if not self.use_path_planning:
+            return None
+
+        if not self.current_position or not self.current_heading:
+            return None
+
+        # Find or update frontier goal
+        goal = self.find_frontier_goal()
+        if goal is None:
+            return None
+
+        self.current_goal = goal
+
+        # Get next waypoint from path planner
+        waypoint = self.path_planner.get_next_waypoint(
+            self.current_position, goal, lookahead=0.5
+        )
+
+        if waypoint is None:
+            return None
+
+        # Convert waypoint to sector direction
+        sector = self.path_planner.get_direction_to_waypoint(
+            self.current_position, self.current_heading, waypoint
+        )
+
+        return sector
 
     def calculate_turn_degrees(self, obstacle_sector: int, obstacle_distance: float) -> float:
         """
@@ -2702,24 +3285,40 @@ rclpy.shutdown()
 
         return min(120, max(45, base_degrees))  # Clamp between 45-120°
 
-    def transition_state(self, new_state: RobotState):
+    def transition_state(self, new_state: RobotState, force: bool = False):
         """
         Transition to a new state with logging.
-        Respects minimum state duration to prevent oscillation.
+        Respects minimum state duration and committed action locking.
         Also tracks escape memory for learning from stuck situations.
+
+        Args:
+            new_state: Target state to transition to
+            force: If True, bypass minimum duration check (not action lock)
         """
         if new_state == self.robot_state:
             return  # Already in this state
 
+        # Check committed action locking (prevents race conditions)
+        if not self.state_context.can_transition(new_state):
+            lock_remaining = self.state_context.get_lock_remaining()
+            # Only log if significant time remaining
+            if lock_remaining > 0.1:
+                pass  # Silently ignore to avoid log spam
+            return
+
         time_in_state = time.time() - self.state_context.state_start_time
         min_duration = self.min_state_duration.get(self.robot_state, 0)
 
-        if time_in_state < min_duration:
+        if not force and time_in_state < min_duration:
             return  # Not enough time in current state
 
         old_state = self.robot_state
         self.robot_state = new_state
         self.state_context.state_start_time = time.time()
+
+        # Clear action lock on state change (new state may set its own lock)
+        self.state_context.clear_lock()
+
         print(f"\n[STATE] {old_state.name} -> {new_state.name}")
 
         # Track escape memory for stuck situations
@@ -3195,6 +3794,15 @@ rclpy.shutdown()
                 actual_vel = ACTUAL_MAX_ANGULAR_VEL * 1.0
                 self.state_context.maneuver_duration = abs(turn_degrees) * (math.pi / 180) / actual_vel
 
+                # Lock the backup action to prevent race conditions
+                # Lock for backup duration (0.8s) to ensure complete execution
+                self.state_context.lock_action(
+                    action="backup",
+                    duration=0.8,
+                    direction=self.avoidance_direction,
+                    velocity=(-self.linear_speed, 0.0)
+                )
+
                 dead_str = f"L={'D' if left_dead_end else 'ok'} R={'D' if right_dead_end else 'ok'}"
                 print(f"\n[BACKUP] dir={self.avoidance_direction} turn={turn_degrees:.0f}° (L:{left_turn_angle}° R:{right_turn_angle}°) {dead_str}")
 
@@ -3224,11 +3832,22 @@ rclpy.shutdown()
                 # Ensure direction is set (safety check)
                 if self.avoidance_direction is None:
                     self.avoidance_direction = "left"  # Default
-                # Execute turn
+
+                # Lock the turn action if not already locked
+                if not self.state_context.is_action_locked():
+                    turn_speed = 1.0 if self.avoidance_direction == "left" else -1.0
+                    self.state_context.lock_action(
+                        action="turn",
+                        duration=self.state_context.maneuver_duration,
+                        direction=self.avoidance_direction,
+                        velocity=(0.0, turn_speed)
+                    )
+
+                # Execute turn (use locked velocity if available)
                 turn_speed = 1.0 if self.avoidance_direction == "left" else -1.0
                 linear = 0.0
                 angular = turn_speed
-                status = f"[TURN] dir={self.avoidance_direction} t={time_in_state:.1f}s"
+                status = f"[TURN] dir={self.avoidance_direction} t={time_in_state:.1f}s lock={self.state_context.get_lock_remaining():.1f}s"
 
         elif self.robot_state == RobotState.CORRIDOR:
             # CORRIDOR mode: Baby steps through narrow passage
