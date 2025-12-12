@@ -1785,6 +1785,7 @@ class SectorObstacleAvoider:
         self.sector_distances: List[float] = [10.0] * NUM_SECTORS
         self.current_heading_sector = 0  # Front = sector 0
         self.current_position: Optional[Tuple[float, float]] = None
+        self.current_heading: Optional[float] = None  # Robot heading in radians
 
         # Visited location tracking
         self.visited_tracker = VisitedTracker()
@@ -2382,12 +2383,13 @@ echo '{stop_cmd}' > /dev/ttyAMA0
             pass
 
     def get_odometry(self) -> Optional[Tuple[float, float]]:
-        """Get current position from odometry"""
+        """Get current position and heading from odometry. Also updates self.current_heading."""
         try:
             result = subprocess.run(
                 ['docker', 'exec', CONTAINER_NAME, 'bash', '-c',
                  '''source /opt/ros/humble/setup.bash && python3 -c "
 import rclpy
+import math
 from nav_msgs.msg import Odometry
 rclpy.init()
 node = rclpy.create_node('odom_reader')
@@ -2398,7 +2400,14 @@ for _ in range(20):
     rclpy.spin_once(node, timeout_sec=0.05)
     if msg: break
 if msg:
-    print(f'{msg.pose.pose.position.x:.4f},{msg.pose.pose.position.y:.4f}')
+    x = msg.pose.pose.position.x
+    y = msg.pose.pose.position.y
+    # Extract yaw from quaternion
+    q = msg.pose.pose.orientation
+    siny_cosp = 2 * (q.w * q.z + q.x * q.y)
+    cosy_cosp = 1 - 2 * (q.y * q.y + q.z * q.z)
+    yaw = math.atan2(siny_cosp, cosy_cosp)
+    print(f'{x:.4f},{y:.4f},{yaw:.4f}')
 node.destroy_node()
 rclpy.shutdown()
 "'''],
@@ -2406,7 +2415,12 @@ rclpy.shutdown()
             )
             if result.stdout.strip():
                 parts = result.stdout.strip().split(',')
-                return (float(parts[0]), float(parts[1]))
+                if len(parts) >= 3:
+                    self.current_heading = float(parts[2])  # Update heading
+                    return (float(parts[0]), float(parts[1]))
+                elif len(parts) == 2:
+                    # Fallback for old format
+                    return (float(parts[0]), float(parts[1]))
             return None
         except:
             return None
