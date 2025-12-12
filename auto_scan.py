@@ -3517,7 +3517,8 @@ rclpy.shutdown()
 
         elif self.robot_state == RobotState.BACKING_UP:
             # From BACKING_UP: execute backup maneuver, then turn
-            if time_in_state < 0.8:  # Still backing up
+            # INCREASED: 0.8s -> 1.2s for longer backup distance when stuck
+            if time_in_state < 1.2:  # Still backing up
                 pass  # Continue backup (handled below)
             else:
                 self.transition_state(RobotState.TURNING)
@@ -3795,10 +3796,10 @@ rclpy.shutdown()
                 self.state_context.maneuver_duration = abs(turn_degrees) * (math.pi / 180) / actual_vel
 
                 # Lock the backup action to prevent race conditions
-                # Lock for backup duration (0.8s) to ensure complete execution
+                # Lock for backup duration (1.2s) to ensure complete execution
                 self.state_context.lock_action(
                     action="backup",
-                    duration=0.8,
+                    duration=1.2,
                     direction=self.avoidance_direction,
                     velocity=(-self.linear_speed, 0.0)
                 )
