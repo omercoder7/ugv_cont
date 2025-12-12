@@ -279,6 +279,110 @@
         "front_dist": 1.093,
         "timestamp": 1765533602.3151085
       }
+    ],
+    "low_chair_support": [
+      {
+        "efficiency": 2.0,
+        "front_dist": 0.601,
+        "timestamp": 1765533985.9505231
+      },
+      {
+        "efficiency": 1.6299466457733123,
+        "front_dist": 0.6,
+        "timestamp": 1765533988.3508468
+      },
+      {
+        "efficiency": 2.0,
+        "front_dist": 0.6,
+        "timestamp": 1765533989.9583156
+      },
+      {
+        "efficiency": 2.0,
+        "front_dist": 0.598,
+        "timestamp": 1765533991.554821
+      },
+      {
+        "efficiency": 0.8039938630945759,
+        "front_dist": 0.596,
+        "timestamp": 1765533994.850353
+      },
+      {
+        "efficiency": 1.2604518717180544,
+        "front_dist": 0.595,
+        "timestamp": 1765533998.4499989
+      },
+      {
+        "efficiency": 0.19079218926837335,
+        "front_dist": 0.594,
+        "timestamp": 1765534000.9609826
+      },
+      {
+        "efficiency": 1.6627620679454302,
+        "front_dist": 0.594,
+        "timestamp": 1765534003.73435
+      },
+      {
+        "efficiency": 0.9549275823599492,
+        "front_dist": 10.0,
+        "timestamp": 1765534005.654141
+      },
+      {
+        "efficiency": 0.4621523796984399,
+        "front_dist": 0.593,
+        "timestamp": 1765534009.849095
+      }
+    ],
+    "low_table_leg_support": [
+      {
+        "efficiency": 2.0,
+        "front_dist": 10.0,
+        "timestamp": 1765534047.8010795
+      },
+      {
+        "efficiency": 0.8172314145327221,
+        "front_dist": 0.127,
+        "timestamp": 1765534053.0522285
+      },
+      {
+        "efficiency": 0.10885279733353376,
+        "front_dist": 0.127,
+        "timestamp": 1765534054.662818
+      },
+      {
+        "efficiency": 2.0,
+        "front_dist": 0.124,
+        "timestamp": 1765534056.5507324
+      },
+      {
+        "efficiency": 1.6782232486394335,
+        "front_dist": 0.123,
+        "timestamp": 1765534059.5526683
+      },
+      {
+        "efficiency": 0.09988757759920372,
+        "front_dist": 0.124,
+        "timestamp": 1765534063.2552164
+      },
+      {
+        "efficiency": 0.201444989503394,
+        "front_dist": 0.123,
+        "timestamp": 1765534064.8472044
+      },
+      {
+        "efficiency": 0.2648088757772368,
+        "front_dist": 0.122,
+        "timestamp": 1765534066.6500704
+      },
+      {
+        "efficiency": 0.09929676870790219,
+        "front_dist": 0.121,
+        "timestamp": 1765534070.2451718
+      },
+      {
+        "efficiency": 0.34683603667950735,
+        "front_dist": 10.0,
+        "timestamp": 1765534071.8487823
+      }
     ]
   },
   "obstacle_categories": {
@@ -287,19 +391,23 @@
     "clear_path": "clear",
     "pillow_chair": "soft",
     "robot_vaccum_docking_station": "hard",
-    "low_stand_support": "hard"
+    "low_stand_support": "hard",
+    "low_chair_support": "hard",
+    "low_table_leg_support": "hard"
   },
   "metadata": {
     "robot_id": "ugv_beast",
-    "calibrated_at": "2025-12-12 12:00:05",
-    "samples_collected": 53,
+    "calibrated_at": "2025-12-12 12:07:57",
+    "samples_collected": 73,
     "obstacles_calibrated": [
       "clear_path",
       "soft_block",
       "hard_block",
       "pillow_chair",
       "robot_vaccum_docking_station",
-      "low_stand_support"
+      "low_stand_support",
+      "low_chair_support",
+      "low_table_leg_support"
     ]
   }
 }
