@@ -3613,6 +3613,41 @@ rclpy.shutdown()
                 else:
                     angular = -0.5  # Turn right
 
+            # OBSTACLE MARGIN STEERING: Steer away from close obstacles on either side
+            # If obstacle is closer on one side, add angular velocity to steer away
+            left_dist = min(self.sector_distances[1], self.sector_distances[2])  # Front-left
+            right_dist = min(self.sector_distances[10], self.sector_distances[11])  # Front-right
+            front_left = self.sector_distances[1]
+            front_right = self.sector_distances[11]
+
+            # Only apply margin steering if obstacle is within danger zone
+            MARGIN_THRESHOLD = 0.8  # Apply margin steering within 80cm
+            MARGIN_GAIN = 0.3  # How much to steer away (rad/s per meter difference)
+
+            if left_dist < MARGIN_THRESHOLD or right_dist < MARGIN_THRESHOLD:
+                # Calculate asymmetry: positive = obstacle closer on left, negative = closer on right
+                asymmetry = right_dist - left_dist  # Positive means left is closer
+
+                # Scale by how close the nearest obstacle is
+                closest = min(left_dist, right_dist)
+                urgency = 1.0 - (closest / MARGIN_THRESHOLD)  # 0 to 1, higher = more urgent
+                urgency = max(0.0, min(1.0, urgency))
+
+                # Add steering away from the closer obstacle
+                margin_angular = asymmetry * MARGIN_GAIN * urgency
+
+                # Cap the margin steering
+                margin_angular = max(-0.3, min(0.3, margin_angular))
+
+                # Only apply if it doesn't conflict too much with frontier direction
+                # (don't override strong turns toward frontier)
+                if abs(angular) < 0.4:
+                    angular += margin_angular
+
+                if abs(margin_angular) > 0.05:
+                    side = "L" if asymmetry > 0 else "R"
+                    print(f"\r[MARGIN] {side} obstacle at {closest:.2f}m, steering {margin_angular:+.2f} rad/s", end="")
+
             # Safety check: if no frontier found (all blocked), force backup
             if frontier_sector is None:
                 print(f"\n[BLOCKED] No frontier found - all directions blocked!")
@@ -3869,9 +3904,20 @@ rclpy.shutdown()
             max_correction = 0.35  # Slightly higher in corridor for quicker response
 
             if front_nav:
-                # Front is clear - gentle centering only
+                # Front is clear - center between walls with margin from closer obstacle
                 balance = left_dist - right_dist
-                if abs(balance) > 0.08:  # Only correct if 8cm+ off-center
+
+                # MARGIN STEERING: More aggressive steering away from close obstacles
+                # If one side is much closer, steer away more aggressively
+                CORRIDOR_MARGIN_THRESHOLD = 0.5  # 50cm threshold in corridors
+                closest_side = min(left_dist, right_dist)
+
+                if closest_side < CORRIDOR_MARGIN_THRESHOLD:
+                    # Close obstacle - steer away with urgency
+                    urgency = 1.0 - (closest_side / CORRIDOR_MARGIN_THRESHOLD)
+                    # Stronger correction when closer
+                    angular = max(-max_correction, min(max_correction, balance * (0.5 + urgency * 0.5)))
+                elif abs(balance) > 0.08:  # Only correct if 8cm+ off-center
                     angular = max(-max_correction, min(max_correction, balance * 0.4))
                 else:
                     angular = 0.0
