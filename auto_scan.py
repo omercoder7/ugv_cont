@@ -100,8 +100,12 @@ MIN_CORRIDOR_WIDTH = ROBOT_WIDTH + 0.10  # 28cm - robot width + 10cm clearance
 # Safe turning clearance - minimum front distance needed to safely turn in place
 # Robot needs enough space in front to turn without hitting obstacles
 # This is used by BACKING_UP state to know when to stop backing and start turning
-SAFE_TURN_CLEARANCE = 0.45  # 45cm - enough space to turn safely
+SAFE_TURN_CLEARANCE = 0.55  # 55cm - enough space to turn safely (increased from 45cm)
 MAX_BACKUP_TIME = 3.0  # Maximum backup duration (safety limit)
+
+# Brief stop duration between forward and backward movement
+# This prevents mechanical stress and gives robot time to settle
+DIRECTION_CHANGE_PAUSE = 0.15  # 150ms pause (feels like ~0.5s due to deceleration)
 
 # Wheel encoder stuck detection constants
 # If wheels should be moving but encoder delta is below threshold, robot is stuck
@@ -1768,8 +1772,9 @@ class SectorObstacleAvoider:
         self.sensor_logger: Optional[SensorLogger] = None
         if self.log_sensors:
             self.sensor_logger = SensorLogger(output_dir=log_output_dir)
-        # Reduced min distance to 0.35m floor (robot is ~17cm wide, need clearance)
-        self.min_distance = max(min_distance, 0.35)
+        # Increased min distance floor to 0.45m for safer obstacle margins
+        # Robot is ~17cm wide but needs extra buffer for reaction time
+        self.min_distance = max(min_distance, 0.45)
         # LiDAR threshold = min_distance + LiDAR offset from robot front
         # This compensates for LiDAR being mounted ~37cm behind robot front
         self.lidar_min_distance = self.min_distance + LIDAR_FRONT_OFFSET
@@ -3482,6 +3487,14 @@ rclpy.shutdown()
 
         print(f"\n[STATE] {old_state.name} -> {new_state.name}")
 
+        # DIRECTION CHANGE PAUSE: Brief stop when changing from forward to backward
+        # This prevents mechanical stress and gives robot time to settle
+        if new_state == RobotState.BACKING_UP and old_state in [RobotState.FORWARD, RobotState.CORRIDOR, RobotState.AVOIDING]:
+            # Stop the robot briefly before backing up
+            self.send_cmd(0.0, 0.0)
+            time.sleep(DIRECTION_CHANGE_PAUSE)
+            print(f"[PAUSE] Brief stop before backup ({DIRECTION_CHANGE_PAUSE:.2f}s)")
+
         # Track escape memory for stuck situations
         if self.current_position:
             x, y = self.current_position
@@ -3554,15 +3567,15 @@ rclpy.shutdown()
         # In a corridor where robot fits, use much lower threshold - just physical clearance
         # In open space, use more conservative threshold
         if is_corridor and corridor_width >= MIN_CORRIDOR_WIDTH:
-            # CORRIDOR MODE: Very lenient - robot just needs physical clearance
-            # LiDAR offset (37cm) + small margin (5cm) = ~42cm
-            # This means: if LiDAR reads 42cm, robot front is 5cm from obstacle
-            dynamic_min_dist = LIDAR_FRONT_OFFSET + 0.05  # ~0.42m - very close is OK in corridor
-            DANGER_DISTANCE = dynamic_min_dist + 0.03  # ~0.45m - danger only when very close
+            # CORRIDOR MODE: More cautious - robot needs physical clearance + margin
+            # LiDAR offset (37cm) + safety margin (10cm) = ~47cm
+            # This means: if LiDAR reads 47cm, robot front is 10cm from obstacle
+            dynamic_min_dist = LIDAR_FRONT_OFFSET + 0.10  # ~0.47m - increased from 0.05
+            DANGER_DISTANCE = dynamic_min_dist + 0.05  # ~0.52m - danger with small margin
         else:
-            # OPEN SPACE: More conservative threshold
+            # OPEN SPACE: Conservative threshold for safer margins
             dynamic_min_dist = self.lidar_min_distance
-            DANGER_DISTANCE = self.lidar_min_distance + 0.30  # Start avoiding earlier (was 0.20, ~1.12m total)
+            DANGER_DISTANCE = self.lidar_min_distance + 0.35  # Start avoiding earlier (~1.17m total)
 
         # Update state context
         self.update_state_context(
