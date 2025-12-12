@@ -802,6 +802,80 @@ class KeyboardMonitor:
                     pass
 
 
+class CorridorDetectorWithHysteresis:
+    """
+    Corridor detector with hysteresis to prevent oscillation.
+
+    Uses exponential smoothing on corridor confidence and
+    different thresholds for entering vs exiting corridor mode.
+    """
+
+    def __init__(self):
+        self.in_corridor = False
+        self.corridor_confidence = 0.0
+        self.corridor_width_smooth = 1.0  # Smoothed width estimate
+
+        # Hysteresis thresholds
+        self.enter_confidence = 0.65  # Need 65% confidence to ENTER corridor mode
+        self.exit_confidence = 0.35   # Need <35% confidence to EXIT corridor mode
+
+        # Smoothing factor (0.0-1.0, lower = more smoothing)
+        self.alpha = 0.3
+
+    def update(self, is_corridor_raw: bool, corridor_width: float,
+               robot_width: float) -> Tuple[bool, float]:
+        """
+        Update corridor detection with hysteresis.
+
+        Args:
+            is_corridor_raw: Raw corridor detection from VFH
+            corridor_width: Measured corridor width
+            robot_width: Robot's physical width
+
+        Returns:
+            (is_in_corridor, smoothed_width)
+        """
+        min_width = robot_width + 0.10  # Robot width + 10cm clearance
+
+        if corridor_width < min_width:
+            raw_confidence = 0.0  # Too narrow
+        elif corridor_width > min_width * 2.5:
+            raw_confidence = 0.0  # Too wide to be a corridor
+        else:
+            # Confidence peaks when width is ~1.5x robot width
+            ideal_width = min_width * 1.5
+            if corridor_width <= ideal_width:
+                raw_confidence = (corridor_width - min_width) / (ideal_width - min_width)
+            else:
+                raw_confidence = 1.0 - (corridor_width - ideal_width) / (min_width * 1.0)
+            raw_confidence = max(0.0, min(1.0, raw_confidence))
+
+        # Apply raw detection
+        if not is_corridor_raw:
+            raw_confidence *= 0.5
+
+        # Exponential smoothing
+        self.corridor_confidence = (
+            self.alpha * raw_confidence +
+            (1 - self.alpha) * self.corridor_confidence
+        )
+
+        # Smooth width estimate
+        self.corridor_width_smooth = (
+            self.alpha * corridor_width +
+            (1 - self.alpha) * self.corridor_width_smooth
+        )
+
+        # Hysteresis switching
+        was_in_corridor = self.in_corridor
+        if not self.in_corridor and self.corridor_confidence > self.enter_confidence:
+            self.in_corridor = True
+        elif self.in_corridor and self.corridor_confidence < self.exit_confidence:
+            self.in_corridor = False
+
+        return self.in_corridor, self.corridor_width_smooth
+
+
 class VisitedTracker:
     """
     Tracks visited locations using a grid-based approach.
@@ -1049,6 +1123,9 @@ class SectorObstacleAvoider:
         # VFH Controller for histogram smoothing and hysteresis
         self.vfh = VFHController(num_sectors=NUM_SECTORS, smoothing_window=3)
 
+        # Corridor detector with hysteresis to prevent oscillation
+        self.corridor_detector = CorridorDetectorWithHysteresis()
+
         # DWA-style trajectory scorer for the AVOIDING state
         self.trajectory_scorer = TrajectoryScorer(max_speed=self.linear_speed, max_yaw_rate=1.0)
 
@@ -1204,6 +1281,55 @@ class SectorObstacleAvoider:
         """Check if a position is in a known dead-end area"""
         cell = self.visited_tracker.pos_to_cell(x, y)
         return cell in self.dead_end_positions
+
+    def predict_dead_end_ahead(self, look_ahead_distance: float = 1.2) -> bool:
+        """
+        PREDICTIVE dead-end detection - warns BEFORE robot gets trapped.
+
+        Returns True if continuing forward will likely lead to a dead-end:
+        1. Front sector shows a wall within look_ahead_distance
+        2. Map shows front is a dead-end
+        3. Both side sectors are also constrained (no escape route)
+
+        This is called in FORWARD state to avoid entering dead-ends.
+        """
+        front_dist = self.sector_distances[0]
+        front_left_dist = self.sector_distances[1]
+        front_right_dist = self.sector_distances[11]
+
+        # If far from any obstacle, not a concern
+        if front_dist > look_ahead_distance:
+            return False
+
+        # Get map-based dead-end info
+        dead_ends = self.get_dead_end_sectors()
+
+        # Front is dead-end according to map?
+        if dead_ends[0]:
+            return True
+
+        # Check if both front-sides show dead-end
+        if dead_ends[1] and dead_ends[11]:
+            return True
+
+        # Check if we'll be trapped - front is getting close AND sides constrained
+        sides_constrained = (
+            front_left_dist < self.lidar_min_distance + 0.15 or
+            front_right_dist < self.lidar_min_distance + 0.15
+        )
+        front_close = front_dist < self.lidar_min_distance + 0.4
+
+        if sides_constrained and front_close:
+            # Check if there's an escape route via diagonal/side sectors
+            escape_sectors = [2, 3, 9, 10]
+            has_escape = any(
+                self.sector_distances[s] >= self.lidar_min_distance and not dead_ends[s]
+                for s in escape_sectors
+            )
+            if not has_escape:
+                return True  # No escape route → dead-end ahead
+
+        return False
 
     def start_movement_thread(self):
         """Start the continuous movement thread for smooth motion"""
@@ -2200,6 +2326,23 @@ rclpy.shutdown()
             elif sector in [2, 10]:  # Front-side sectors
                 frontier_score += 0.05
 
+            # VISITED PENALTY: Heavily penalize revisiting areas
+            # This is critical for preventing the robot from looping
+            if self.current_position:
+                sector_angle = sector * (2 * math.pi / NUM_SECTORS)
+                look_ahead = min(dist, 1.5)
+                target_x = self.current_position[0] + look_ahead * math.cos(sector_angle)
+                target_y = self.current_position[1] + look_ahead * math.sin(sector_angle)
+
+                visit_count = self.visited_tracker.get_visit_count(target_x, target_y)
+
+                if visit_count == 1:
+                    frontier_score *= 0.5  # 50% penalty for visited once
+                elif visit_count == 2:
+                    frontier_score *= 0.25  # 75% penalty for visited twice
+                elif visit_count > 2:
+                    frontier_score *= 0.1  # 90% penalty for heavily visited
+
             if frontier_score > best_score:
                 best_score = frontier_score
                 best_sector = sector
@@ -2451,9 +2594,13 @@ rclpy.shutdown()
                                  self.sector_distances[1]] if d > BODY_THRESHOLD]
         front_arc_min = min(raw_front) if raw_front else 0.3
 
-        # Detect corridor/narrow passage
-        is_corridor, corridor_width, corridor_direction = self.vfh.detect_corridor(
+        # Detect corridor/narrow passage with hysteresis to prevent oscillation
+        raw_corridor, raw_width, corridor_direction = self.vfh.detect_corridor(
             self.sector_distances, ROBOT_WIDTH
+        )
+        # Apply hysteresis to smooth corridor detection
+        is_corridor, corridor_width = self.corridor_detector.update(
+            raw_corridor, raw_width, ROBOT_WIDTH
         )
         self.state_context.in_corridor = is_corridor
         self.state_context.corridor_width = corridor_width
@@ -2530,7 +2677,11 @@ rclpy.shutdown()
             if time_in_state > 2.0 and self.state_context.consecutive_avoidances > 0:
                 self.state_context.consecutive_avoidances = 0
 
-            if is_corridor and corridor_width >= MIN_CORRIDOR_WIDTH:
+            # PREDICTIVE dead-end check - avoid BEFORE getting trapped
+            if self.predict_dead_end_ahead(look_ahead_distance=1.2):
+                print(f"\n[PREDICT] Dead-end ahead! (front={front_arc_min:.2f}m) - avoiding early")
+                self.transition_state(RobotState.AVOIDING)
+            elif is_corridor and corridor_width >= MIN_CORRIDOR_WIDTH:
                 # Entered a corridor - switch to careful mode
                 print(f"\n[CORRIDOR] Detected passage (width={corridor_width:.2f}m, thresh={dynamic_min_dist:.2f}m)")
                 self.transition_state(RobotState.CORRIDOR)
@@ -2602,8 +2753,22 @@ rclpy.shutdown()
                     print(f"\n[SUCCESS] Clear path found ({front_arc_min:.2f}m) during turn")
                     self.transition_state(RobotState.FORWARD)
             elif time_in_state >= self.state_context.maneuver_duration:
-                # Turn completed but still blocked
-                self.avoidance_direction = None
+                # Turn completed but still blocked - try OPPOSITE direction
+                # FIX: Don't reset direction! Alternate to avoid infinite loops
+                if self.avoidance_direction == "left":
+                    self.avoidance_direction = "right"
+                elif self.avoidance_direction == "right":
+                    self.avoidance_direction = "left"
+                # else: keep None/straight, will be recalculated
+
+                self.state_context.consecutive_avoidances += 1
+
+                # If we've tried both directions multiple times, extend the turn
+                if self.state_context.consecutive_avoidances > 4:
+                    print(f"\n[STUCK] Multiple turn attempts failed, will try longer turn")
+                    self.state_context.maneuver_duration = min(
+                        self.state_context.maneuver_duration * 1.5, 3.0)
+
                 self.transition_state(RobotState.BACKING_UP)
 
         elif self.robot_state == RobotState.STUCK_RECOVERY:
