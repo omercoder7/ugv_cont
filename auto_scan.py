@@ -218,6 +218,431 @@ class StateContext:
 
 
 # ============================================================================
+# Collision Verifier FSM - Detects invisible obstacles via movement analysis
+# ============================================================================
+
+class CollisionVerifierState(Enum):
+    """States for the collision verification FSM"""
+    NORMAL = auto()           # Normal operation, no suspicion
+    PROBING = auto()          # Suspicious - driving slowly to verify
+    BLOCKED_DETECTED = auto() # Confirmed invisible obstacle
+    CALIBRATING = auto()      # Collecting calibration data
+
+
+class CollisionVerifier:
+    """
+    Detects invisible obstacles by comparing expected vs actual movement.
+
+    Key insight: When driving toward a clear path, odometry should match
+    commanded velocity. When blocked by an invisible obstacle (glass, thin
+    pole, etc.), LiDAR shows clear but odometry shows reduced/no movement.
+
+    The verifier:
+    1. Tracks movement efficiency (actual_distance / expected_distance)
+    2. When efficiency drops below threshold, enters PROBING state
+    3. In PROBING, drives slowly and monitors carefully
+    4. If still blocked, confirms invisible obstacle and creates virtual marker
+
+    PRE-CALIBRATION MODE:
+    Run ./auto_scan.py --calibrate to collect baseline data.
+    Drive the robot in:
+    1. Clear paths (hallways, open rooms) - collects "clear" baseline
+    2. Against known obstacles - collects "blocked" baseline
+    The calibration saves thresholds to detect invisible obstacles.
+
+    Calibration profiles:
+    - clear_path: Robot moves freely, efficiency ~0.9-1.1
+    - soft_block: Carpet edge, gentle resistance, efficiency ~0.4-0.6
+    - hard_block: Wall, glass, immovable, efficiency ~0.0-0.2
+    """
+
+    # Calibration file path (persistent across runs)
+    CALIBRATION_FILE = "/home/ws/ugv_cont/config/collision_verifier_calibration.json"
+
+    def __init__(self, calibration_mode: bool = False):
+        self.state = CollisionVerifierState.NORMAL
+        self.state_start_time = time.time()
+        self.calibration_mode = calibration_mode
+
+        # Movement tracking
+        self.last_position: Optional[Tuple[float, float]] = None
+        self.last_position_time: float = 0
+        self.commanded_velocity: float = 0.0
+
+        # Movement efficiency history (rolling window)
+        # efficiency = actual_distance / expected_distance
+        self.efficiency_history: List[float] = []
+        self.efficiency_window_size = 10  # Keep last 10 samples
+
+        # PRE-CALIBRATION DATA STORAGE
+        # Organized by scenario type for better thresholds
+        self.calibration_data = {
+            'clear_path': [],      # Efficiency samples when driving freely
+            'soft_block': [],      # Efficiency samples with soft resistance (carpet, etc)
+            'hard_block': [],      # Efficiency samples against walls/glass
+            'metadata': {
+                'robot_id': 'ugv_beast',
+                'calibrated_at': None,
+                'samples_collected': 0
+            }
+        }
+
+        # LEARNED THRESHOLDS (loaded from pre-calibration)
+        # These are the key values that distinguish clear vs blocked
+        self.clear_efficiency_min = 0.70      # Below this = not moving freely
+        self.suspicious_efficiency = 0.50     # Below this = possibly blocked
+        self.blocked_efficiency = 0.25        # Below this = definitely blocked
+
+        # Probing state parameters
+        self.probing_speed_factor = 0.5  # Reduce speed to 50% when probing
+        self.probing_duration = 0.8  # How long to probe before deciding (seconds)
+        self.probing_start_time = 0
+        self.probing_start_position: Optional[Tuple[float, float]] = None
+
+        # Blocked detection output
+        self.blocked_position: Optional[Tuple[float, float]] = None
+        self.blocked_confidence = 0.0  # 0-1, how confident we are about block
+
+        # Calibration collection mode state
+        self.current_calibration_label: Optional[str] = None  # 'clear', 'soft', 'hard'
+        self.calibration_samples_this_run: int = 0
+
+        # Load pre-calibration if available
+        self._load_calibration()
+
+    def _load_calibration(self):
+        """Load pre-calibration data from file if available"""
+        try:
+            if os.path.exists(self.CALIBRATION_FILE):
+                with open(self.CALIBRATION_FILE, 'r') as f:
+                    data = json.load(f)
+
+                    # Load computed thresholds
+                    thresholds = data.get('thresholds', {})
+                    self.clear_efficiency_min = thresholds.get('clear_min', 0.70)
+                    self.suspicious_efficiency = thresholds.get('suspicious', 0.50)
+                    self.blocked_efficiency = thresholds.get('blocked', 0.25)
+
+                    # Load raw data for potential re-calibration
+                    self.calibration_data = data.get('raw_data', self.calibration_data)
+
+                    metadata = data.get('metadata', {})
+                    samples = metadata.get('samples_collected', 0)
+
+                    print(f"[CollisionVerifier] Loaded calibration ({samples} samples):")
+                    print(f"  Clear path efficiency: >= {self.clear_efficiency_min:.0%}")
+                    print(f"  Suspicious (probe):    < {self.suspicious_efficiency:.0%}")
+                    print(f"  Blocked (confirmed):   < {self.blocked_efficiency:.0%}")
+            else:
+                print(f"[CollisionVerifier] No calibration file found - using defaults")
+                print(f"  Run './auto_scan.py --calibrate' to create calibration")
+        except Exception as e:
+            print(f"[CollisionVerifier] Failed to load calibration: {e}")
+            print(f"  Using default thresholds")
+
+    def _save_calibration(self):
+        """Save calibration data and computed thresholds to file"""
+        try:
+            # Ensure config directory exists
+            config_dir = os.path.dirname(self.CALIBRATION_FILE)
+            if not os.path.exists(config_dir):
+                os.makedirs(config_dir)
+
+            data = {
+                'thresholds': {
+                    'clear_min': self.clear_efficiency_min,
+                    'suspicious': self.suspicious_efficiency,
+                    'blocked': self.blocked_efficiency
+                },
+                'raw_data': self.calibration_data,
+                'metadata': {
+                    'robot_id': 'ugv_beast',
+                    'calibrated_at': time.strftime('%Y-%m-%d %H:%M:%S'),
+                    'samples_collected': (
+                        len(self.calibration_data.get('clear_path', [])) +
+                        len(self.calibration_data.get('soft_block', [])) +
+                        len(self.calibration_data.get('hard_block', []))
+                    )
+                }
+            }
+            with open(self.CALIBRATION_FILE, 'w') as f:
+                json.dump(data, f, indent=2)
+            print(f"[CollisionVerifier] Calibration saved to {self.CALIBRATION_FILE}")
+        except Exception as e:
+            print(f"[CollisionVerifier] Failed to save calibration: {e}")
+
+    def update(self, current_position: Optional[Tuple[float, float]],
+               commanded_linear: float, front_lidar_dist: float,
+               lidar_shows_clear: bool) -> dict:
+        """
+        Update the collision verifier with current sensor data.
+
+        Args:
+            current_position: (x, y) from odometry
+            commanded_linear: Commanded forward velocity (m/s)
+            front_lidar_dist: Front LiDAR distance reading
+            lidar_shows_clear: True if LiDAR thinks path is clear
+
+        Returns:
+            dict with:
+            - state: Current verifier state
+            - is_blocked: True if invisible obstacle detected
+            - recommended_speed: Suggested speed (reduced if probing/blocked)
+            - blocked_position: (x, y) of detected block, or None
+            - efficiency: Current movement efficiency
+        """
+        current_time = time.time()
+
+        # Result dict
+        result = {
+            'state': self.state,
+            'is_blocked': False,
+            'recommended_speed': 1.0,  # Multiplier for commanded speed
+            'blocked_position': None,
+            'efficiency': 1.0
+        }
+
+        # Skip if not driving forward or no position data
+        if commanded_linear <= 0.01 or current_position is None:
+            self.last_position = current_position
+            self.last_position_time = current_time
+            return result
+
+        # Calculate actual movement
+        if self.last_position is not None and self.last_position_time > 0:
+            dt = current_time - self.last_position_time
+
+            if dt > 0.05:  # At least 50ms between samples
+                # Actual distance moved
+                dx = current_position[0] - self.last_position[0]
+                dy = current_position[1] - self.last_position[1]
+                actual_distance = math.hypot(dx, dy)
+
+                # Expected distance based on commanded velocity
+                expected_distance = commanded_linear * dt
+
+                # Calculate efficiency
+                if expected_distance > 0.005:  # Minimum expected movement
+                    efficiency = actual_distance / expected_distance
+                    efficiency = min(efficiency, 2.0)  # Cap at 200% (shouldn't happen)
+
+                    result['efficiency'] = efficiency
+
+                    # Add to history
+                    self.efficiency_history.append(efficiency)
+                    if len(self.efficiency_history) > self.efficiency_window_size:
+                        self.efficiency_history.pop(0)
+
+                    # State machine logic
+                    result = self._process_state(
+                        efficiency, current_position, front_lidar_dist,
+                        lidar_shows_clear, current_time, result
+                    )
+
+                    # Collect calibration sample if path is clear and moving well
+                    if lidar_shows_clear and efficiency > 0.7 and self.state == CollisionVerifierState.NORMAL:
+                        self._add_calibration_sample(commanded_linear, efficiency, front_lidar_dist)
+
+        # Update tracking
+        self.last_position = current_position
+        self.last_position_time = current_time
+        self.commanded_velocity = commanded_linear
+
+        return result
+
+    def _process_state(self, efficiency: float, position: Tuple[float, float],
+                       front_dist: float, lidar_clear: bool,
+                       current_time: float, result: dict) -> dict:
+        """Process FSM state transitions based on efficiency"""
+
+        avg_efficiency = sum(self.efficiency_history) / len(self.efficiency_history) if self.efficiency_history else efficiency
+
+        # In calibration mode, just collect data and don't trigger blocking
+        if self.calibration_mode and self.current_calibration_label:
+            self._collect_calibration_sample(avg_efficiency, front_dist)
+            return result
+
+        if self.state == CollisionVerifierState.NORMAL:
+            # Check for suspicious movement
+            if lidar_clear and avg_efficiency < self.suspicious_efficiency:
+                # LiDAR says clear but we're not moving well - suspicious!
+                print(f"[CollisionVerifier] SUSPICIOUS: LiDAR clear but efficiency={avg_efficiency:.0%}")
+                self.state = CollisionVerifierState.PROBING
+                self.state_start_time = current_time
+                self.probing_start_time = current_time
+                self.probing_start_position = position
+                result['state'] = self.state
+                result['recommended_speed'] = self.probing_speed_factor  # Slow down to probe
+
+        elif self.state == CollisionVerifierState.PROBING:
+            result['recommended_speed'] = self.probing_speed_factor  # Keep slow
+
+            # Check if we've been probing long enough
+            probing_time = current_time - self.probing_start_time
+
+            if probing_time >= self.probing_duration:
+                # Evaluate probing result
+                if avg_efficiency < self.blocked_efficiency:
+                    # Confirmed blocked!
+                    print(f"[CollisionVerifier] BLOCKED CONFIRMED at ({position[0]:.2f}, {position[1]:.2f})")
+                    print(f"  Avg efficiency: {avg_efficiency:.0%} (threshold: {self.blocked_efficiency:.0%})")
+                    self.state = CollisionVerifierState.BLOCKED_DETECTED
+                    self.blocked_position = position
+                    self.blocked_confidence = 1.0 - avg_efficiency
+                    result['is_blocked'] = True
+                    result['blocked_position'] = position
+                    result['recommended_speed'] = 0.0  # Stop!
+                elif avg_efficiency < self.suspicious_efficiency:
+                    # Still suspicious, keep probing
+                    self.probing_start_time = current_time  # Reset probe timer
+                else:
+                    # False alarm, back to normal
+                    print(f"[CollisionVerifier] False alarm, efficiency recovered to {avg_efficiency:.0%}")
+                    self.state = CollisionVerifierState.NORMAL
+                    result['recommended_speed'] = 1.0
+
+            result['state'] = self.state
+
+        elif self.state == CollisionVerifierState.BLOCKED_DETECTED:
+            result['is_blocked'] = True
+            result['blocked_position'] = self.blocked_position
+            result['recommended_speed'] = 0.0
+
+            # Stay blocked until external reset or we move away
+            if self.probing_start_position:
+                dist_from_block = math.hypot(
+                    position[0] - self.probing_start_position[0],
+                    position[1] - self.probing_start_position[1]
+                )
+                if dist_from_block > 0.15:  # Moved 15cm away from block point
+                    print(f"[CollisionVerifier] Moved away from block, returning to NORMAL")
+                    self.state = CollisionVerifierState.NORMAL
+                    self.blocked_position = None
+                    result['is_blocked'] = False
+                    result['recommended_speed'] = 1.0
+
+        return result
+
+    def _collect_calibration_sample(self, efficiency: float, front_dist: float):
+        """Collect a sample during calibration mode"""
+        if self.current_calibration_label and self.current_calibration_label in self.calibration_data:
+            self.calibration_data[self.current_calibration_label].append({
+                'efficiency': efficiency,
+                'front_dist': front_dist,
+                'timestamp': time.time()
+            })
+            self.calibration_samples_this_run += 1
+
+            # Print progress every 10 samples
+            if self.calibration_samples_this_run % 10 == 0:
+                print(f"[CALIBRATE] {self.current_calibration_label}: {self.calibration_samples_this_run} samples, "
+                      f"last eff={efficiency:.0%}")
+
+    def start_calibration(self, label: str):
+        """
+        Start collecting calibration data for a specific scenario.
+
+        Args:
+            label: One of 'clear_path', 'soft_block', 'hard_block'
+        """
+        if label not in ['clear_path', 'soft_block', 'hard_block']:
+            print(f"[CALIBRATE] Invalid label '{label}'. Use: clear_path, soft_block, hard_block")
+            return
+
+        self.current_calibration_label = label
+        self.calibration_samples_this_run = 0
+        self.state = CollisionVerifierState.CALIBRATING
+        print(f"\n[CALIBRATE] Started collecting '{label}' samples")
+        print(f"  Drive the robot {'freely' if label == 'clear_path' else 'into obstacles'}")
+        print(f"  Press 'n' when done to switch scenario or 'c' to compute thresholds")
+
+    def stop_calibration(self):
+        """Stop collecting calibration data"""
+        if self.current_calibration_label:
+            count = len(self.calibration_data.get(self.current_calibration_label, []))
+            print(f"[CALIBRATE] Stopped '{self.current_calibration_label}' collection: {count} total samples")
+        self.current_calibration_label = None
+        self.state = CollisionVerifierState.NORMAL
+
+    def compute_thresholds_from_calibration(self):
+        """
+        Compute detection thresholds from collected calibration data.
+
+        Uses statistical analysis to find the boundary between clear and blocked.
+        """
+        clear_samples = self.calibration_data.get('clear_path', [])
+        hard_samples = self.calibration_data.get('hard_block', [])
+        soft_samples = self.calibration_data.get('soft_block', [])
+
+        if len(clear_samples) < 10:
+            print(f"[CALIBRATE] Need at least 10 clear_path samples (have {len(clear_samples)})")
+            return False
+
+        # Extract efficiency values
+        clear_effs = [s['efficiency'] for s in clear_samples]
+        hard_effs = [s['efficiency'] for s in hard_samples] if hard_samples else [0.1]
+        soft_effs = [s['efficiency'] for s in soft_samples] if soft_samples else []
+
+        # Statistics for clear path
+        clear_mean = sum(clear_effs) / len(clear_effs)
+        clear_min = min(clear_effs)
+        clear_variance = sum((e - clear_mean) ** 2 for e in clear_effs) / len(clear_effs)
+        clear_std = math.sqrt(clear_variance) if clear_variance > 0 else 0.1
+
+        # Statistics for blocked
+        if hard_effs:
+            hard_mean = sum(hard_effs) / len(hard_effs)
+            hard_max = max(hard_effs)
+        else:
+            hard_mean = 0.1
+            hard_max = 0.2
+
+        print(f"\n[CALIBRATE] Analysis Results:")
+        print(f"  Clear path: mean={clear_mean:.0%}, min={clear_min:.0%}, std={clear_std:.0%}")
+        print(f"  Hard block: mean={hard_mean:.0%}, max={hard_max:.0%}")
+        if soft_effs:
+            soft_mean = sum(soft_effs) / len(soft_effs)
+            print(f"  Soft block: mean={soft_mean:.0%}")
+
+        # Set thresholds
+        # Clear minimum: 2 std below clear mean, but not below hard max
+        self.clear_efficiency_min = max(hard_max + 0.10, clear_mean - 2 * clear_std)
+
+        # Blocked threshold: midpoint between hard max and clear min
+        self.blocked_efficiency = (hard_max + self.clear_efficiency_min) / 2 - 0.05
+
+        # Suspicious threshold: between blocked and clear
+        self.suspicious_efficiency = (self.blocked_efficiency + self.clear_efficiency_min) / 2
+
+        # Ensure ordering makes sense
+        self.blocked_efficiency = max(0.15, min(self.blocked_efficiency, 0.40))
+        self.suspicious_efficiency = max(self.blocked_efficiency + 0.10, min(self.suspicious_efficiency, 0.60))
+        self.clear_efficiency_min = max(self.suspicious_efficiency + 0.10, self.clear_efficiency_min)
+
+        print(f"\n[CALIBRATE] Computed Thresholds:")
+        print(f"  Clear path:  >= {self.clear_efficiency_min:.0%}")
+        print(f"  Suspicious:  < {self.suspicious_efficiency:.0%}  (triggers probing)")
+        print(f"  Blocked:     < {self.blocked_efficiency:.0%}  (confirms obstacle)")
+
+        # Save calibration
+        self._save_calibration()
+        return True
+
+    def reset(self):
+        """Reset to NORMAL state (call after recovery maneuver)"""
+        self.state = CollisionVerifierState.NORMAL
+        self.efficiency_history.clear()
+        self.blocked_position = None
+        self.probing_start_position = None
+
+    def get_status_string(self) -> str:
+        """Get human-readable status for display"""
+        avg_eff = sum(self.efficiency_history) / len(self.efficiency_history) if self.efficiency_history else 1.0
+        state_name = self.state.name
+        return f"CV:{state_name[:3]}|eff:{avg_eff:.0%}"
+
+
+# ============================================================================
 # VFH Histogram Controller
 # ============================================================================
 
@@ -2004,6 +2429,10 @@ class SectorObstacleAvoider:
             RobotState.STUCK_RECOVERY: 1.5,  # Give recovery time to work
             RobotState.STOPPED: 0.1,      # Can exit stopped quickly
         }
+
+        # Collision verifier FSM - detects invisible obstacles by tracking movement efficiency
+        # When LiDAR shows clear but odometry shows no movement, there's an invisible obstacle
+        self.collision_verifier = CollisionVerifier()
 
     def smooth_velocity(self, target_linear: float, target_angular: float) -> Tuple[float, float]:
         """
@@ -4572,6 +5001,7 @@ rclpy.shutdown()
         print(f"Sectors:         {NUM_SECTORS} ({self.sector_degrees}° each)")
         print(f"LiDAR rotation:  90° (corrected in software)")
         print(f"Stuck detection: Enabled (uses odometry)")
+        print(f"Collision verify: Enabled (tracks movement efficiency)")
         print(f"Motion smooth:   Continuous thread @30Hz + EMA(α={self.ema_alpha})")
         print(f"Algorithm:       {'VFH + State Machine' if self.use_vfh else 'Sector-based discrete'}")
         print(f"Dead-end detect: Enabled (skip 3+ blocked directions)")
@@ -4727,6 +5157,34 @@ rclpy.shutdown()
                         print(f"\n[DANGER] Very rapid approach! delta={front_delta:.2f}m - emergency slow")
                         linear *= 0.2  # Nearly stop
                 self.prev_front_distance = current_front
+
+                # COLLISION VERIFIER: Track movement efficiency to detect invisible obstacles
+                # This runs BEFORE check_if_stuck to catch blockages earlier
+                lidar_shows_clear = current_front > self.lidar_min_distance
+                cv_result = self.collision_verifier.update(
+                    current_position=self.current_position,
+                    commanded_linear=linear,
+                    front_lidar_dist=current_front,
+                    lidar_shows_clear=lidar_shows_clear
+                )
+
+                # Apply collision verifier's recommended speed adjustment
+                if cv_result['recommended_speed'] < 1.0:
+                    linear *= cv_result['recommended_speed']
+                    if cv_result['state'].name == 'PROBING':
+                        # Probing - slow but still moving to verify
+                        pass  # Already printed by CollisionVerifier
+                    elif cv_result['is_blocked']:
+                        # Blocked detected - create virtual obstacle and trigger recovery
+                        print(f"\n[CV-BLOCKED] Invisible obstacle detected by CollisionVerifier!")
+                        if cv_result['blocked_position']:
+                            self.add_virtual_obstacle(cv_result['blocked_position'][0],
+                                                     cv_result['blocked_position'][1])
+                        # Trigger backup maneuver
+                        turn_degrees = 45 if self.last_avoidance_direction == "left" else -45
+                        self.backup_then_turn(backup_duration=0.4, turn_degrees=turn_degrees)
+                        self.collision_verifier.reset()
+                        continue
 
                 if self.check_if_stuck(is_driving, linear):
                     # Robot is stuck on invisible obstacle!
