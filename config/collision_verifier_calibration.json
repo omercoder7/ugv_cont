@@ -1,11 +1,92 @@
 {
   "thresholds": {
-    "clear_min": 0.7,
-    "suspicious": 0.5,
-    "blocked": 0.25
+    "clear_min": 1.28,
+    "suspicious": 0.6,
+    "blocked": 0.4
   },
   "raw_data": {
-    "clear_path": [],
+    "clear_path": [
+      {
+        "efficiency": 1.3515548818420655,
+        "front_dist": 1.315,
+        "timestamp": 1765533082.335229
+      },
+      {
+        "efficiency": 1.0663770821396663,
+        "front_dist": 1.133,
+        "timestamp": 1765533085.1443574
+      },
+      {
+        "efficiency": 1.3428034606787473,
+        "front_dist": 0.915,
+        "timestamp": 1765533087.3374305
+      },
+      {
+        "efficiency": 1.0615482167074184,
+        "front_dist": 1.093,
+        "timestamp": 1765533137.0010824
+      },
+      {
+        "efficiency": 1.238916046224308,
+        "front_dist": 10.0,
+        "timestamp": 1765533139.2337513
+      },
+      {
+        "efficiency": 1.1994548497623836,
+        "front_dist": 0.622,
+        "timestamp": 1765533143.9328415
+      },
+      {
+        "efficiency": 1.193493795953563,
+        "front_dist": 0.409,
+        "timestamp": 1765533145.9907734
+      },
+      {
+        "efficiency": 1.16385868454669,
+        "front_dist": 0.185,
+        "timestamp": 1765533149.8362017
+      },
+      {
+        "efficiency": 2.0,
+        "front_dist": 1.594,
+        "timestamp": 1765533246.2321143
+      },
+      {
+        "efficiency": 1.3418948603280823,
+        "front_dist": 1.384,
+        "timestamp": 1765533249.206114
+      },
+      {
+        "efficiency": 2.0,
+        "front_dist": 1.225,
+        "timestamp": 1765533252.3083193
+      },
+      {
+        "efficiency": 2.0,
+        "front_dist": 0.962,
+        "timestamp": 1765533254.246828
+      },
+      {
+        "efficiency": 1.8500883457387225,
+        "front_dist": 0.752,
+        "timestamp": 1765533257.9425933
+      },
+      {
+        "efficiency": 2.0,
+        "front_dist": 0.61,
+        "timestamp": 1765533261.0417285
+      },
+      {
+        "efficiency": 2.0,
+        "front_dist": 0.35,
+        "timestamp": 1765533263.239428
+      },
+      {
+        "efficiency": 2.0,
+        "front_dist": 0.196,
+        "timestamp": 1765533267.36655
+      }
+    ],
     "soft_block": [],
     "hard_block": [],
     "pillow_chair": [
@@ -130,8 +211,8 @@
   },
   "metadata": {
     "robot_id": "ugv_beast",
-    "calibrated_at": "2025-12-12 11:49:17",
-    "samples_collected": 21,
+    "calibrated_at": "2025-12-12 11:54:29",
+    "samples_collected": 37,
     "obstacles_calibrated": [
       "clear_path",
       "soft_block",

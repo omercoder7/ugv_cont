@@ -294,6 +294,10 @@ def collect_data(label: str, duration: float, data: Dict, category: str = None) 
     time.sleep(3)
 
     samples = data['raw_data'].get(label, [])
+    existing_count = len(samples)
+    if existing_count > 0:
+        print(f"\n*** Found {existing_count} existing samples for '{label}' - will ADD to them ***")
+
     start_time = time.time()
 
     last_position: Optional[Tuple[float, float]] = None
@@ -364,7 +368,11 @@ def collect_data(label: str, duration: float, data: Dict, category: str = None) 
 
     # Update data
     data['raw_data'][label] = samples
-    print(f"\n\nCollected {sample_count} new samples ({len(samples)} total for '{label}')")
+    if existing_count > 0:
+        print(f"\n\nAdded {sample_count} new samples to existing {existing_count}")
+        print(f"Total samples for '{label}': {len(samples)}")
+    else:
+        print(f"\n\nCollected {sample_count} samples for '{label}'")
 
     return data
 
