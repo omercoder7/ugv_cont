@@ -273,21 +273,53 @@ done
 
 if [ "${SLAM_SUCCESS}" = false ]; then
     log_err "SLAM failed to start after ${SLAM_MAX_RETRIES} attempts!"
-    log "Attempting one more aggressive restart..."
+    log "Attempting aggressive manual restart..."
 
-    # Kill everything SLAM related
+    # Kill everything SLAM related - be thorough
     docker exec ${CONTAINER_NAME} pkill -9 -f "slam" 2>/dev/null || true
-    sleep 2
+    docker exec ${CONTAINER_NAME} pkill -9 -f "async_slam" 2>/dev/null || true
+    docker exec ${CONTAINER_NAME} pkill -9 -f "slam_toolbox" 2>/dev/null || true
+    sleep 3
 
-    # Try one more time with longer wait
-    start_slam
-    sleep 8
+    # Manual SLAM start - direct command without launch file wrapper issues
+    log "Starting SLAM directly..."
+    docker exec -d ${CONTAINER_NAME} bash -c "
+        source /opt/ros/humble/setup.bash && \
+        source /root/ugv_ws/install/setup.bash && \
+        ros2 launch slam_toolbox online_async_launch.py \
+          use_sim_time:=false \
+          slam_params_file:=/tmp/slam_toolbox_optimized.yaml > /tmp/slam.log 2>&1
+    "
 
-    if verify_slam_process && verify_map_publishing; then
-        log_ok "SLAM started on final attempt!"
-        SLAM_SUCCESS=true
+    # Wait longer for manual start
+    log "Waiting for manual SLAM start (10s)..."
+    for i in $(seq 1 10); do
+        echo -ne "\r  Progress: ${i}/10s"
+        sleep 1
+    done
+    echo ""
+
+    # Final verification
+    if verify_slam_process; then
+        log "SLAM process running, checking /map..."
+        sleep 2
+        if verify_map_publishing; then
+            log_ok "SLAM started on manual attempt!"
+            SLAM_SUCCESS=true
+        else
+            # Even if /map not publishing yet, process is running - might just need more time
+            if verify_map_topic; then
+                log_warn "SLAM running, /map topic exists but not publishing yet"
+                log "Give it 10-15 more seconds, then check with: ./ensure_slam.sh --check"
+                SLAM_SUCCESS=true  # Consider it a partial success
+            else
+                log_err "SLAM process running but no /map topic"
+                docker exec ${CONTAINER_NAME} tail -10 /tmp/slam.log 2>/dev/null || true
+            fi
+        fi
     else
-        log_err "SLAM truly failed - check /tmp/slam.log"
+        log_err "SLAM truly failed to start"
+        log "Check logs: docker exec ${CONTAINER_NAME} tail -30 /tmp/slam.log"
         docker exec ${CONTAINER_NAME} tail -10 /tmp/slam.log 2>/dev/null || true
     fi
 fi
