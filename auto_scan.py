@@ -1780,9 +1780,9 @@ class SectorObstacleAvoider:
         # Derivative-based stuck detection using sensor history
         # If average readings don't change while driving, we're stuck at same place
         self.sensor_history = []  # List of (time, avg_front_distance, odom_x, odom_y)
-        self.sensor_history_max_len = 20  # Keep last 20 samples (~0.67s at 30Hz)
+        self.sensor_history_max_len = 10  # Keep last 10 samples (~0.33s at 30Hz) - faster detection
         self.derivative_stuck_threshold = 0.03  # If avg change < this, we're stuck
-        self.derivative_stuck_ratio = 0.2  # Stuck if actual change < 20% of expected
+        self.derivative_stuck_ratio = 0.25  # Stuck if actual change < 25% of expected (slightly more sensitive)
 
         # Smoothing parameters (based on DWA/VFH research)
         # Exponential Moving Average for velocity smoothing
@@ -2522,7 +2522,7 @@ rclpy.shutdown()
                 return True
 
             # Robot is moving, update tracking periodically
-            if time_elapsed > 1.0:
+            if time_elapsed > 0.5:  # Reduced from 1.0s for faster response
                 self.last_position = current_pos
                 self.last_position_time = current_time
 
@@ -2535,12 +2535,12 @@ rclpy.shutdown()
             self.sensor_history.pop(0)
 
         # Need enough samples to compute derivative
-        if len(self.sensor_history) >= 10:
+        if len(self.sensor_history) >= 5:  # Reduced from 10 for faster detection
             oldest = self.sensor_history[0]
             newest = self.sensor_history[-1]
             dt = newest[0] - oldest[0]
 
-            if dt > 0.2:  # At least 0.2 seconds of data for faster stuck detection
+            if dt > 0.15:  # Reduced from 0.2s for faster stuck detection
                 # Compute average change in front distance
                 front_delta = abs(newest[1] - oldest[1])
 
