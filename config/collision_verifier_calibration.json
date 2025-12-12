@@ -1,6 +1,6 @@
 {
   "thresholds": {
-    "clear_min": 1.28,
+    "clear_min": 2.1,
     "suspicious": 0.6,
     "blocked": 0.4
   },
@@ -166,6 +166,21 @@
         "efficiency": 0.04032314019489782,
         "front_dist": 1.102,
         "timestamp": 1765532901.9959862
+      },
+      {
+        "efficiency": 2.0,
+        "front_dist": 1.088,
+        "timestamp": 1765533389.9968874
+      },
+      {
+        "efficiency": 2.0,
+        "front_dist": 0.526,
+        "timestamp": 1765533393.1444764
+      },
+      {
+        "efficiency": 2.0,
+        "front_dist": 0.46,
+        "timestamp": 1765533396.1483395
       }
     ],
     "robot_vaccum_docking_station": [
@@ -198,6 +213,31 @@
         "efficiency": 0.016238008409905365,
         "front_dist": 0.324,
         "timestamp": 1765532951.2364972
+      },
+      {
+        "efficiency": 2.0,
+        "front_dist": 10.0,
+        "timestamp": 1765533319.348682
+      },
+      {
+        "efficiency": 1.476567371159191,
+        "front_dist": 10.0,
+        "timestamp": 1765533323.1338763
+      },
+      {
+        "efficiency": 0.6213111860220873,
+        "front_dist": 0.321,
+        "timestamp": 1765533328.4559443
+      },
+      {
+        "efficiency": 2.0,
+        "front_dist": 0.322,
+        "timestamp": 1765533330.5557117
+      },
+      {
+        "efficiency": 0.6221026781343683,
+        "front_dist": 10.0,
+        "timestamp": 1765533334.234457
       }
     ]
   },
@@ -211,8 +251,8 @@
   },
   "metadata": {
     "robot_id": "ugv_beast",
-    "calibrated_at": "2025-12-12 11:54:29",
-    "samples_collected": 37,
+    "calibrated_at": "2025-12-12 11:56:39",
+    "samples_collected": 45,
     "obstacles_calibrated": [
       "clear_path",
       "soft_block",

@@ -528,6 +528,27 @@ def show_calibration():
     print(f"  Total samples: {meta.get('samples_collected', 0)}")
 
 
+def delete_obstacle(name: str) -> bool:
+    """Delete a specific obstacle from calibration data"""
+    data = load_calibration()
+    raw = data.get('raw_data', {})
+    categories = data.get('obstacle_categories', {})
+
+    if name not in raw:
+        print(f"Obstacle '{name}' not found in calibration data.")
+        print("Available obstacles:", ", ".join(raw.keys()) if raw else "(none)")
+        return False
+
+    sample_count = len(raw[name])
+    del raw[name]
+    if name in categories:
+        del categories[name]
+
+    save_calibration(data)
+    print(f"Deleted '{name}' ({sample_count} samples removed)")
+    return True
+
+
 def list_obstacles():
     """List all calibrated obstacles with their statistics"""
     data = load_calibration()
@@ -568,6 +589,7 @@ Examples:
   ./calibrate_collision.py --obstacle glass 20     # Collect 'glass' obstacle (default: hard)
   ./calibrate_collision.py --obstacle rug 15 --soft  # 'rug' as soft obstacle
   ./calibrate_collision.py --list                  # Show all calibrated obstacles
+  ./calibrate_collision.py --delete glass          # Delete 'glass' obstacle (re-calibrate fresh)
   ./calibrate_collision.py --compute               # Recompute thresholds
         """)
 
@@ -592,6 +614,8 @@ Examples:
                         help='Show current calibration and thresholds')
     parser.add_argument('--list', action='store_true',
                         help='List all calibrated obstacles with stats')
+    parser.add_argument('--delete', metavar='NAME',
+                        help='Delete a specific obstacle (then re-calibrate fresh)')
     parser.add_argument('--reset', action='store_true',
                         help='Reset all calibration data')
 
@@ -610,6 +634,10 @@ Examples:
 
     if args.list:
         list_obstacles()
+        return
+
+    if args.delete:
+        delete_obstacle(args.delete)
         return
 
     if args.reset:
@@ -679,7 +707,8 @@ Examples:
         print("  5. Compute thresholds")
         print("  6. Show current calibration")
         print("  7. List all obstacles")
-        print("  8. Reset all data")
+        print("  8. Delete an obstacle")
+        print("  9. Reset all data")
         print("  q. Quit")
 
         choice = input("\nSelect option: ").strip()
@@ -719,6 +748,14 @@ Examples:
         elif choice == '7':
             list_obstacles()
         elif choice == '8':
+            # Delete specific obstacle
+            list_obstacles()
+            name = input("\nEnter obstacle name to delete: ").strip()
+            if name:
+                if delete_obstacle(name):
+                    # Reload data after deletion
+                    data = load_calibration()
+        elif choice == '9':
             confirm = input("Reset ALL data? (y/N): ").strip().lower()
             if confirm == 'y':
                 data = {
