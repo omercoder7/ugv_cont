@@ -4374,12 +4374,31 @@ rclpy.shutdown()
                     continue
 
                 # Update sensors (only when NOT in a maneuver)
-                if not self.update_scan():
-                    time.sleep(0.1)
-                    continue
+                # OPTIMIZATION: Skip scan update every other iteration when far from obstacles
+                # This reduces blocking subprocess calls from ~300ms to ~150ms average
+                front_arc_min = min(self.sector_distances[0], self.sector_distances[1],
+                                   self.sector_distances[11]) if self.sector_distances else 10.0
+
+                iteration_count = getattr(self, '_iteration_count', 0)
+                self._iteration_count = iteration_count + 1
+
+                skip_scan = False
+                if front_arc_min > 1.0 and iteration_count % 2 == 1:
+                    # Far from obstacles - can skip every other scan update
+                    skip_scan = True
+
+                if not skip_scan:
+                    if not self.update_scan():
+                        time.sleep(0.1)
+                        continue
 
                 # Update current position for visited tracking
-                pos = self.get_odometry()
+                # Also skip odom every other iteration when far from obstacles
+                pos = None
+                if not skip_scan or iteration_count % 4 == 0:  # Always get odom at least every 4th iteration
+                    pos = self.get_odometry()
+                else:
+                    pos = self.current_position  # Use cached position
                 if pos:
                     self.current_position = pos
                     is_new = self.visited_tracker.mark_visited(pos[0], pos[1])
@@ -4415,8 +4434,22 @@ rclpy.shutdown()
                 if linear is None:
                     continue
 
-                # Check if stuck (driving but not moving)
+                # EARLY WARNING: Detect "approaching stuck" - front distance decreasing rapidly
+                # This triggers BEFORE robot actually hits obstacle
+                current_front = self.sector_distances[0] if self.sector_distances else 10.0
                 is_driving = linear > 0.01  # Only forward motion can be "stuck"
+
+                if self.prev_front_distance is not None and is_driving:
+                    front_delta = self.prev_front_distance - current_front
+                    # If closing at >5cm per cycle while driving forward, slow down preemptively
+                    if front_delta > 0.05:
+                        print(f"\r[WARN] Rapidly approaching obstacle! delta={front_delta:.2f}m", end="")
+                        linear *= 0.5  # Cut speed in half
+                    # If closing at >8cm per cycle, this is dangerous - nearly stop
+                    elif front_delta > 0.08:
+                        print(f"\n[DANGER] Very rapid approach! delta={front_delta:.2f}m - emergency slow")
+                        linear *= 0.2  # Nearly stop
+                self.prev_front_distance = current_front
 
                 if self.check_if_stuck(is_driving, linear):
                     # Robot is stuck on invisible obstacle!
