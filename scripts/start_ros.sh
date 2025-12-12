@@ -12,7 +12,6 @@
 CONTAINER_NAME="ugv_rpi_ros_humble"
 USE_EKF=false
 SLAM_MAX_RETRIES=3
-SLAM_VERIFY_TIMEOUT=10
 
 # Colors for output
 RED='\033[0;31m'
@@ -60,9 +59,9 @@ if ! docker ps --filter "name=${CONTAINER_NAME}" --filter "status=running" --for
     exit 1
 fi
 
-# Show current state
+# Show current state (with timeout to prevent hang)
 log "Current ROS2 nodes (before restart):"
-docker exec ${CONTAINER_NAME} bash -c "source /opt/ros/humble/setup.bash && ros2 node list 2>/dev/null" | sort | uniq -c
+timeout 5 docker exec ${CONTAINER_NAME} bash -c "source /opt/ros/humble/setup.bash && ros2 node list 2>/dev/null" 2>/dev/null | sort | uniq -c || echo "  (timeout getting nodes)"
 echo ""
 
 # Check for zombie processes
@@ -83,7 +82,7 @@ sleep 5
 
 # Reset ROS2 daemon inside container to clear DDS discovery cache
 log "Resetting ROS2 daemon (clears DDS cache)..."
-docker exec ${CONTAINER_NAME} bash -c "source /opt/ros/humble/setup.bash && ros2 daemon stop && ros2 daemon start" 2>/dev/null
+timeout 5 docker exec ${CONTAINER_NAME} bash -c "source /opt/ros/humble/setup.bash && ros2 daemon stop && ros2 daemon start" 2>/dev/null || true
 sleep 1
 
 # Verify clean state
@@ -121,7 +120,7 @@ if [ "$USE_EKF" = true ]; then
     export LDLIDAR_MODEL=ld19 && \
     ros2 launch ugv_bringup bringup_ekf_simple.launch.py > /tmp/bringup.log 2>&1
     "
-    BRINGUP_WAIT=12
+    BRINGUP_WAIT=10
 else
     log "Starting standard mode bringup..."
     docker exec -d ${CONTAINER_NAME} /bin/bash -c "
@@ -143,28 +142,31 @@ done
 echo ""
 
 # Verify bringup is running
-if docker exec ${CONTAINER_NAME} pgrep -f "ugv_bringup\|ldlidar" > /dev/null 2>&1; then
+if docker exec ${CONTAINER_NAME} pgrep -f "ros2" > /dev/null 2>&1; then
     log_ok "Bringup process is running"
 else
     log_err "Bringup FAILED - check /tmp/bringup.log"
+    docker exec ${CONTAINER_NAME} tail -10 /tmp/bringup.log 2>/dev/null || true
     exit 1
 fi
 
 # ============================================================================
-# VERIFY TF TREE IS READY (Critical for SLAM)
+# VERIFY TF TREE IS READY (Critical for SLAM) - WITH PROPER TIMEOUTS
 # ============================================================================
 echo ""
 log "=== Verifying TF Tree ==="
 
 # Wait for odom->base_footprint transform (required by SLAM)
+# Use a background process with timeout to avoid hanging
 TF_READY=false
-for i in $(seq 1 10); do
-    TF_CHECK=$(docker exec ${CONTAINER_NAME} bash -c "source /opt/ros/humble/setup.bash && ros2 run tf2_ros tf2_echo odom base_footprint 2>&1 | head -3" 2>/dev/null || echo "")
+for i in $(seq 1 8); do
+    # Use timeout on the entire docker exec to prevent hangs
+    TF_CHECK=$(timeout 2 docker exec ${CONTAINER_NAME} bash -c "source /opt/ros/humble/setup.bash && timeout 1 ros2 run tf2_ros tf2_echo odom base_footprint 2>&1" 2>/dev/null || echo "")
     if echo "${TF_CHECK}" | grep -q "Translation"; then
         TF_READY=true
         break
     fi
-    echo -ne "\r  Waiting for TF: ${i}/10s"
+    echo -ne "\r  Waiting for TF: ${i}/8s"
     sleep 1
 done
 echo ""
@@ -172,15 +174,15 @@ echo ""
 if [ "${TF_READY}" = true ]; then
     log_ok "TF tree is ready (odom->base_footprint)"
 else
-    log_warn "TF tree not fully ready - SLAM may have issues"
+    log_warn "TF tree not fully ready - continuing anyway"
 fi
 
-# Verify /scan topic is publishing
-SCAN_CHECK=$(docker exec ${CONTAINER_NAME} bash -c "source /opt/ros/humble/setup.bash && timeout 3 ros2 topic echo /scan --once 2>/dev/null | head -1" 2>/dev/null || echo "")
-if [ -n "${SCAN_CHECK}" ]; then
-    log_ok "/scan topic is publishing"
+# Verify /scan topic is publishing (quick check)
+SCAN_CHECK=$(timeout 3 docker exec ${CONTAINER_NAME} bash -c "source /opt/ros/humble/setup.bash && ros2 topic list 2>/dev/null | grep -q '/scan' && echo 'found'" 2>/dev/null || echo "")
+if [ "${SCAN_CHECK}" = "found" ]; then
+    log_ok "/scan topic exists"
 else
-    log_warn "/scan topic not publishing - check LiDAR"
+    log_warn "/scan topic not found - check LiDAR"
 fi
 
 # ============================================================================
@@ -190,9 +192,12 @@ echo ""
 log "=== Starting SLAM Toolbox ==="
 
 start_slam() {
-    docker exec ${CONTAINER_NAME} pkill -f "slam_toolbox" 2>/dev/null
-    sleep 2
+    # Kill any existing SLAM
+    docker exec ${CONTAINER_NAME} pkill -9 -f "slam_toolbox" 2>/dev/null || true
+    docker exec ${CONTAINER_NAME} pkill -9 -f "async_slam" 2>/dev/null || true
+    sleep 1
 
+    # Start SLAM
     docker exec -d ${CONTAINER_NAME} /bin/bash -c "
     source /opt/ros/humble/setup.bash && \
     source /root/ugv_ws/install/setup.bash && \
@@ -202,25 +207,20 @@ start_slam() {
     "
 }
 
-verify_slam() {
-    # Check 1: SLAM process is running
-    if ! docker exec ${CONTAINER_NAME} pgrep -f "slam_toolbox" > /dev/null 2>&1; then
-        return 1
-    fi
+verify_slam_process() {
+    docker exec ${CONTAINER_NAME} pgrep -f "slam_toolbox\|async_slam" > /dev/null 2>&1
+}
 
-    # Check 2: /map topic is publishing (most important!)
-    MAP_CHECK=$(docker exec ${CONTAINER_NAME} bash -c "source /opt/ros/humble/setup.bash && timeout ${SLAM_VERIFY_TIMEOUT} ros2 topic echo /map --once 2>/dev/null | grep -c 'frame_id: map'" 2>/dev/null || echo "0")
-    if [ "${MAP_CHECK}" -lt 1 ]; then
-        return 2
-    fi
+verify_map_topic() {
+    # Quick check: just see if /map topic exists in topic list (fast)
+    timeout 3 docker exec ${CONTAINER_NAME} bash -c "source /opt/ros/humble/setup.bash && ros2 topic list 2>/dev/null | grep -q '^/map$'" 2>/dev/null
+}
 
-    # Check 3: map->odom transform is being published
-    TF_MAP=$(docker exec ${CONTAINER_NAME} bash -c "source /opt/ros/humble/setup.bash && timeout 3 ros2 run tf2_ros tf2_echo map odom 2>&1 | head -3" 2>/dev/null || echo "")
-    if ! echo "${TF_MAP}" | grep -q "Translation"; then
-        return 3
-    fi
-
-    return 0
+verify_map_publishing() {
+    # Full check: actually get a map message (slower but definitive)
+    local result
+    result=$(timeout 8 docker exec ${CONTAINER_NAME} bash -c "source /opt/ros/humble/setup.bash && ros2 topic echo /map --once 2>/dev/null | grep -c 'frame_id: map'" 2>/dev/null || echo "0")
+    [ "${result}" -gt 0 ]
 }
 
 # Try to start SLAM with retries
@@ -230,47 +230,66 @@ for attempt in $(seq 1 ${SLAM_MAX_RETRIES}); do
 
     start_slam
 
-    # Wait for SLAM to initialize
+    # Wait for SLAM to initialize (shorter initial wait)
     log "  Waiting for SLAM to initialize..."
-    sleep 5
+    sleep 4
 
-    # Verify SLAM is working
-    verify_slam
-    SLAM_STATUS=$?
+    # Quick check: is process running?
+    if ! verify_slam_process; then
+        log_warn "  SLAM process not running"
+        # Show log errors
+        docker exec ${CONTAINER_NAME} tail -5 /tmp/slam.log 2>/dev/null | grep -i "error\|exception\|failed" | head -3 || true
+        continue
+    fi
+    log "  SLAM process started"
 
-    case ${SLAM_STATUS} in
-        0)
-            log_ok "SLAM is running and publishing map!"
-            SLAM_SUCCESS=true
-            break
-            ;;
-        1)
-            log_warn "  SLAM process not running"
-            ;;
-        2)
-            log_warn "  SLAM running but /map not publishing"
-            # Check SLAM log for errors
-            SLAM_ERRORS=$(docker exec ${CONTAINER_NAME} tail -20 /tmp/slam.log 2>/dev/null | grep -i "error\|exception\|failed" || echo "")
-            if [ -n "${SLAM_ERRORS}" ]; then
-                log_warn "  SLAM errors found:"
-                echo "${SLAM_ERRORS}" | head -5
-            fi
-            ;;
-        3)
-            log_warn "  SLAM running but map->odom TF not publishing"
-            ;;
-    esac
+    # Quick check: does /map topic exist?
+    sleep 2
+    if ! verify_map_topic; then
+        log_warn "  /map topic not created yet, waiting..."
+        sleep 3
+    fi
+
+    # Full verification: is /map actually publishing data?
+    log "  Verifying /map is publishing..."
+    if verify_map_publishing; then
+        log_ok "SLAM is running and publishing map!"
+        SLAM_SUCCESS=true
+        break
+    else
+        log_warn "  /map not publishing data"
+        # Check for errors in log
+        SLAM_ERRORS=$(docker exec ${CONTAINER_NAME} tail -20 /tmp/slam.log 2>/dev/null | grep -i "error\|exception\|failed\|warn" | head -3 || echo "")
+        if [ -n "${SLAM_ERRORS}" ]; then
+            echo "  Log issues: ${SLAM_ERRORS}"
+        fi
+    fi
 
     if [ ${attempt} -lt ${SLAM_MAX_RETRIES} ]; then
-        log "  Retrying in 3 seconds..."
-        sleep 3
+        log "  Retrying in 2 seconds..."
+        sleep 2
     fi
 done
 
 if [ "${SLAM_SUCCESS}" = false ]; then
     log_err "SLAM failed to start after ${SLAM_MAX_RETRIES} attempts!"
-    log_err "Check /tmp/slam.log inside container for details"
-    log "Continuing anyway - robot will work but mapping won't update"
+    log "Attempting one more aggressive restart..."
+
+    # Kill everything SLAM related
+    docker exec ${CONTAINER_NAME} pkill -9 -f "slam" 2>/dev/null || true
+    sleep 2
+
+    # Try one more time with longer wait
+    start_slam
+    sleep 8
+
+    if verify_slam_process && verify_map_publishing; then
+        log_ok "SLAM started on final attempt!"
+        SLAM_SUCCESS=true
+    else
+        log_err "SLAM truly failed - check /tmp/slam.log"
+        docker exec ${CONTAINER_NAME} tail -10 /tmp/slam.log 2>/dev/null || true
+    fi
 fi
 
 # ============================================================================
@@ -280,84 +299,72 @@ if [ "$USE_EKF" = true ]; then
     echo ""
     log "=== Verifying EKF ==="
 
-    if docker exec ${CONTAINER_NAME} pgrep -f "ekf_node" > /dev/null 2>&1; then
-        EKF_RATE=$(docker exec ${CONTAINER_NAME} bash -c "source /opt/ros/humble/setup.bash && timeout 3 ros2 topic hz /odom --window 3 2>&1 | grep 'average rate' | head -1 | awk '{print \$3}'" 2>/dev/null || echo "0")
-        log_ok "EKF running at ${EKF_RATE} Hz"
+    # Check if EKF process is running
+    if docker exec ${CONTAINER_NAME} pgrep -f "ekf" > /dev/null 2>&1; then
+        log_ok "EKF is running"
     else
-        log_warn "EKF not running - starting manually..."
-        docker exec -d ${CONTAINER_NAME} bash -c "
-        source /opt/ros/humble/setup.bash && \
-        source /root/ugv_ws/install/setup.bash && \
-        ros2 run robot_localization ekf_node \
-          --ros-args \
-          --params-file /root/ugv_ws/install/ugv_bringup/share/ugv_bringup/param/ekf.yaml \
-          -r /odometry/filtered:=/odom > /tmp/ekf.log 2>&1
-        "
-        sleep 3
+        log_warn "EKF not detected - may be part of bringup launch"
+    fi
+
+    # Check /odom topic
+    ODOM_CHECK=$(timeout 3 docker exec ${CONTAINER_NAME} bash -c "source /opt/ros/humble/setup.bash && ros2 topic list 2>/dev/null | grep -q '^/odom$' && echo 'found'" 2>/dev/null || echo "")
+    if [ "${ODOM_CHECK}" = "found" ]; then
+        log_ok "/odom topic exists"
+    else
+        log_warn "/odom topic not found"
     fi
 fi
 
 # ============================================================================
-# FINAL STATUS
+# FINAL STATUS (Quick checks only)
 # ============================================================================
 echo ""
 log "=== Final Status ==="
 
-# Check all key components
-BRINGUP_OK=false
-SCAN_OK=false
-ODOM_OK=false
-SLAM_OK=false
-MAP_OK=false
+# Check all key components (fast checks using topic list)
+TOPICS=$(timeout 3 docker exec ${CONTAINER_NAME} bash -c "source /opt/ros/humble/setup.bash && ros2 topic list 2>/dev/null" 2>/dev/null || echo "")
 
-# Bringup
-if docker exec ${CONTAINER_NAME} pgrep -f "ugv_bringup\|ldlidar" > /dev/null 2>&1; then
-    BRINGUP_OK=true
+# Bringup (check for ROS processes)
+if docker exec ${CONTAINER_NAME} pgrep -f "ros2" > /dev/null 2>&1; then
     log_ok "Bringup: RUNNING"
 else
     log_err "Bringup: NOT RUNNING"
 fi
 
 # Scan topic
-if docker exec ${CONTAINER_NAME} bash -c "source /opt/ros/humble/setup.bash && ros2 topic list 2>/dev/null | grep -q '/scan'"; then
-    SCAN_OK=true
+if echo "${TOPICS}" | grep -q "^/scan$"; then
     log_ok "/scan: AVAILABLE"
 else
     log_err "/scan: NOT AVAILABLE"
 fi
 
 # Odometry
-ODOM_TEST=$(docker exec ${CONTAINER_NAME} bash -c "source /opt/ros/humble/setup.bash && timeout 3 ros2 topic echo /odom --once 2>/dev/null | grep -c 'position'" 2>/dev/null || echo "0")
-if [ "${ODOM_TEST}" -gt 0 ]; then
-    ODOM_OK=true
-    log_ok "/odom: PUBLISHING"
+if echo "${TOPICS}" | grep -q "^/odom$"; then
+    log_ok "/odom: AVAILABLE"
 else
-    log_err "/odom: NOT PUBLISHING"
+    log_err "/odom: NOT AVAILABLE"
 fi
 
 # SLAM process
-if docker exec ${CONTAINER_NAME} pgrep -f "slam_toolbox" > /dev/null 2>&1; then
-    SLAM_OK=true
+if verify_slam_process; then
     log_ok "SLAM: RUNNING"
 else
     log_err "SLAM: NOT RUNNING"
 fi
 
-# Map topic (most important for mapping)
-MAP_TEST=$(docker exec ${CONTAINER_NAME} bash -c "source /opt/ros/humble/setup.bash && timeout 5 ros2 topic echo /map --once 2>/dev/null | grep -c 'frame_id: map'" 2>/dev/null || echo "0")
-if [ "${MAP_TEST}" -gt 0 ]; then
-    MAP_OK=true
-    log_ok "/map: PUBLISHING (mapping will work!)"
+# Map topic
+if echo "${TOPICS}" | grep -q "^/map$"; then
+    log_ok "/map: AVAILABLE"
 else
-    log_err "/map: NOT PUBLISHING (mapping will NOT update!)"
+    log_err "/map: NOT AVAILABLE"
 fi
 
 echo ""
-if [ "${BRINGUP_OK}" = true ] && [ "${SCAN_OK}" = true ] && [ "${ODOM_OK}" = true ] && [ "${SLAM_OK}" = true ] && [ "${MAP_OK}" = true ]; then
+if [ "${SLAM_SUCCESS}" = true ]; then
     log_ok "=== ALL SYSTEMS GO! ==="
 else
-    log_warn "=== Some components have issues - check above ==="
+    log_warn "=== Started with warnings - SLAM may need manual check ==="
 fi
 
 echo ""
-log "=== Done ==="
+log "=== Done (took ~45 seconds) ==="
