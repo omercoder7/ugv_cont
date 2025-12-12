@@ -876,6 +876,163 @@ class CorridorDetectorWithHysteresis:
         return self.in_corridor, self.corridor_width_smooth
 
 
+class EscapeMemory:
+    """
+    Tracks which escape maneuvers worked in different situations.
+
+    When the robot gets stuck and successfully escapes, this class remembers:
+    - The approximate location (grid cell)
+    - What maneuver worked (direction, duration)
+    - What the sensor readings looked like
+
+    When stuck in a similar location/situation, suggests previously successful maneuvers.
+    """
+
+    def __init__(self, grid_resolution: float = 0.5):
+        self.grid_resolution = grid_resolution
+        # Key: (cell_x, cell_y), Value: list of successful escapes
+        self.escape_history: Dict[Tuple[int, int], List[Dict]] = {}
+        # Recent failed attempts at current location
+        self.recent_failures: List[Dict] = []
+        self.current_stuck_position: Optional[Tuple[float, float]] = None
+        self.current_stuck_time: float = 0.0
+
+    def pos_to_cell(self, x: float, y: float) -> Tuple[int, int]:
+        """Convert world position to grid cell"""
+        return (int(x / self.grid_resolution), int(y / self.grid_resolution))
+
+    def record_stuck(self, x: float, y: float, front_dist: float,
+                     left_dist: float, right_dist: float):
+        """Record that robot is stuck at this position"""
+        self.current_stuck_position = (x, y)
+        self.current_stuck_time = time.time()
+        self.recent_failures = []
+
+    def record_escape_attempt(self, direction: str, duration: float,
+                               backup_dist: float, turn_angle: float):
+        """Record an escape attempt (before knowing if it worked)"""
+        self.recent_failures.append({
+            "direction": direction,
+            "duration": duration,
+            "backup_dist": backup_dist,
+            "turn_angle": turn_angle,
+            "timestamp": time.time()
+        })
+
+    def record_escape_success(self, x: float, y: float):
+        """Robot escaped! Record what worked."""
+        if self.current_stuck_position is None:
+            return
+
+        cell = self.pos_to_cell(*self.current_stuck_position)
+
+        # The last attempt that was made before escaping
+        if self.recent_failures:
+            successful_maneuver = self.recent_failures[-1].copy()
+            successful_maneuver["escape_time"] = time.time() - self.current_stuck_time
+
+            if cell not in self.escape_history:
+                self.escape_history[cell] = []
+
+            # Keep only last 5 successful escapes per cell
+            self.escape_history[cell].append(successful_maneuver)
+            if len(self.escape_history[cell]) > 5:
+                self.escape_history[cell].pop(0)
+
+        # Clear current stuck state
+        self.current_stuck_position = None
+        self.recent_failures = []
+
+    def get_suggested_escape(self, x: float, y: float) -> Optional[Dict]:
+        """
+        Get a suggested escape maneuver based on history at this location.
+
+        Returns None if no history, or a dict with:
+        - direction: "left" or "right"
+        - duration: suggested turn duration
+        - backup_dist: suggested backup distance
+        - turn_angle: suggested turn angle in degrees
+        - confidence: how many times this worked before
+        """
+        cell = self.pos_to_cell(x, y)
+
+        # Check this cell and adjacent cells
+        cells_to_check = [
+            cell,
+            (cell[0] + 1, cell[1]),
+            (cell[0] - 1, cell[1]),
+            (cell[0], cell[1] + 1),
+            (cell[0], cell[1] - 1),
+        ]
+
+        all_escapes = []
+        for c in cells_to_check:
+            if c in self.escape_history:
+                all_escapes.extend(self.escape_history[c])
+
+        if not all_escapes:
+            return None
+
+        # Avoid directions that recently failed
+        failed_directions = {f["direction"] for f in self.recent_failures}
+
+        # Count successes by direction
+        left_successes = [e for e in all_escapes if e["direction"] == "left"]
+        right_successes = [e for e in all_escapes if e["direction"] == "right"]
+
+        # Prefer direction that worked more often and hasn't recently failed
+        if "left" not in failed_directions and len(left_successes) >= len(right_successes):
+            best = left_successes
+            direction = "left"
+        elif "right" not in failed_directions and len(right_successes) > 0:
+            best = right_successes
+            direction = "right"
+        elif left_successes:
+            best = left_successes
+            direction = "left"
+        elif right_successes:
+            best = right_successes
+            direction = "right"
+        else:
+            return None
+
+        # Average the successful maneuver parameters
+        avg_duration = sum(e.get("duration", 1.0) for e in best) / len(best)
+        avg_backup = sum(e.get("backup_dist", 0.3) for e in best) / len(best)
+        avg_angle = sum(e.get("turn_angle", 45) for e in best) / len(best)
+
+        return {
+            "direction": direction,
+            "duration": avg_duration,
+            "backup_dist": avg_backup,
+            "turn_angle": avg_angle,
+            "confidence": len(best)
+        }
+
+    def get_alternative_direction(self) -> str:
+        """Get a direction that hasn't been tried recently"""
+        failed_directions = {f["direction"] for f in self.recent_failures}
+
+        if "left" not in failed_directions:
+            return "left"
+        elif "right" not in failed_directions:
+            return "right"
+        else:
+            # Both failed, try opposite of the most recent
+            if self.recent_failures:
+                last = self.recent_failures[-1]["direction"]
+                return "right" if last == "left" else "left"
+            return "left"
+
+    def clear_old_failures(self, max_age_seconds: float = 30.0):
+        """Clear failures older than max_age"""
+        now = time.time()
+        self.recent_failures = [
+            f for f in self.recent_failures
+            if now - f["timestamp"] < max_age_seconds
+        ]
+
+
 class VisitedTracker:
     """
     Tracks visited locations using a grid-based approach.
@@ -1125,6 +1282,9 @@ class SectorObstacleAvoider:
 
         # Corridor detector with hysteresis to prevent oscillation
         self.corridor_detector = CorridorDetectorWithHysteresis()
+
+        # Escape memory - tracks which maneuvers worked in stuck situations
+        self.escape_memory = EscapeMemory(grid_resolution=0.5)
 
         # DWA-style trajectory scorer for the AVOIDING state
         self.trajectory_scorer = TrajectoryScorer(max_speed=self.linear_speed, max_yaw_rate=1.0)
@@ -2546,6 +2706,7 @@ rclpy.shutdown()
         """
         Transition to a new state with logging.
         Respects minimum state duration to prevent oscillation.
+        Also tracks escape memory for learning from stuck situations.
         """
         if new_state == self.robot_state:
             return  # Already in this state
@@ -2560,6 +2721,29 @@ rclpy.shutdown()
         self.robot_state = new_state
         self.state_context.state_start_time = time.time()
         print(f"\n[STATE] {old_state.name} -> {new_state.name}")
+
+        # Track escape memory for stuck situations
+        if self.current_position:
+            x, y = self.current_position
+
+            # Entering BACKING_UP = robot is stuck
+            if new_state == RobotState.BACKING_UP and old_state in [RobotState.FORWARD, RobotState.CORRIDOR, RobotState.AVOIDING]:
+                front = self.sector_distances[0] if self.sector_distances else 1.0
+                left = self.sector_distances[1] if self.sector_distances else 1.0
+                right = self.sector_distances[11] if self.sector_distances else 1.0
+                self.escape_memory.record_stuck(x, y, front, left, right)
+
+            # Successful escape! TURNING -> FORWARD/CORRIDOR
+            elif old_state == RobotState.TURNING and new_state in [RobotState.FORWARD, RobotState.CORRIDOR]:
+                self.escape_memory.record_escape_success(x, y)
+                print(f"[ESCAPE] Recorded successful escape at ({x:.1f}, {y:.1f})")
+
+            # Also track STUCK_RECOVERY -> FORWARD as success
+            elif old_state == RobotState.STUCK_RECOVERY and new_state == RobotState.FORWARD:
+                self.escape_memory.record_escape_success(x, y)
+
+        # Clear old failures periodically
+        self.escape_memory.clear_old_failures()
 
     def update_state_context(self, front_clearance: float, best_sector: int,
                             best_distance: float, stuck_detected: bool):
@@ -2954,7 +3138,24 @@ rclpy.shutdown()
                 # This prevents the robot from oscillating by trying same direction repeatedly
                 force_alternate = self.state_context.consecutive_avoidances >= 1  # Alternate after just 1 avoidance
 
-                if force_alternate:
+                # First, check escape memory for learned successful escapes
+                escape_suggestion = None
+                if self.current_position:
+                    escape_suggestion = self.escape_memory.get_suggested_escape(*self.current_position)
+
+                if escape_suggestion and escape_suggestion["confidence"] >= 2:
+                    # We have strong history at this location - use what worked before
+                    self.avoidance_direction = escape_suggestion["direction"]
+                    turn_degrees = escape_suggestion.get("turn_angle", 60)
+                    # Record this as an attempt
+                    self.escape_memory.record_escape_attempt(
+                        self.avoidance_direction,
+                        escape_suggestion.get("duration", 1.0),
+                        0.3,  # backup distance
+                        turn_degrees
+                    )
+                    print(f"\n[ESCAPE-MEM] Using learned escape: {self.avoidance_direction} (conf={escape_suggestion['confidence']})")
+                elif force_alternate:
                     # Force opposite direction from last time
                     # BUT: don't turn into a dead-end if other direction is viable
                     preferred = "right" if self.last_avoidance_direction == "left" else "left"
@@ -2966,13 +3167,19 @@ rclpy.shutdown()
                         print(f"\n[DEAD-END] Avoiding right dead-end, going left")
                     self.avoidance_direction = preferred
                     turn_degrees = right_turn_angle + margin if self.avoidance_direction == "right" else left_turn_angle + margin
+                    # Record attempt for escape memory
+                    self.escape_memory.record_escape_attempt(self.avoidance_direction, 1.0, 0.3, abs(turn_degrees))
                     print(f"\n[ALTERNATE] Forcing {self.avoidance_direction} (avoiding passage trap)")
                 elif left_turn_angle <= right_turn_angle:
                     self.avoidance_direction = "left"
                     turn_degrees = left_turn_angle + margin
+                    # Record attempt for escape memory
+                    self.escape_memory.record_escape_attempt(self.avoidance_direction, 1.0, 0.3, turn_degrees)
                 else:
                     self.avoidance_direction = "right"
                     turn_degrees = right_turn_angle + margin
+                    # Record attempt for escape memory
+                    self.escape_memory.record_escape_attempt(self.avoidance_direction, 1.0, 0.3, turn_degrees)
 
                 self.last_avoidance_direction = self.avoidance_direction
 
