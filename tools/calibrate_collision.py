@@ -377,10 +377,44 @@ def collect_data(label: str, duration: float, data: Dict, category: str = None) 
     return data
 
 
+def percentile(data: list, p: float) -> float:
+    """Compute the p-th percentile of data (0-100)"""
+    if not data:
+        return 0.0
+    sorted_data = sorted(data)
+    k = (len(sorted_data) - 1) * p / 100.0
+    f = int(k)
+    c = f + 1 if f + 1 < len(sorted_data) else f
+    return sorted_data[f] + (k - f) * (sorted_data[c] - sorted_data[f])
+
+
+def rms(data: list) -> float:
+    """Compute Root Mean Square of data"""
+    if not data:
+        return 0.0
+    return math.sqrt(sum(x**2 for x in data) / len(data))
+
+
 def compute_thresholds(data: Dict) -> Dict:
-    """Compute detection thresholds from collected data (including custom obstacles)"""
+    """
+    Compute detection thresholds from collected data using ROBUST statistics.
+
+    Uses percentiles instead of min/max to avoid outliers affecting thresholds.
+    RMS is used for blocked detection since we care about overall "blocked-ness".
+
+    Key insight from real data:
+    - Clear path: efficiency ~1.0-2.0 (odometry can overshoot due to slip)
+    - Blocked: efficiency drops to 0.02-0.35 when robot can't move
+    - Transition zone: 0.4-0.8 (starting to hit obstacle)
+
+    Threshold strategy:
+    - blocked_threshold: Use 90th percentile of hard obstacle data
+      (catches 90% of blocked cases, robust to outliers)
+    - suspicious_threshold: Midpoint between blocked and clear_5th_percentile
+    - clear_min: 5th percentile of clear data (allows some variation)
+    """
     print("\n" + "="*60)
-    print("Computing Thresholds from ALL Calibrated Obstacles")
+    print("Computing ROBUST Thresholds from Calibration Data")
     print("="*60)
 
     # Get categories mapping
@@ -420,44 +454,105 @@ def compute_thresholds(data: Dict) -> Dict:
     # Use defaults if no hard samples
     if not hard_effs:
         hard_effs = [0.1]
-        print(f"\nNo hard obstacle samples - using default hard_effs=[0.1]")
+        print(f"\nNo hard obstacle samples - using default")
         print("Run: ./calibrate_collision.py --obstacle <name> --hard 15")
 
-    # Statistics for clear path
-    clear_mean = sum(clear_effs) / len(clear_effs)
-    clear_min = min(clear_effs)
-    clear_variance = sum((e - clear_mean) ** 2 for e in clear_effs) / len(clear_effs)
-    clear_std = math.sqrt(clear_variance) if clear_variance > 0 else 0.1
+    # =========================================================================
+    # ROBUST STATISTICS
+    # =========================================================================
 
-    # Statistics for hard obstacles
-    hard_mean = sum(hard_effs) / len(hard_effs)
-    hard_max = max(hard_effs)
+    # Clear path statistics (use percentiles to handle outliers from odometry noise)
+    clear_mean = sum(clear_effs) / len(clear_effs)
+    clear_p5 = percentile(clear_effs, 5)     # 5th percentile (lower bound)
+    clear_p25 = percentile(clear_effs, 25)   # 25th percentile (Q1)
+    clear_p50 = percentile(clear_effs, 50)   # Median
+    clear_p75 = percentile(clear_effs, 75)   # 75th percentile (Q3)
+    clear_rms = rms(clear_effs)
+
+    # Hard obstacle statistics
+    # IMPORTANT: Hard obstacle data often contains "approach" samples (high efficiency)
+    # mixed with actual "blocked" samples (low efficiency). We need to separate them.
+    # A blocked robot typically has efficiency < 50%, so we filter to focus on blocked samples.
+    hard_blocked = [e for e in hard_effs if e < 0.50]  # Actually blocked samples
+    hard_transition = [e for e in hard_effs if 0.50 <= e < 0.80]  # Transition zone
+
+    if len(hard_blocked) < 5:
+        print(f"\n  Warning: Few blocked samples ({len(hard_blocked)}), using all hard data")
+        hard_blocked = hard_effs  # Fall back to all data
+
+    hard_mean = sum(hard_blocked) / len(hard_blocked)
+    hard_p50 = percentile(hard_blocked, 50)     # Median of blocked samples
+    hard_p75 = percentile(hard_blocked, 75)     # 75th percentile
+    hard_p90 = percentile(hard_blocked, 90)     # 90th percentile (robust max of blocked)
+    hard_rms = rms(hard_blocked)
+
+    # Soft obstacle statistics (if available)
+    soft_mean = sum(soft_effs) / len(soft_effs) if soft_effs else None
+    soft_p50 = percentile(soft_effs, 50) if soft_effs else None
 
     print(f"\n" + "-"*40)
-    print(f"Statistics:")
+    print(f"Robust Statistics:")
     print(f"  Clear path ({len(clear_effs)} samples):")
-    print(f"    Mean efficiency: {clear_mean:.0%}")
-    print(f"    Min efficiency:  {clear_min:.0%}")
-    print(f"    Std deviation:   {clear_std:.0%}")
+    print(f"    Mean:           {clear_mean:.0%}")
+    print(f"    Median (P50):   {clear_p50:.0%}")
+    print(f"    P5 (low bound): {clear_p5:.0%}")
+    print(f"    P25-P75 (IQR):  {clear_p25:.0%} - {clear_p75:.0%}")
+    print(f"    RMS:            {clear_rms:.0%}")
 
-    print(f"  Hard obstacles ({len(hard_effs)} samples):")
-    print(f"    Mean efficiency: {hard_mean:.0%}")
-    print(f"    Max efficiency:  {hard_max:.0%}")
+    print(f"  Hard obstacles ({len(hard_effs)} total, {len(hard_blocked)} blocked samples):")
+    print(f"    Mean (blocked): {hard_mean:.0%}")
+    print(f"    Median (P50):   {hard_p50:.0%}")
+    print(f"    P75:            {hard_p75:.0%}")
+    print(f"    P90 (rob. max): {hard_p90:.0%}")
+    print(f"    RMS (blocked):  {hard_rms:.0%}")
 
     if soft_effs:
-        soft_mean = sum(soft_effs) / len(soft_effs)
         print(f"  Soft obstacles ({len(soft_effs)} samples):")
-        print(f"    Mean efficiency: {soft_mean:.0%}")
+        print(f"    Mean:           {soft_mean:.0%}")
+        print(f"    Median (P50):   {soft_p50:.0%}")
 
-    # Compute thresholds
-    clear_min_thresh = max(hard_max + 0.10, clear_mean - 2 * clear_std)
-    blocked_thresh = (hard_max + clear_min_thresh) / 2 - 0.05
-    suspicious_thresh = (blocked_thresh + clear_min_thresh) / 2
+    # =========================================================================
+    # THRESHOLD COMPUTATION (Robust algorithm)
+    # =========================================================================
+    #
+    # Strategy:
+    # 1. blocked_threshold = hard_p90 (90th percentile of blocked data)
+    #    - This catches 90% of blocked samples while ignoring outlier spikes
+    #    - If robot efficiency < this, it's very likely blocked
+    #
+    # 2. suspicious_threshold = midpoint between hard_p90 and clear_p5
+    #    - This is the "gray zone" where we're not sure
+    #    - Robot slows down and probes carefully
+    #
+    # 3. clear_min = clear_p5 (5th percentile of clear data)
+    #    - Below this, robot isn't moving freely
+    #    - Allows for normal variation in odometry
 
-    # Ensure sensible bounds
-    blocked_thresh = max(0.15, min(blocked_thresh, 0.40))
-    suspicious_thresh = max(blocked_thresh + 0.10, min(suspicious_thresh, 0.60))
-    clear_min_thresh = max(suspicious_thresh + 0.10, clear_min_thresh)
+    # Base thresholds from percentiles
+    blocked_thresh = hard_p90
+
+    # Ensure blocked threshold is reasonable (not too high from noisy data)
+    # Cap at 0.50 since blocked robot shouldn't have > 50% efficiency
+    blocked_thresh = min(blocked_thresh, 0.50)
+
+    # Suspicious is midpoint between blocked and clear_p5
+    # But ensure there's enough gap for decision making
+    gap = clear_p5 - blocked_thresh
+    if gap < 0.20:
+        # Not enough separation - use conservative thresholds
+        print(f"\n  Warning: Small gap between clear ({clear_p5:.0%}) and blocked ({blocked_thresh:.0%})")
+        blocked_thresh = min(blocked_thresh, 0.35)
+        suspicious_thresh = blocked_thresh + 0.15
+        clear_min_thresh = suspicious_thresh + 0.15
+    else:
+        # Good separation - use data-driven thresholds
+        suspicious_thresh = blocked_thresh + gap * 0.4  # 40% of gap above blocked
+        clear_min_thresh = clear_p5  # 5th percentile of clear data
+
+    # Final safety bounds
+    blocked_thresh = max(0.15, min(blocked_thresh, 0.50))
+    suspicious_thresh = max(blocked_thresh + 0.10, min(suspicious_thresh, 0.70))
+    clear_min_thresh = max(suspicious_thresh + 0.10, min(clear_min_thresh, 0.90))
 
     # Update thresholds
     data['thresholds'] = {
@@ -466,10 +561,13 @@ def compute_thresholds(data: Dict) -> Dict:
         'blocked': round(blocked_thresh, 2)
     }
 
-    print(f"\nComputed Thresholds:")
-    print(f"  Clear path:  >= {clear_min_thresh:.0%}  (robot is moving freely)")
+    print(f"\n" + "-"*40)
+    print(f"Computed Thresholds (Robust):")
+    print(f"  Blocked:     < {blocked_thresh:.0%}  (robot can't move)")
     print(f"  Suspicious:  < {suspicious_thresh:.0%}  (triggers slow probing)")
-    print(f"  Blocked:     < {blocked_thresh:.0%}  (confirms invisible obstacle)")
+    print(f"  Clear:       >= {clear_min_thresh:.0%}  (robot moving freely)")
+    print(f"\nNote: These thresholds are saved to the calibration file and")
+    print(f"      automatically loaded by auto_scan.py CollisionVerifier.")
 
     return data
 

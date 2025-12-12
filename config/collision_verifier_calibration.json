@@ -1,8 +1,8 @@
 {
   "thresholds": {
-    "clear_min": 2.1,
-    "suspicious": 0.6,
-    "blocked": 0.4
+    "clear_min": 0.9,
+    "suspicious": 0.58,
+    "blocked": 0.25
   },
   "raw_data": {
     "clear_path": [
@@ -397,7 +397,7 @@
   },
   "metadata": {
     "robot_id": "ugv_beast",
-    "calibrated_at": "2025-12-12 12:07:57",
+    "calibrated_at": "2025-12-12 12:11:58",
     "samples_collected": 73,
     "obstacles_calibrated": [
       "clear_path",
