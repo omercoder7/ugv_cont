@@ -518,60 +518,135 @@ class VFHController:
 
         return freedom
 
-    def detect_corridor(self, sector_distances: List[float], robot_width: float) -> Tuple[bool, float, int]:
+    def detect_passage(self, sector_distances: List[float], robot_width: float) -> Dict[str, any]:
         """
-        Detect if robot is in a corridor/narrow passage.
+        UNIFIED passage/corridor/gap detection.
 
-        A corridor is detected when:
-        - Front is clear (can move forward)
-        - Both sides (left and right) have obstacles
-        - The gap between sides is wide enough for the robot to fit
+        Detects narrow passages in ALL directions, not just forward.
+        This handles:
+        - Corridors (walls on both sides, clear ahead)
+        - Gaps in walls (incomplete walls with openings)
+        - Narrow openings between obstacles
 
         Args:
             sector_distances: Current distance readings for all sectors
             robot_width: Physical width of the robot
 
         Returns:
-            (is_corridor, corridor_width, clear_direction)
-            - is_corridor: True if in a corridor that robot can fit through
-            - corridor_width: Estimated width of the corridor
-            - clear_direction: Sector with most clearance ahead (0=front, 1=front-left, 11=front-right)
+            Dict with:
+            - is_passage: True if in any narrow passage
+            - passage_width: Estimated width of narrowest point
+            - passage_direction: Best sector to navigate through
+            - passage_type: "corridor", "gap", "opening", or "open"
+            - can_fit: True if robot width fits through passage
         """
         # Get distances for key sectors
-        # Sectors: 0=FRONT, 1=F-LEFT, 2=LEFT, 10=F-RIGHT, 11=FRONT-R
         front = sector_distances[0]
         front_left = sector_distances[1]
         front_right = sector_distances[11]
         left = sector_distances[2]
         right = sector_distances[10]
+        back_left = sector_distances[4]
+        back_right = sector_distances[8]
 
-        # Calculate corridor width as sum of left and right clearances
-        # The robot is in the middle, so corridor width ≈ left_dist + right_dist
+        # Minimum width robot needs (robot width + safety buffer)
+        min_fit_width = robot_width + 0.08  # 8cm total buffer (4cm each side)
+
+        # Calculate passage widths in different directions
+        # FORWARD PASSAGE: width between left and right obstacles
         left_clearance = min(left, front_left)
         right_clearance = min(right, front_right)
-        corridor_width = left_clearance + right_clearance
+        forward_width = left_clearance + right_clearance
 
-        # Check if it's a corridor pattern:
-        # - Front has some clearance
-        # - Both sides have obstacles relatively close
-        # - But the total width is enough for the robot
-        min_corridor_width = robot_width + 0.05  # Robot width + 5cm buffer
-        max_side_dist = 1.0  # If sides are further than 1m, it's not really a corridor
+        # LEFT PASSAGE: width between front-left and back-left
+        left_passage_width = min(front_left, front) + min(back_left, left)
 
+        # RIGHT PASSAGE: width between front-right and back-right
+        right_passage_width = min(front_right, front) + min(back_right, right)
+
+        # Detect passage type
+        max_side_dist = 1.2  # Walls must be within 1.2m to be "constraining"
+        min_front_clearance = 0.4  # Need at least 40cm ahead
+
+        # CORRIDOR: Both sides constrained, front clear
         is_corridor = (
-            front > 0.3 and  # Some clearance ahead
-            left_clearance < max_side_dist and  # Left wall detected
-            right_clearance < max_side_dist and  # Right wall detected
-            corridor_width >= min_corridor_width  # Wide enough to fit
+            front > min_front_clearance and
+            left_clearance < max_side_dist and
+            right_clearance < max_side_dist and
+            forward_width >= min_fit_width
         )
 
-        # Determine best direction to steer in corridor
-        if abs(left_clearance - right_clearance) < 0.10:
-            clear_direction = 0  # Centered, go straight
-        elif left_clearance > right_clearance:
-            clear_direction = 1  # Steer slightly left
-        else:
-            clear_direction = 11  # Steer slightly right
+        # GAP DETECTION: Look for openings in walls
+        # A gap is where one side is blocked but there's an opening
+        # Check if front is blocked but sides have openings
+        front_blocked = front < min_front_clearance
+
+        # Left gap: front blocked, but front-left or left is clear
+        has_left_gap = front_blocked and (front_left > front + 0.3 or left > front + 0.3)
+        left_gap_width = min(front_left, left) if has_left_gap else 0
+
+        # Right gap: front blocked, but front-right or right is clear
+        has_right_gap = front_blocked and (front_right > front + 0.3 or right > front + 0.3)
+        right_gap_width = min(front_right, right) if has_right_gap else 0
+
+        # Determine passage type and best direction
+        passage_type = "open"
+        passage_width = forward_width
+        passage_direction = 0
+        is_passage = False
+
+        if is_corridor:
+            passage_type = "corridor"
+            passage_width = forward_width
+            is_passage = True
+            # Center in corridor
+            if abs(left_clearance - right_clearance) < 0.10:
+                passage_direction = 0
+            elif left_clearance > right_clearance:
+                passage_direction = 1
+            else:
+                passage_direction = 11
+
+        elif has_left_gap and left_gap_width >= min_fit_width:
+            passage_type = "gap_left"
+            passage_width = left_gap_width
+            passage_direction = 1 if front_left > left else 2
+            is_passage = True
+
+        elif has_right_gap and right_gap_width >= min_fit_width:
+            passage_type = "gap_right"
+            passage_width = right_gap_width
+            passage_direction = 11 if front_right > right else 10
+            is_passage = True
+
+        # Check if robot can fit through the detected passage
+        can_fit = passage_width >= min_fit_width
+
+        return {
+            "is_passage": is_passage,
+            "passage_width": passage_width,
+            "passage_direction": passage_direction,
+            "passage_type": passage_type,
+            "can_fit": can_fit,
+            "forward_width": forward_width,
+            "left_clearance": left_clearance,
+            "right_clearance": right_clearance,
+        }
+
+    def detect_corridor(self, sector_distances: List[float], robot_width: float) -> Tuple[bool, float, int]:
+        """
+        Detect if robot is in a corridor/narrow passage.
+        This is a wrapper around detect_passage() for backward compatibility.
+
+        Returns:
+            (is_corridor, corridor_width, clear_direction)
+        """
+        passage = self.detect_passage(sector_distances, robot_width)
+
+        # Consider both corridors and navigable gaps as "corridor mode"
+        is_corridor = passage["is_passage"] and passage["can_fit"]
+        corridor_width = passage["passage_width"]
+        clear_direction = passage["passage_direction"]
 
         return is_corridor, corridor_width, clear_direction
 
