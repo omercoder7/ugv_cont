@@ -978,6 +978,41 @@ class UnifiedDirectionScorer:
             forward_bias = 0.2
         breakdown["forward_bias"] = forward_bias
 
+        # 8. POCKET PENALTY: Penalize directions leading to small confined spaces
+        # A pocket is detected when:
+        # - Front has moderate distance
+        # - Both sides are narrower than front (space is narrowing)
+        # - The width at the end is too small to turn
+        pocket_penalty = 0.0
+        if dist < 2.0:  # Only check for closer targets
+            # Get side distances relative to this sector
+            left_1 = sector_distances[(sector + 1) % self.num_sectors]
+            left_2 = sector_distances[(sector + 2) % self.num_sectors]
+            right_1 = sector_distances[(sector - 1) % self.num_sectors]
+            right_2 = sector_distances[(sector - 2) % self.num_sectors]
+
+            # Calculate estimated width at the target distance
+            left_min = min(left_1, left_2)
+            right_min = min(right_1, right_2)
+
+            # If both sides are closer than the front, space is narrowing
+            if left_min < dist and right_min < dist:
+                estimated_width = left_min + right_min  # Rough width estimate
+                MIN_TURN_WIDTH = 0.5  # Minimum width to turn safely (50cm)
+
+                if estimated_width < MIN_TURN_WIDTH:
+                    # Heavy penalty for very small pockets
+                    pocket_penalty = -3.0
+                    breakdown["pocket"] = pocket_penalty
+                elif estimated_width < 0.7:
+                    # Moderate penalty for tight spaces
+                    pocket_penalty = -1.5
+                    breakdown["pocket"] = pocket_penalty
+                elif estimated_width < 1.0:
+                    # Small penalty for somewhat confined spaces
+                    pocket_penalty = -0.5
+                    breakdown["pocket"] = pocket_penalty
+
         # Calculate weighted total
         total = (
             self.weights["clearance"] * clearance +
@@ -986,7 +1021,8 @@ class UnifiedDirectionScorer:
             self.weights["frontier"] * frontier +
             self.weights["visited"] * visited_score +
             self.weights["continuity"] * continuity +
-            self.weights["forward_bias"] * forward_bias
+            self.weights["forward_bias"] * forward_bias +
+            pocket_penalty  # Direct penalty, not weighted
         )
 
         return total, breakdown
@@ -2015,7 +2051,7 @@ class SectorObstacleAvoider:
         cell = self.visited_tracker.pos_to_cell(x, y)
         return cell in self.dead_end_positions
 
-    def predict_dead_end_ahead(self, look_ahead_distance: float = 1.2) -> bool:
+    def predict_dead_end_ahead(self, look_ahead_distance: float = 1.5) -> bool:
         """
         PREDICTIVE dead-end detection - warns BEFORE robot gets trapped.
 
@@ -2023,6 +2059,7 @@ class SectorObstacleAvoider:
         1. Front sector shows a wall within look_ahead_distance
         2. Map shows front is a dead-end
         3. Both side sectors are also constrained (no escape route)
+        4. NEW: The space ahead is too small to maneuver (pocket detection)
 
         This is called in FORWARD state to avoid entering dead-ends.
         """
@@ -2044,6 +2081,25 @@ class SectorObstacleAvoider:
         # Check if both front-sides show dead-end
         if dead_ends[1] and dead_ends[11]:
             return True
+
+        # NEW: SMALL POCKET DETECTION
+        # If front is close AND both diagonal/side sectors show walls close,
+        # we're heading into a small pocket - avoid it!
+        # This catches small cells that aren't technically "dead-ends" but too small to turn in
+        MIN_POCKET_SIZE = 0.6  # Minimum space needed to turn (60cm)
+        if front_dist < look_ahead_distance:
+            # Check if this is a narrow pocket by looking at diagonal distances
+            left_diag = min(self.sector_distances[1], self.sector_distances[2])
+            right_diag = min(self.sector_distances[10], self.sector_distances[11])
+
+            # If both diagonals are closer than front + margin, it's a narrowing pocket
+            if left_diag < front_dist + 0.2 and right_diag < front_dist + 0.2:
+                # Estimate pocket width at the front distance
+                # Using simple geometry: width ≈ 2 * front_dist * sin(30°) ≈ front_dist
+                estimated_width = min(left_diag, right_diag) * 2
+                if estimated_width < MIN_POCKET_SIZE:
+                    print(f"\n[POCKET] Detected small pocket ahead (width~{estimated_width:.2f}m < {MIN_POCKET_SIZE:.2f}m)")
+                    return True
 
         # Check if we'll be trapped - front is getting close AND sides constrained
         sides_constrained = (
@@ -3552,7 +3608,7 @@ rclpy.shutdown()
                 self.state_context.consecutive_avoidances = 0
 
             # PREDICTIVE dead-end check - avoid BEFORE getting trapped
-            if self.predict_dead_end_ahead(look_ahead_distance=1.2):
+            if self.predict_dead_end_ahead(look_ahead_distance=1.5):
                 print(f"\n[PREDICT] Dead-end ahead! (front={front_arc_min:.2f}m) - avoiding early")
                 self.transition_state(RobotState.AVOIDING)
             elif is_corridor and corridor_width >= MIN_CORRIDOR_WIDTH:
