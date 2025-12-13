@@ -1912,6 +1912,11 @@ class SectorObstacleAvoider:
         self.current_position: Optional[Tuple[float, float]] = None
         self.current_heading: Optional[float] = None  # Robot heading in radians
 
+        # Mission heading tracking - the direction robot wants to scan
+        # Robot remembers its scanning direction and returns to it after avoiding obstacles
+        self.mission_heading: Optional[float] = None  # World heading in radians
+        self.last_good_heading_time: float = 0  # When we last updated mission heading
+
         # Visited location tracking
         self.visited_tracker = VisitedTracker()
         if clear_visited:
@@ -3796,6 +3801,11 @@ rclpy.shutdown()
             elif old_state == RobotState.STUCK_RECOVERY and new_state == RobotState.FORWARD:
                 self.escape_memory.record_escape_success(x, y)
 
+            # Reset mission heading on entering STUCK_RECOVERY - robot lost its way
+            if new_state == RobotState.STUCK_RECOVERY:
+                self.mission_heading = None
+                print(f"[MISSION] Cleared mission heading - will acquire new one after recovery")
+
         # Clear old failures periodically
         self.escape_memory.clear_old_failures()
 
@@ -4067,6 +4077,13 @@ rclpy.shutdown()
             # Simple rule: Farthest = unexplored = go there!
             # =================================================================
 
+            # =================================================================
+            # SCANNING MODE: Maintain mission heading, avoid obstacles temporarily
+            # Robot remembers its scanning direction and returns to it after obstacles
+            # =================================================================
+
+            current_time = time.time()
+
             # Check if exploration is complete
             if self.is_exploration_complete():
                 print(f"\n[COMPLETE] All reachable areas explored!")
@@ -4074,126 +4091,104 @@ rclpy.shutdown()
                 angular = 0.0
                 self.transition_state(RobotState.STOPPED)
 
-            # Find the frontier (direction with most unexplored space)
-            frontier_sector, frontier_score = self.find_frontier_direction()
-
-            # CRITICAL: Check if front is blocked BEFORE following frontier
-            # The frontier might be to the side, but we can't drive through obstacles!
+            # Distance thresholds
             FRONT_DANGER_DIST = self.lidar_min_distance + 0.10  # ~0.92m
+            OPEN_SPACE_DIST = DANGER_DISTANCE + 0.3  # ~1.5m - clear ahead
+
             front_blocked = front_arc_min < FRONT_DANGER_DIST
+            in_open_space = front_arc_min > OPEN_SPACE_DIST
 
-            if frontier_sector is None:
-                # All directions blocked - transition to BACKING_UP immediately
-                print(f"\n[BLOCKED] No frontier found - all directions blocked!")
-                self.state_context.consecutive_avoidances += 1
-                self.state_context.state_start_time = 0
-                self.transition_state(RobotState.BACKING_UP)
-                # Return safe values and skip margin steering logic
-                return self.linear_speed * 0.3, 0.0  # Slow forward while transitioning
+            # UPDATE MISSION HEADING: Only when moving freely in open space for 2+ seconds
+            # This captures the "intended scan direction" before obstacles appear
+            if (in_open_space and
+                self.current_heading is not None and
+                current_time - self.last_good_heading_time > 2.0):
+                self.mission_heading = self.current_heading
+                self.last_good_heading_time = current_time
 
-            elif front_blocked:
-                # FRONT IS BLOCKED - must steer away or stop, regardless of frontier!
-                # This is the key fix: don't drive into obstacle while chasing frontier
+            if front_blocked:
+                # FRONT IS BLOCKED - steer around obstacle
                 left_clear = self.sector_distances[1] >= FRONT_DANGER_DIST
                 right_clear = self.sector_distances[11] >= FRONT_DANGER_DIST
 
                 if left_clear and right_clear:
-                    # Both sides clear - steer toward frontier if it's to the side
-                    if frontier_sector in [1, 2, 3]:
-                        linear = self.compute_adaptive_speed(front_arc_min) * 0.5
-                        angular = 0.4  # Turn left
-                        print(f"\r[STEER-L] Front blocked ({front_arc_min:.2f}m), steering left toward frontier s{frontier_sector}", end="")
-                    elif frontier_sector in [9, 10, 11]:
-                        linear = self.compute_adaptive_speed(front_arc_min) * 0.5
-                        angular = -0.4  # Turn right
-                        print(f"\r[STEER-R] Front blocked ({front_arc_min:.2f}m), steering right toward frontier s{frontier_sector}", end="")
+                    # Both sides open - pick based on which returns to mission heading faster
+                    if self.mission_heading is not None and self.current_heading is not None:
+                        heading_diff = self.mission_heading - self.current_heading
+                        # Normalize to [-pi, pi]
+                        while heading_diff > math.pi: heading_diff -= 2 * math.pi
+                        while heading_diff < -math.pi: heading_diff += 2 * math.pi
+                        # Turn toward mission heading side
+                        if heading_diff > 0:
+                            angular = 0.4  # Turn left (positive)
+                            print(f"\r[AVOID-L] Front blocked, steering left toward mission hdg (diff={math.degrees(heading_diff):.0f}°)", end="")
+                        else:
+                            angular = -0.4  # Turn right (negative)
+                            print(f"\r[AVOID-R] Front blocked, steering right toward mission hdg (diff={math.degrees(heading_diff):.0f}°)", end="")
                     else:
-                        # Frontier is behind - use AVOIDING state for controlled turn
-                        print(f"\n[FORWARD] Frontier behind (s{frontier_sector}), front blocked - AVOIDING")
-                        self.transition_state(RobotState.AVOIDING)
-                        return 0.0, 0.0
+                        angular = 0.4  # Default left when no mission heading
+                        print(f"\r[AVOID-L] Front blocked ({front_arc_min:.2f}m), defaulting left", end="")
+                    linear = self.compute_adaptive_speed(front_arc_min) * 0.5
                 elif left_clear:
-                    # Only left is clear - steer left
                     linear = self.compute_adaptive_speed(front_arc_min) * 0.4
                     angular = 0.5
                     print(f"\r[ESCAPE-L] Front blocked ({front_arc_min:.2f}m), only left clear", end="")
                 elif right_clear:
-                    # Only right is clear - steer right
                     linear = self.compute_adaptive_speed(front_arc_min) * 0.4
                     angular = -0.5
                     print(f"\r[ESCAPE-R] Front blocked ({front_arc_min:.2f}m), only right clear", end="")
                 else:
-                    # All front directions blocked - transition to AVOIDING or BACKING_UP
+                    # All front directions blocked - transition to AVOIDING
                     print(f"\n[TRAPPED] Front arc blocked ({front_arc_min:.2f}m), transitioning to AVOIDING")
                     self.transition_state(RobotState.AVOIDING)
                     return 0.0, 0.0
-
-            elif frontier_sector == 0:
-                # Frontier is straight ahead AND front is clear - go forward!
-                linear = self.compute_adaptive_speed(front_arc_min)
-                angular = 0.0
-            elif frontier_sector in [1, 11]:
-                # Frontier is slightly to the side - gentle curve
-                linear = self.compute_adaptive_speed(front_arc_min)
-                angular = 0.15 if frontier_sector == 1 else -0.15
-            elif frontier_sector in [2, 10]:
-                # Frontier is more to the side - sharper curve
-                linear = self.compute_adaptive_speed(front_arc_min) * 0.8
-                angular = 0.25 if frontier_sector == 2 else -0.25
-            elif frontier_sector in [3, 9]:
-                # Frontier is to the side - turn while moving slowly
-                linear = self.compute_adaptive_speed(front_arc_min) * 0.5
-                angular = 0.35 if frontier_sector == 3 else -0.35
             else:
-                # Frontier is behind (sectors 4-8) - use AVOIDING for controlled turn
-                # Don't spin indefinitely in FORWARD state
-                print(f"\n[FORWARD] Frontier behind (s{frontier_sector}) - transitioning to AVOIDING")
-                self.transition_state(RobotState.AVOIDING)
-                return 0.0, 0.0
+                # FRONT CLEAR: Return to mission heading (or go straight if none)
+                if self.mission_heading is not None and self.current_heading is not None:
+                    heading_diff = self.mission_heading - self.current_heading
+                    # Normalize to [-pi, pi]
+                    while heading_diff > math.pi: heading_diff -= 2 * math.pi
+                    while heading_diff < -math.pi: heading_diff += 2 * math.pi
+
+                    # Proportional steering back to mission heading
+                    MAX_CORRECTION = 0.35
+                    angular = max(-MAX_CORRECTION, min(MAX_CORRECTION, heading_diff * 0.5))
+
+                    # Full speed when aligned, slower when correcting
+                    alignment = 1.0 - min(abs(heading_diff) / math.pi, 1.0)
+                    linear = self.compute_adaptive_speed(front_arc_min) * (0.6 + 0.4 * alignment)
+                else:
+                    # No mission heading yet - just go forward
+                    linear = self.compute_adaptive_speed(front_arc_min)
+                    angular = 0.0
 
             # OBSTACLE MARGIN STEERING: Steer away from close obstacles on either side
-            # If obstacle is closer on one side, add angular velocity to steer away
-            left_dist = min(self.sector_distances[1], self.sector_distances[2])  # Front-left
-            right_dist = min(self.sector_distances[10], self.sector_distances[11])  # Front-right
-            front_left = self.sector_distances[1]
-            front_right = self.sector_distances[11]
+            left_dist = min(self.sector_distances[1], self.sector_distances[2])
+            right_dist = min(self.sector_distances[10], self.sector_distances[11])
 
-            # Only apply margin steering if obstacle is within danger zone
-            MARGIN_THRESHOLD = 0.8  # Apply margin steering within 80cm
-            MARGIN_GAIN = 0.3  # How much to steer away (rad/s per meter difference)
+            MARGIN_THRESHOLD = 0.8
+            MARGIN_GAIN = 0.3
 
             if left_dist < MARGIN_THRESHOLD or right_dist < MARGIN_THRESHOLD:
-                # Calculate asymmetry: positive = obstacle closer on left, negative = closer on right
-                asymmetry = right_dist - left_dist  # Positive means left is closer
-
-                # Scale by how close the nearest obstacle is
+                asymmetry = right_dist - left_dist
                 closest = min(left_dist, right_dist)
-                urgency = 1.0 - (closest / MARGIN_THRESHOLD)  # 0 to 1, higher = more urgent
-                urgency = max(0.0, min(1.0, urgency))
+                urgency = max(0.0, min(1.0, 1.0 - (closest / MARGIN_THRESHOLD)))
+                margin_angular = max(-0.3, min(0.3, asymmetry * MARGIN_GAIN * urgency))
 
-                # Add steering away from the closer obstacle
-                margin_angular = asymmetry * MARGIN_GAIN * urgency
-
-                # Cap the margin steering
-                margin_angular = max(-0.3, min(0.3, margin_angular))
-
-                # Only apply if it doesn't conflict too much with frontier direction
-                # (don't override strong turns toward frontier)
                 if abs(angular) < 0.4:
                     angular += margin_angular
 
-                if abs(margin_angular) > 0.05:
-                    side = "L" if asymmetry > 0 else "R"
-                    print(f"\r[MARGIN] {side} obstacle at {closest:.2f}m, steering {margin_angular:+.2f} rad/s", end="")
-
             self.emergency_maneuver = False
 
-            # Show frontier visualization
-            frontier_viz = self.get_frontier_visualization()
+            # Status display
             front_dist = self.sector_distances[0]
-            speed_pct = int(100 * linear / self.linear_speed) if self.linear_speed > 0 else 100
-            target_str = f"s{frontier_sector}" if frontier_sector is not None else "NONE"
-            status = f"[EXPLORE] f={front_dist:.2f}m [{frontier_viz}] target={target_str} spd={speed_pct}%"
+            if self.mission_heading is not None and self.current_heading is not None:
+                heading_diff = self.mission_heading - self.current_heading
+                while heading_diff > math.pi: heading_diff -= 2 * math.pi
+                while heading_diff < -math.pi: heading_diff += 2 * math.pi
+                status = f"[SCAN] f={front_dist:.2f}m hdg_diff={math.degrees(heading_diff):+.0f}° spd={linear:.2f}"
+            else:
+                status = f"[SCAN] f={front_dist:.2f}m no_mission_hdg spd={linear:.2f}"
 
             # Clear avoidance state
             if self.avoidance_direction is not None:
