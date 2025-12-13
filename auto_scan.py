@@ -106,7 +106,7 @@ MIN_BACKUP_DISTANCE = 0.10  # Minimum backup distance in meters (~10cm) before t
 
 # Brief stop duration between forward and backward movement
 # This prevents mechanical stress and gives robot time to settle
-DIRECTION_CHANGE_PAUSE = 0.15  # 150ms pause (feels like ~0.5s due to deceleration)
+DIRECTION_CHANGE_PAUSE = 0.08  # 80ms pause - reduced for snappier transitions
 
 # Wheel encoder stuck detection constants
 # If wheels should be moving but encoder delta is below threshold, robot is stuck
