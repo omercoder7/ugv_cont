@@ -52,7 +52,7 @@ MIN_CORRIDOR_WIDTH = ROBOT_WIDTH + 0.10  # 28cm - robot width + 10cm clearance
 # This is used by BACKING_UP state to know when to stop backing and start turning
 SAFE_TURN_CLEARANCE = 0.70  # 70cm - enough space to turn safely
 MAX_BACKUP_TIME = 5.0  # Maximum backup duration
-MIN_BACKUP_DISTANCE = 0.20  # Minimum backup distance in meters (~20cm) before turning
+MIN_BACKUP_DISTANCE = 0.35  # Minimum backup distance in meters (~35cm) before turning
 
 # Danger distance margin - extra buffer added to min_distance for triggering avoidance
 # Lower = more aggressive (closer approach before avoiding)

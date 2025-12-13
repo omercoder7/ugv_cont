@@ -452,13 +452,13 @@ class SectorObstacleAvoider:
         if execute_turn_in_place(degrees, speed, stop_callback=self.stop):
             self.total_rotations += 1
 
-    def backup_then_turn(self, backup_duration: float = 0.3, turn_degrees: float = 30):
+    def backup_then_turn(self, backup_duration: float = 0.5, turn_degrees: float = 30):
         """
         Execute quick obstacle avoidance: brief backup then small turn.
         NON-BLOCKING - queues maneuvers and returns immediately.
 
         Args:
-            backup_duration: How long to back up (default 0.3s = ~2cm at 0.06m/s)
+            backup_duration: How long to back up (default 0.5s)
             turn_degrees: How many degrees to turn (positive = left, negative = right)
         """
         # Use smaller, quicker turns (30° = ~1s turn time)
@@ -2286,8 +2286,8 @@ rclpy.shutdown()
                 self.avoidance_start_time = time.time()
 
             turn_degrees = 30 if self.avoidance_direction == "left" else -30
-            print(f"\n[BLOCKED] Quick backup and turn {turn_degrees}°")
-            self.backup_then_turn(backup_duration=0.3, turn_degrees=turn_degrees)
+            print(f"\n[BLOCKED] Backup and turn {turn_degrees}°")
+            self.backup_then_turn(backup_duration=0.6, turn_degrees=turn_degrees)
             return None, None
 
         # Remember this direction for next iteration
@@ -2507,7 +2507,7 @@ rclpy.shutdown()
                             dead_ends_found += 1
                             # Back out of dead-end
                             print(f"\n[DEAD-END] Backing out of dead-end area!")
-                            self.backup_then_turn(backup_duration=0.6, turn_degrees=90)
+                            self.backup_then_turn(backup_duration=1.0, turn_degrees=90)
                             continue
 
                 # Compute velocity using selected algorithm
@@ -2562,9 +2562,9 @@ rclpy.shutdown()
                         if cv_result['blocked_position']:
                             self.add_virtual_obstacle(cv_result['blocked_position'][0],
                                                      cv_result['blocked_position'][1])
-                        # Trigger backup maneuver
+                        # Trigger backup maneuver - longer backup for invisible obstacles
                         turn_degrees = 45 if self.last_avoidance_direction == "left" else -45
-                        self.backup_then_turn(backup_duration=0.4, turn_degrees=turn_degrees)
+                        self.backup_then_turn(backup_duration=0.8, turn_degrees=turn_degrees)
                         self.collision_verifier.reset()
                         continue
 
@@ -2600,7 +2600,7 @@ rclpy.shutdown()
                         self.avoidance_start_time = time.time()
 
                     turn_degrees = 50 if self.avoidance_direction == "left" else -50
-                    self.backup_then_turn(backup_duration=0.5, turn_degrees=turn_degrees)
+                    self.backup_then_turn(backup_duration=1.0, turn_degrees=turn_degrees)
 
                     # Reset position tracking after recovery maneuver
                     self.last_position = None
