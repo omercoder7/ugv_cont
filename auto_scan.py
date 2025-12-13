@@ -101,8 +101,7 @@ MIN_CORRIDOR_WIDTH = ROBOT_WIDTH + 0.10  # 28cm - robot width + 10cm clearance
 # Robot needs enough space in front to turn without hitting obstacles
 # This is used by BACKING_UP state to know when to stop backing and start turning
 SAFE_TURN_CLEARANCE = 0.35  # 35cm - reduced for tighter maneuvering
-MAX_BACKUP_TIME = 2.5  # Maximum backup duration
-MIN_BACKUP_DISTANCE = 0.10  # Minimum backup distance in meters (~10cm) before turning
+MAX_BACKUP_TIME = 1.5  # Maximum backup duration (reduced - odometry unreliable)
 
 # Brief stop duration between forward and backward movement
 # This prevents mechanical stress and gives robot time to settle
@@ -3993,48 +3992,27 @@ rclpy.shutdown()
                     self.transition_state(RobotState.FORWARD)
 
         elif self.robot_state == RobotState.BACKING_UP:
-            # From BACKING_UP: back up until we have enough clearance to turn safely
-            # Instead of fixed time, check front distance AND minimum backup distance
-
-            # FIX: Get calibrated backup_mult for obstacle type
-            # Round obstacles need MORE clearance before turning (backup_mult > 1.0)
-            avoidance_params, detected_obstacle = self.get_avoidance_params(front_arc_min)
-            backup_mult = avoidance_params.get('backup_mult', 1.0)
+            # From BACKING_UP: back up until we have enough clearance OR time limit
+            # Simplified: just use time + clearance, no odometry distance check (unreliable)
 
             # Check if we have enough clearance in front to turn safely
-            # Scale required clearance by backup_mult for round/curved obstacles
-            required_clearance = SAFE_TURN_CLEARANCE * backup_mult
+            required_clearance = SAFE_TURN_CLEARANCE
             has_turn_clearance = front_arc_min >= required_clearance
 
-            # Calculate how far we've backed up
-            backup_distance = 0.0
-            if self.backup_start_position and self.current_position:
-                dx = self.current_position[0] - self.backup_start_position[0]
-                dy = self.current_position[1] - self.backup_start_position[1]
-                backup_distance = math.sqrt(dx*dx + dy*dy)
-
-            # Minimum backup distance - also scale by backup_mult
-            required_min_distance = MIN_BACKUP_DISTANCE * backup_mult
-            has_min_distance = backup_distance >= required_min_distance
+            # Minimum backup time before checking clearance (let robot start moving)
+            MIN_BACKUP_TIME = 0.5  # Half second minimum
+            past_minimum = time_in_state >= MIN_BACKUP_TIME
 
             # Safety limit: don't backup forever
             exceeded_max_time = time_in_state >= MAX_BACKUP_TIME
 
-            # Minimum backup time before checking clearance (let robot start moving first)
-            MIN_BACKUP_TIME = 0.3
-            past_minimum = time_in_state >= MIN_BACKUP_TIME
-
-            if past_minimum and has_turn_clearance and has_min_distance:
-                # We have enough clearance AND backed up far enough - start turning
-                print(f"\n[BACKUP-DONE] Clearance: {front_arc_min:.2f}m >= {required_clearance:.2f}m, dist={backup_distance:.2f}m (took {time_in_state:.1f}s)")
+            if past_minimum and has_turn_clearance:
+                # Have clearance after minimum time - start turning
+                print(f"\n[BACKUP-DONE] Clearance: {front_arc_min:.2f}m >= {required_clearance:.2f}m (took {time_in_state:.1f}s)")
                 self.transition_state(RobotState.TURNING)
-            elif past_minimum and has_turn_clearance and not has_min_distance:
-                # Have clearance but haven't backed up enough - keep backing
-                # This is the key fix: force minimum backup distance even if clearance looks OK
-                pass  # Continue backing up
             elif exceeded_max_time:
                 # Safety limit reached - stop backing even without full clearance
-                print(f"\n[BACKUP-TIMEOUT] Max time {MAX_BACKUP_TIME:.1f}s reached, front={front_arc_min:.2f}m, dist={backup_distance:.2f}m")
+                print(f"\n[BACKUP-TIMEOUT] Max time {MAX_BACKUP_TIME:.1f}s reached, front={front_arc_min:.2f}m")
                 self.transition_state(RobotState.TURNING)
 
         elif self.robot_state == RobotState.TURNING:
