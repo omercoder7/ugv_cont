@@ -3858,10 +3858,10 @@ rclpy.shutdown()
 
         if is_corridor and corridor_width >= MIN_CORRIDOR_WIDTH:
             # CORRIDOR MODE: More cautious - robot needs physical clearance + margin
-            # LiDAR offset (37cm) + safety margin (10cm) = ~47cm
+            # LiDAR offset (37cm) + safety margin (10cm) + extra_margin = ~47cm+
             # This means: if LiDAR reads 47cm, robot front is 10cm from obstacle
-            dynamic_min_dist = LIDAR_FRONT_OFFSET + 0.10  # ~0.47m - increased from 0.05
-            DANGER_DISTANCE = dynamic_min_dist + 0.05 + extra_margin  # Include extra_margin for round obstacles
+            dynamic_min_dist = LIDAR_FRONT_OFFSET + 0.10 + extra_margin  # FIX: Include extra_margin
+            DANGER_DISTANCE = dynamic_min_dist + 0.05  # Small buffer above dynamic_min_dist
         else:
             # OPEN SPACE: Conservative threshold for safer margins
             dynamic_min_dist = self.lidar_min_distance
@@ -3979,7 +3979,8 @@ rclpy.shutdown()
 
         elif self.robot_state == RobotState.AVOIDING:
             # From AVOIDING: check if we can go forward or need to back up
-            if front_arc_min < DANGER_DISTANCE:
+            # FIX: Use dynamic_min_dist, not DANGER_DISTANCE - allows steering before backing up
+            if front_arc_min < dynamic_min_dist:
                 # FIX: Check transition result - if blocked, flag for velocity override
                 if not self.transition_state(RobotState.BACKING_UP):
                     safety_transition_blocked = True
@@ -4209,8 +4210,9 @@ rclpy.shutdown()
             # Check if front is blocked - need to back up instead of steer
             if front_arc_min < dynamic_min_dist:
                 # Can't go forward - transition to BACKING_UP
+                # FIX: Don't force transition - let min_duration logic work
                 print(f"\n[AVOID-BLOCKED] Front blocked ({front_arc_min:.2f}m), backing up")
-                self.transition_state(RobotState.BACKING_UP, force=True)
+                self.transition_state(RobotState.BACKING_UP)
                 linear = 0.0
                 angular = 0.0
                 status = f"[AVOID->BACKUP] front={front_arc_min:.2f}m"
