@@ -262,7 +262,7 @@ class StateContext:
         Check if transition to new state is allowed.
 
         Some transitions are allowed even during lock:
-        - Emergency transitions (STUCK_RECOVERY)
+        - Emergency transitions (STUCK_RECOVERY, BACKING_UP)
         - Same state (no-op)
 
         Returns True if transition is allowed.
@@ -270,8 +270,9 @@ class StateContext:
         if not self.is_action_locked():
             return True
 
-        # Always allow emergency recovery transitions during lock
-        if new_state == RobotState.STUCK_RECOVERY:
+        # Always allow emergency transitions during lock
+        # BACKING_UP is safety-critical - robot detected obstacle
+        if new_state in [RobotState.STUCK_RECOVERY, RobotState.BACKING_UP]:
             return True
 
         return False
@@ -4359,8 +4360,9 @@ rclpy.shutdown()
                 # Clamp turn angle - use calibrated minimum for obstacle type
                 # For round obstacles (pillow_chair), calibrated_turn might be 60°
                 # For thin obstacles, might be 30°
+                # Max 60° to keep turns under 3.5s (was 120° = 6.8s at 0.31 rad/s)
                 min_turn = max(20, calibrated_turn)  # Use calibrated min, floor at 20°
-                turn_degrees = max(min_turn, min(120, turn_degrees))
+                turn_degrees = max(min_turn, min(60, turn_degrees))
 
                 # Print detected obstacle for debugging
                 if detected_obstacle:
