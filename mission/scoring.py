@@ -105,8 +105,10 @@ class TrajectoryScorer:
 
         num_sectors = len(sector_distances)
         for sector, dist in enumerate(sector_distances):
-            # Only consider obstacles within relevant range
-            if 0.1 < dist < 2.5:
+            # Consider all obstacles from 1cm to 2.5m
+            # CRITICAL: Don't ignore close obstacles! 0.05m is very close and must be detected
+            # Only skip 0.0 (blind spots where LiDAR has no reading)
+            if 0.01 < dist < 2.5:
                 angle = sector_to_angle(sector, num_sectors)
                 ox = dist * math.cos(angle)
                 oy = dist * math.sin(angle)
