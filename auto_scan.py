@@ -1183,198 +1183,12 @@ class VFHController:
 
 
 # ============================================================================
-# DWA-Style Trajectory Scorer
+# DWA-Style Trajectory Scorer - REMOVED (replaced with VFH-based steering)
 # ============================================================================
-
-class TrajectoryScorer:
-    """
-    DWA-style trajectory generation and scoring.
-    Predicts multiple trajectories and scores them based on:
-    - Clearance: Distance from obstacles
-    - Heading: Alignment with target direction
-    - Velocity: Prefer higher speeds
-    - Smoothness: Prefer straight paths
-
-    This is used to select the best velocity command that avoids obstacles
-    while making progress toward the goal direction.
-    """
-
-    def __init__(self, max_speed: float = 0.10, max_yaw_rate: float = 1.0):
-        self.max_speed = max_speed
-        self.max_yaw_rate = max_yaw_rate
-
-        # Velocity resolution for sampling
-        self.v_resolution = 0.02  # 2cm/s steps
-        self.yaw_resolution = 0.2  # 0.2 rad/s steps
-
-        # Prediction parameters
-        self.predict_time = 1.5  # seconds to predict ahead
-        self.dt = 0.1  # timestep for prediction
-
-        # Scoring weights (tunable)
-        self.heading_weight = 0.3   # Alignment with goal
-        self.clearance_weight = 0.4  # Distance from obstacles
-        self.velocity_weight = 0.2   # Prefer higher speeds
-        self.smoothness_weight = 0.1  # Prefer continuing current direction
-
-        # Robot dimensions for collision checking
-        self.robot_radius = 0.15  # 15cm radius
-
-    def predict_trajectory(self, x: float, y: float, yaw: float,
-                          v: float, w: float) -> List[Tuple[float, float, float]]:
-        """
-        Predict robot trajectory for given velocity command.
-        Returns list of (x, y, yaw) poses along trajectory.
-        """
-        trajectory = [(x, y, yaw)]
-
-        for _ in range(int(self.predict_time / self.dt)):
-            # Simple motion model
-            x += v * math.cos(yaw) * self.dt
-            y += v * math.sin(yaw) * self.dt
-            yaw += w * self.dt
-            trajectory.append((x, y, yaw))
-
-        return trajectory
-
-    def check_trajectory_collision(self, trajectory: List[Tuple[float, float, float]],
-                                   sector_distances: List[float]) -> bool:
-        """
-        Check if trajectory collides with obstacles.
-        Uses sector distances to build obstacle representation.
-
-        Returns True if collision detected.
-        """
-        # Convert sector distances to obstacle points (polar to cartesian)
-        # Uses unified sector_to_angle() function for consistency
-        num_sectors = len(sector_distances)
-        obstacle_points = []
-        for sector, dist in enumerate(sector_distances):
-            if 0.1 < dist < 2.0:  # Valid range
-                # Use global sector_to_angle() for consistent angle calculation
-                angle = sector_to_angle(sector, num_sectors)
-                ox = dist * math.cos(angle)
-                oy = dist * math.sin(angle)
-                obstacle_points.append((ox, oy))
-
-        # Check each trajectory point
-        for tx, ty, _ in trajectory:
-            for ox, oy in obstacle_points:
-                dist = math.sqrt((tx - ox)**2 + (ty - oy)**2)
-                if dist < self.robot_radius + 0.10:  # 10cm safety margin
-                    return True
-
-        return False
-
-    def score_trajectory(self, trajectory: List[Tuple[float, float, float]],
-                        sector_distances: List[float],
-                        target_yaw: float = 0.0,
-                        current_v: float = 0.0,
-                        current_w: float = 0.0) -> float:
-        """
-        Score trajectory using multiple criteria.
-        Higher score = better trajectory.
-        """
-        if not trajectory or len(trajectory) < 2:
-            return float('-inf')
-
-        final_x, final_y, final_yaw = trajectory[-1]
-
-        # 1. Heading score: alignment with target direction
-        heading_error = abs(self._normalize_angle(target_yaw - final_yaw))
-        heading_score = 1.0 - (heading_error / math.pi)
-
-        # 2. Clearance score: minimum distance to obstacles along trajectory
-        min_clearance = float('inf')
-        num_sectors = len(sector_distances)
-        obstacle_points = []
-        for sector, dist in enumerate(sector_distances):
-            if 0.1 < dist < 3.0:
-                # Use global sector_to_angle() for consistent angle calculation
-                angle = sector_to_angle(sector, num_sectors)
-                ox = dist * math.cos(angle)
-                oy = dist * math.sin(angle)
-                obstacle_points.append((ox, oy))
-
-        for tx, ty, _ in trajectory:
-            for ox, oy in obstacle_points:
-                d = math.sqrt((tx - ox)**2 + (ty - oy)**2)
-                min_clearance = min(min_clearance, d)
-
-        clearance_score = min(1.0, min_clearance / 1.0) if min_clearance < float('inf') else 1.0
-
-        # 3. Velocity score: prefer higher forward speeds
-        v = math.sqrt((trajectory[-1][0] - trajectory[0][0])**2 +
-                     (trajectory[-1][1] - trajectory[0][1])**2) / self.predict_time
-        velocity_score = min(1.0, v / self.max_speed)
-
-        # 4. Smoothness score: prefer continuing current motion
-        first_yaw = trajectory[0][2]
-        yaw_change = abs(self._normalize_angle(final_yaw - first_yaw))
-        smoothness_score = 1.0 - min(1.0, yaw_change / math.pi)
-
-        # Combined score
-        total = (self.heading_weight * heading_score +
-                self.clearance_weight * clearance_score +
-                self.velocity_weight * velocity_score +
-                self.smoothness_weight * smoothness_score)
-
-        return total
-
-    def _normalize_angle(self, angle: float) -> float:
-        """Normalize angle to [-pi, pi]"""
-        while angle > math.pi:
-            angle -= 2 * math.pi
-        while angle < -math.pi:
-            angle += 2 * math.pi
-        return angle
-
-    def compute_best_velocity(self, x: float, y: float, yaw: float,
-                             current_v: float, current_w: float,
-                             sector_distances: List[float],
-                             target_yaw: float = 0.0,
-                             max_accel: float = 0.2,
-                             max_yaw_accel: float = 0.8) -> Tuple[float, float, float]:
-        """
-        Main DWA function: find best velocity command.
-
-        Returns: (best_v, best_w, best_score)
-        """
-        # Calculate dynamic window (reachable velocities)
-        min_v = max(0.0, current_v - max_accel * self.dt)
-        max_v = min(self.max_speed, current_v + max_accel * self.dt)
-        min_w = max(-self.max_yaw_rate, current_w - max_yaw_accel * self.dt)
-        max_w = min(self.max_yaw_rate, current_w + max_yaw_accel * self.dt)
-
-        best_v, best_w = 0.0, 0.0
-        best_score = float('-inf')
-
-        # Sample velocity space
-        v = min_v
-        while v <= max_v:
-            w = min_w
-            while w <= max_w:
-                # Generate trajectory
-                trajectory = self.predict_trajectory(x, y, yaw, v, w)
-
-                # Check for collision
-                if self.check_trajectory_collision(trajectory, sector_distances):
-                    w += self.yaw_resolution
-                    continue
-
-                # Score trajectory
-                score = self.score_trajectory(
-                    trajectory, sector_distances, target_yaw, current_v, current_w
-                )
-
-                if score > best_score:
-                    best_score = score
-                    best_v, best_w = v, w
-
-                w += self.yaw_resolution
-            v += self.v_resolution
-
-        return best_v, best_w, best_score
+# NOTE: TrajectoryScorer was removed as VFH-based steering in AVOIDING state
+# provides similar behavior with less complexity. The VFH already considers
+# obstacle clearance and finds the best direction to steer toward.
+# ============================================================================
 
 
 # ============================================================================
@@ -2068,12 +1882,11 @@ class SectorObstacleAvoider:
     """
 
     def __init__(self, linear_speed: float = 0.04, min_distance: float = 0.45,
-                 duration: float = 60.0, clear_visited: bool = False, use_vfh: bool = True,
+                 duration: float = 60.0, clear_visited: bool = False,
                  log_sensors: bool = False, log_output_dir: str = "/tmp/exploration_data"):
         # Cap max speed at 0.10 m/s - rf2o odometry overestimates at higher speeds
         # causing mismatch between RViz display and actual robot position
         self.linear_speed = min(linear_speed, 0.10)
-        self.use_vfh = use_vfh  # Use VFH algorithm with state machine
 
         # Sensor logging for two-phase mapping
         self.log_sensors = log_sensors and HAS_SENSOR_LOGGER
@@ -2199,8 +2012,7 @@ class SectorObstacleAvoider:
         # Escape memory - tracks which maneuvers worked in stuck situations
         self.escape_memory = EscapeMemory(grid_resolution=0.5)
 
-        # DWA-style trajectory scorer for the AVOIDING state
-        self.trajectory_scorer = TrajectoryScorer(max_speed=self.linear_speed, max_yaw_rate=1.0)
+        # NOTE: TrajectoryScorer was removed - AVOIDING state now uses VFH steering
 
         # Unified direction scorer - consolidates all scoring systems
         self.unified_scorer = UnifiedDirectionScorer(num_sectors=NUM_SECTORS)
@@ -3822,43 +3634,8 @@ rclpy.shutdown()
                 return False
         return True
 
-    def find_best_direction(self) -> Tuple[int, float]:
-        """
-        VFH-inspired algorithm: Find the best direction using unified scoring.
-
-        Uses unified scorer with "safety" preset which emphasizes:
-        - Clearance: Strong obstacle avoidance
-        - Distance: Keep distance from obstacles
-        - Freedom: Avoid tight spaces
-        - Continuity: Smooth trajectory
-
-        Returns (best_sector, best_score)
-        """
-        # Use unified scorer in safety mode
-        self.unified_scorer.set_mode("safety")
-
-        # Get map-based scores
-        map_scores = self.get_map_exploration_scores()
-        dead_ends = self.get_dead_end_sectors()
-
-        # Use unified scoring
-        best_sector, best_score, breakdown = self.unified_scorer.find_best_sector(
-            sector_distances=self.sector_distances,
-            min_distance=self.lidar_min_distance,
-            vfh_controller=self.vfh,
-            map_scores=map_scores,
-            dead_ends=dead_ends,
-            visited_tracker=self.visited_tracker,
-            current_position=self.current_position,
-            current_heading=self.current_heading,
-        )
-
-        # Default to sector 0 if all blocked
-        if best_sector is None:
-            best_sector = 0
-            best_score = -999
-
-        return best_sector, best_score
+    # NOTE: find_best_direction() was removed - discrete mode eliminated
+    # Use find_frontier_direction() with UnifiedDirectionScorer instead
 
     def find_frontier_goal(self) -> Optional[Tuple[float, float]]:
         """
@@ -4447,42 +4224,26 @@ rclpy.shutdown()
                 self.avoidance_intensity = 1.0
 
         elif self.robot_state == RobotState.AVOIDING:
-            # Use DWA trajectory prediction to find best velocity
-            # Assume robot is at origin facing forward (0,0,0) for local planning
-            dwa_v, dwa_w, dwa_score = self.trajectory_scorer.compute_best_velocity(
-                x=0.0, y=0.0, yaw=0.0,
-                current_v=self.last_linear,
-                current_w=self.last_angular,
-                sector_distances=self.sector_distances,
-                target_yaw=0.0  # Target is straight ahead
-            )
-
+            # Use VFH best sector for steering (simpler than DWA, works well)
             # ADAPTIVE SPEED: Use slower speed when avoiding obstacles
             adaptive_speed = self.compute_adaptive_speed(front_arc_min)
 
-            if dwa_score > float('-inf'):
-                # Use DWA-computed velocity, but cap by adaptive speed
-                linear = min(dwa_v, adaptive_speed)
-                angular = dwa_w
-                status = f"[AVOID-DWA] v={linear:.2f} w={dwa_w:.2f} score={dwa_score:.2f}"
+            # Check if front is blocked - need to back up instead of steer
+            if front_arc_min < dynamic_min_dist:
+                # Can't go forward - transition to BACKING_UP
+                print(f"\n[AVOID-BLOCKED] Front blocked ({front_arc_min:.2f}m), backing up")
+                self.transition_state(RobotState.BACKING_UP, force=True)
+                linear = 0.0
+                angular = 0.0
+                status = f"[AVOID->BACKUP] front={front_arc_min:.2f}m"
             else:
-                # DWA found no valid trajectory - check if front is also blocked
-                # If front is too close, we need to back up, not steer into obstacle
-                if front_arc_min < dynamic_min_dist:
-                    # Can't go forward - transition to BACKING_UP
-                    print(f"\n[AVOID-BLOCKED] DWA failed and front blocked ({front_arc_min:.2f}m), backing up")
-                    self.transition_state(RobotState.BACKING_UP, force=True)
-                    linear = 0.0
-                    angular = 0.0
-                    status = f"[AVOID->BACKUP] front={front_arc_min:.2f}m"
-                else:
-                    # Fallback to VFH sector steering if DWA finds no valid trajectory
-                    sector_angle = self.sector_to_angle(best_sector)
-                    turn_factor = abs(sector_angle) / math.pi
-                    # Apply both turn factor reduction AND adaptive speed
-                    linear = adaptive_speed * (1.0 - turn_factor * 0.4)
-                    angular = sector_angle * 0.4
-                    status = f"[AVOID-VFH] s{best_sector} ang={math.degrees(sector_angle):.0f}°"
+                # Use VFH sector steering - steer toward best clear sector
+                sector_angle = self.sector_to_angle(best_sector)
+                turn_factor = abs(sector_angle) / math.pi
+                # Apply both turn factor reduction AND adaptive speed
+                linear = adaptive_speed * (1.0 - turn_factor * 0.4)
+                angular = sector_angle * 0.5  # Increased from 0.4 for faster response
+                status = f"[AVOID] s{best_sector} ang={math.degrees(sector_angle):.0f}° spd={linear:.2f}"
 
             self.emergency_maneuver = False
 
@@ -4806,266 +4567,10 @@ rclpy.shutdown()
 
         return linear, angular
 
-    def compute_velocity(self) -> Tuple[float, float]:
-        """
-        Obstacle avoidance using discrete maneuvers:
-        1. When obstacle detected: back up, then turn in place by calculated degrees
-        2. When clear: go straight
-        3. Maintain committed direction throughout avoidance
-
-        Returns:
-            (linear, angular) velocity command, or (None, None) if discrete maneuver was executed
-        """
-        front_dist = self.sector_distances[0]
-        front_left = self.sector_distances[1] if self.sector_distances[1] > 0.01 else 0
-        front_right = self.sector_distances[11] if self.sector_distances[11] > 0.01 else 0
-
-        # Find best direction using VFH-style cost function
-        best_sector, best_score = self.find_best_direction()
-        best_dist = self.sector_distances[best_sector]
-
-        # Use consolidated helper method for front arc minimum distance
-        # This replaces duplicated code and ensures consistent calculation
-        front_arc_min = self.get_front_arc_min()
-
-        # DANGER_DISTANCE: Backup when front ARC (sectors 11, 0, 1) is too close
-        # Use front_arc_min which includes front-left and front-right, not just sector 0
-        DANGER_DISTANCE = self.lidar_min_distance  # 0.82m (includes LiDAR offset)
-
-        # Check if round obstacle detected - add extra margin
-        # Round obstacles (pillow chair) need earlier avoidance due to curved surface
-        extra_margin = 0.0
-        if self._detect_round_obstacle():
-            avoidance_params, _ = self.get_avoidance_params(front_arc_min)
-            extra_margin = avoidance_params.get('extra_margin', 0.0)
-
-        # Path is clear if front ARC is above threshold (including extra margin for round obstacles)
-        # Uses front_arc_min which considers sectors 11, 0, 1 (front-right, front, front-left)
-        path_clear = front_arc_min >= (self.lidar_min_distance + extra_margin)
-
-        if front_arc_min < (DANGER_DISTANCE + extra_margin):
-            # OBSTACLE TOO CLOSE! Execute discrete avoidance maneuver
-            self.emergency_maneuver = True
-
-            # ALWAYS re-evaluate direction based on current sensor readings
-            # Don't keep old direction - it might point back to the obstacle!
-
-            # Check if we're in the same area as last avoidance (within 0.5m)
-            same_area = False
-            if self.current_position and self.last_avoidance_position:
-                dx = self.current_position[0] - self.last_avoidance_position[0]
-                dy = self.current_position[1] - self.last_avoidance_position[1]
-                dist_from_last = math.sqrt(dx*dx + dy*dy)
-                same_area = dist_from_last < 0.5
-
-            # Get clearance on both sides - use MIN to find CLOSEST obstacle on each side
-            # LEFT side: sectors 1 (front-left), 2, 3, 4 (left)
-            # RIGHT side: sectors 11 (front-right), 10, 9, 8 (right)
-            left_dists = []
-            for s in [1, 2, 3, 4]:
-                d = self.sector_distances[s]
-                thresh = BODY_THRESHOLD_FRONT if s == 1 else BODY_THRESHOLD_SIDE
-                if d > thresh:
-                    left_dists.append(d)
-            # FIXED: Empty list means no obstacles detected = clear (10m), not blocked (0m)
-            left_clearance = min(left_dists) if left_dists else 10.0
-
-            right_dists = []
-            for s in [11, 10, 9, 8]:
-                d = self.sector_distances[s]
-                thresh = BODY_THRESHOLD_FRONT if s == 11 else BODY_THRESHOLD_SIDE
-                if d > thresh:
-                    right_dists.append(d)
-            # FIXED: Empty list means no obstacles detected = clear (10m), not blocked (0m)
-            right_clearance = min(right_dists) if right_dists else 10.0
-
-            # Get exploration scores to prefer unexplored directions
-            map_scores = self.get_map_exploration_scores()
-            left_explore = max(map_scores[1], map_scores[2], map_scores[3])  # Sectors 1-3 (left side)
-            right_explore = max(map_scores[10], map_scores[11], map_scores[9])  # Sectors 9-11 (right side)
-
-            # Combined score: clearance + exploration (exploration weighted higher)
-            CLEARANCE_WEIGHT = 1.0
-            EXPLORE_WEIGHT = 2.0  # Strongly prefer unexplored areas
-            left_score = CLEARANCE_WEIGHT * left_clearance + EXPLORE_WEIGHT * left_explore
-            right_score = CLEARANCE_WEIGHT * right_clearance + EXPLORE_WEIGHT * right_explore
-
-            # Check if this looks like a passage (both sides have similar clearance)
-            clearance_ratio = min(left_clearance, right_clearance) / max(left_clearance, right_clearance, 0.01)
-            is_passage = clearance_ratio > 0.5 and left_clearance > 0.3 and right_clearance > 0.3
-
-            # Track consecutive avoidance attempts FIRST (before updating avoidance_start_time)
-            # Check time since LAST avoidance to determine if this is a repeated attempt
-            time_since_last = time.time() - self.avoidance_start_time if self.avoidance_start_time > 0 else 999
-            recent_avoidance = time_since_last < 8.0  # Within 8 seconds = same obstacle
-
-            if same_area or recent_avoidance:
-                self.avoidance_attempt_count += 1
-            else:
-                self.avoidance_attempt_count = 1  # First attempt at new location/time
-
-            # DIRECTION SELECTION with forced alternation on repeated attempts
-            # First attempt: turn toward side with MORE clearance
-            # Repeated attempts: ALTERNATE direction to escape corners/traps
-            if self.avoidance_attempt_count == 1:
-                # First attempt - choose based on clearance
-                if left_clearance > right_clearance:
-                    self.avoidance_direction = "left"
-                else:
-                    self.avoidance_direction = "right"
-            else:
-                # Repeated attempt - ALTERNATE from last direction
-                if self.last_avoidance_direction == "left":
-                    self.avoidance_direction = "right"
-                else:
-                    self.avoidance_direction = "left"
-
-            # Save state AFTER determining direction
-            self.last_avoidance_direction = self.avoidance_direction
-            self.last_avoidance_position = self.current_position
-            self.avoidance_intensity = 1.0
-            self.avoidance_start_time = time.time()  # Update AFTER using the old value
-
-            # Show which side has more clearance and which direction was chosen
-            obstacle_side = "LEFT" if left_clearance < right_clearance else "RIGHT"
-            print(f"\n[AVOID] Obstacle on {obstacle_side}, turning {self.avoidance_direction.upper()}")
-            print(f"        LEFT min:  {left_clearance:.2f}m from {left_dists}")
-            print(f"        RIGHT min: {right_clearance:.2f}m from {right_dists}")
-
-            # Get obstacle-specific avoidance parameters (based on shape: round/flat/thin)
-            front_dist = self.sector_distances[0] if self.sector_distances else 1.0
-            avoidance_params, detected_obstacle = self.get_avoidance_params(front_dist)
-            base_turn = avoidance_params.get('min_turn_deg', 45)
-            backup_mult = avoidance_params.get('backup_mult', 1.0)
-            obstacle_shape = avoidance_params.get('shape', 'flat')
-
-            # Print detected obstacle info for user
-            if detected_obstacle:
-                print(f"        Detected: {detected_obstacle} ({obstacle_shape} shape, turn {base_turn}°)")
-
-            # ESCALATING turn angles based on attempt count
-            # Attempt 1: base_turn (45°)
-            # Attempt 2: 60° + alternate direction
-            # Attempt 3: 90° + alternate direction
-            # Attempt 4+: 120° + alternate direction
-            if self.avoidance_attempt_count >= 4:
-                turn_degrees = 120  # Large turn but not full 180° (which can put robot in same spot)
-                print(f"        (Attempt #{self.avoidance_attempt_count} - LARGE TURN 120°, alternating)")
-            elif self.avoidance_attempt_count >= 3:
-                turn_degrees = 90
-                print(f"        (Attempt #{self.avoidance_attempt_count} - ESCALATING to 90°, alternating)")
-            elif self.avoidance_attempt_count >= 2:
-                turn_degrees = 60
-                print(f"        (Attempt #{self.avoidance_attempt_count} - 60° turn, alternating)")
-            else:
-                turn_degrees = base_turn
-
-            # Apply direction sign
-            if self.avoidance_direction == "right":
-                turn_degrees = -turn_degrees
-
-            # Increase backup distance with each failed attempt
-            # Base: 0.5s, increases by 0.3s per attempt, max 2.0s
-            backup_dur = min((0.5 + (self.avoidance_attempt_count - 1) * 0.3) * backup_mult, 2.0)
-
-            # Quick backup + turn
-            self.backup_then_turn(backup_duration=backup_dur, turn_degrees=turn_degrees)
-
-            # Return None to indicate maneuver was executed
-            return None, None
-
-        elif path_clear:
-            # PATH IS CLEAR - go straight
-            linear = self.linear_speed
-            angular = 0.0
-            self.emergency_maneuver = False
-
-            # If we were avoiding, check if we've traveled enough to return to original heading
-            if self.avoidance_direction is not None:
-                # Check distance traveled since avoidance started
-                if self.last_avoidance_position is not None and self.current_position is not None:
-                    dx = self.current_position[0] - self.last_avoidance_position[0]
-                    dy = self.current_position[1] - self.last_avoidance_position[1]
-                    dist_traveled = math.sqrt(dx*dx + dy*dy)
-
-                    # Only return-to-heading after traveling at least 30cm past obstacle
-                    if dist_traveled >= 0.30:
-                        # Turn back toward original heading (opposite of avoidance turn)
-                        return_degrees = -30 if self.avoidance_direction == "left" else 30
-                        print(f"\n[RETURN] Passed obstacle ({dist_traveled:.2f}m), turning back {return_degrees}°")
-
-                        turn_duration = abs(return_degrees) * (3.14159 / 180) / ACTUAL_MAX_ANGULAR_VEL
-                        self.queue_maneuver("turn", 1.0 if return_degrees > 0 else -1.0, turn_duration)
-
-                        # Clear avoidance state
-                        self.avoidance_direction = None
-                        self.avoidance_intensity = 1.0
-                        self.avoidance_attempt_count = 0
-                        self.avoidance_start_time = 0
-                        self.last_avoidance_position = None
-
-                        time.sleep(0.1)
-                        return None, None
-                    else:
-                        # Still close to obstacle - keep going straight, don't turn back yet
-                        status = f"[FWD] clear, bypassing ({dist_traveled:.2f}m)"
-                else:
-                    # No position data - just clear state
-                    self.avoidance_direction = None
-                    self.avoidance_start_time = 0
-                    status = f"[FWD] clear={front_arc_min:.2f}m"
-            else:
-                status = f"[FWD] clear={front_arc_min:.2f}m - going straight"
-
-        elif best_dist >= self.lidar_min_distance and best_sector not in [0, 11, 1]:
-            # Only steer if best direction is NOT the front sectors
-            # If front is clear enough (best_sector is 0, 1, or 11), just go straight
-            steer_angle = self.sector_to_angle(best_sector)
-            turn_factor = abs(steer_angle) / math.pi
-            linear = self.linear_speed * (1.0 - turn_factor * 0.3)
-
-            # Use committed direction if we have one
-            if self.avoidance_direction == "left":
-                angular = abs(steer_angle) * 0.3
-            elif self.avoidance_direction == "right":
-                angular = -abs(steer_angle) * 0.3
-            else:
-                angular = steer_angle * 0.3
-
-            self.emergency_maneuver = False
-            status = f"[STEER] f={front_arc_min:.2f}m -> s{best_sector}"
-
-        elif best_dist >= self.lidar_min_distance:
-            # Best sector is front (0, 1, or 11) - go straight!
-            linear = self.linear_speed
-            angular = 0.0
-            self.emergency_maneuver = False
-
-            # Reset ALL avoidance state when going forward
-            if self.avoidance_direction is not None:
-                print(f"\n[CLEAR] Front is best direction, resetting commitment")
-            self.avoidance_direction = None
-            self.avoidance_start_time = 0  # Reset so next avoidance is fresh
-            self.avoidance_attempt_count = 0
-
-            status = f"[FWD] front ok={front_arc_min:.2f}m s{best_sector}"
-
-        else:
-            # All directions have obstacles - quick backup and turn
-            if self.avoidance_direction is None:
-                self.avoidance_direction = "left" if best_sector <= 5 else "right"
-                self.avoidance_start_time = time.time()
-
-            turn_degrees = 30 if self.avoidance_direction == "left" else -30
-            print(f"\n[BLOCKED] Quick backup and turn {turn_degrees}°")
-            self.backup_then_turn(backup_duration=0.3, turn_degrees=turn_degrees)
-            return None, None
-
-        # Remember this direction for next iteration
-        self.previous_sector = best_sector
-
-        print(f"\r{status:<60}", end="", flush=True)
-        return linear, angular
+    # NOTE: compute_velocity() (discrete mode) was removed - VFH is now the only mode
+    # The discrete mode used backup_then_turn() maneuvers which was less smooth than
+    # the VFH state machine approach. VFH provides better obstacle avoidance with
+    # smoother velocity commands and proper state transitions.
 
     def print_sector_display(self):
         """Print a visual representation of sector distances (in ROBOT frame)"""
@@ -5151,7 +4656,7 @@ rclpy.shutdown()
         print(f"Stuck detection: Enabled (uses odometry)")
         print(f"Collision verify: Enabled (tracks movement efficiency)")
         print(f"Motion smooth:   Continuous thread @30Hz + EMA(α={self.ema_alpha})")
-        print(f"Algorithm:       {'VFH + State Machine' if self.use_vfh else 'Sector-based discrete'}")
+        print(f"Algorithm:       VFH + State Machine")
         print(f"Dead-end detect: Enabled (skip 3+ blocked directions)")
         if self.log_sensors and self.sensor_logger:
             print(f"Sensor logging: Enabled (for offline mapping)")
@@ -5281,18 +4786,8 @@ rclpy.shutdown()
                             self.backup_then_turn(backup_duration=0.6, turn_degrees=90)
                             continue
 
-                # Compute velocity using selected algorithm
-                if self.use_vfh:
-                    # VFH with state machine (smoother, no discrete maneuvers)
-                    linear, angular = self.compute_velocity_vfh()
-                else:
-                    # Original discrete maneuver approach
-                    linear, angular = self.compute_velocity()
-
-                # If compute_velocity returned None, a discrete maneuver was executed
-                # Skip the rest of this iteration - DON'T reset velocity, let maneuver complete
-                if linear is None:
-                    continue
+                # Compute velocity using VFH algorithm with state machine
+                linear, angular = self.compute_velocity_vfh()
 
                 # EARLY WARNING: Detect "approaching stuck" - front distance decreasing rapidly
                 # This triggers BEFORE robot actually hits obstacle
@@ -5613,8 +5108,6 @@ Algorithm:
                         help='Clear visited locations history before starting')
     parser.add_argument('--test-front', action='store_true',
                         help='Test front sector calibration (place obstacle in front)')
-    parser.add_argument('--vfh', action='store_true',
-                        help='Use VFH algorithm with state machine (smoother navigation)')
     parser.add_argument('--log-sensors', '-l', action='store_true',
                         help='Enable sensor logging for offline mapping')
     parser.add_argument('--log-dir', type=str, default='/tmp/exploration_data',
@@ -5635,7 +5128,6 @@ Algorithm:
         min_distance=args.min_dist,
         duration=args.duration,
         clear_visited=args.clear_visited,
-        use_vfh=args.vfh,
         log_sensors=args.log_sensors,
         log_output_dir=args.log_dir
     )
