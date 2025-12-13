@@ -502,7 +502,7 @@ class CollisionVerifier:
 
                     # Collect calibration sample if path is clear and moving well
                     if lidar_shows_clear and efficiency > 0.7 and self.state == CollisionVerifierState.NORMAL:
-                        self._add_calibration_sample(commanded_linear, efficiency, front_lidar_dist)
+                        self._collect_calibration_sample(efficiency, front_lidar_dist)
 
         # Update tracking
         self.last_position = current_position
