@@ -395,6 +395,14 @@
     "low_chair_support": "hard",
     "low_table_leg_support": "hard"
   },
+  "avoidance_profiles": {
+    "default": {"shape": "flat", "extra_margin": 0.0, "min_turn_deg": 45, "backup_mult": 1.0},
+    "pillow_chair": {"shape": "round", "extra_margin": 0.15, "min_turn_deg": 60, "backup_mult": 1.5},
+    "robot_vaccum_docking_station": {"shape": "flat", "extra_margin": 0.05, "min_turn_deg": 45, "backup_mult": 1.0},
+    "low_stand_support": {"shape": "thin", "extra_margin": 0.0, "min_turn_deg": 30, "backup_mult": 1.0},
+    "low_chair_support": {"shape": "thin", "extra_margin": 0.0, "min_turn_deg": 30, "backup_mult": 1.0},
+    "low_table_leg_support": {"shape": "thin", "extra_margin": 0.0, "min_turn_deg": 30, "backup_mult": 1.0}
+  },
   "metadata": {
     "robot_id": "ugv_beast",
     "calibrated_at": "2025-12-12 12:11:58",

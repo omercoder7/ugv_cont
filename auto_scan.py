@@ -100,8 +100,9 @@ MIN_CORRIDOR_WIDTH = ROBOT_WIDTH + 0.10  # 28cm - robot width + 10cm clearance
 # Safe turning clearance - minimum front distance needed to safely turn in place
 # Robot needs enough space in front to turn without hitting obstacles
 # This is used by BACKING_UP state to know when to stop backing and start turning
-SAFE_TURN_CLEARANCE = 0.55  # 55cm - enough space to turn safely (increased from 45cm)
-MAX_BACKUP_TIME = 3.0  # Maximum backup duration (safety limit)
+SAFE_TURN_CLEARANCE = 0.70  # 70cm - enough space to turn safely (increased from 55cm)
+MAX_BACKUP_TIME = 5.0  # Maximum backup duration - increased to allow longer backups
+MIN_BACKUP_DISTANCE = 0.20  # Minimum backup distance in meters (~20cm) before turning
 
 # Brief stop duration between forward and backward movement
 # This prevents mechanical stress and gives robot time to settle
@@ -117,6 +118,69 @@ WHEEL_ENCODER_STUCK_TIME = 0.2  # Seconds of no encoder change to trigger stuck 
 SPEED_SCALE_FAR_DISTANCE = 1.5    # Distance (m) at which robot runs at full speed (increased for earlier slowdown)
 SPEED_SCALE_NEAR_DISTANCE = 0.5   # Distance (m) at which robot runs at minimum speed
 SPEED_SCALE_MIN_FACTOR = 0.4      # Minimum speed factor (40% of linear_speed)
+
+# Body threshold for filtering invalid LiDAR readings
+BODY_THRESHOLD_FRONT = 0.12  # Front sectors: real obstacles can be close
+BODY_THRESHOLD_SIDE = 0.25   # Side/back sectors: may have body readings
+
+# ============================================================================
+# Utility Functions (consolidated to eliminate duplication)
+# ============================================================================
+
+def sector_to_angle(sector: int, num_sectors: int = NUM_SECTORS) -> float:
+    """
+    Convert sector number to angle in radians (0 = front, positive = left).
+
+    This is the UNIFIED implementation - use this everywhere instead of
+    inline calculations. Handles wrap-around correctly.
+
+    Args:
+        sector: Sector index (0 = front, increases counter-clockwise)
+        num_sectors: Total number of sectors (default 12)
+
+    Returns:
+        Angle in radians, range [-π, π]
+    """
+    # Each sector is (2π / num_sectors) radians
+    # Sector 0 = front (0 rad), sector 6 = back (π rad for 12 sectors)
+    sector_width = 2 * math.pi / num_sectors
+    if sector <= num_sectors // 2:
+        return sector * sector_width  # 0 to π
+    else:
+        return (sector - num_sectors) * sector_width  # -π to 0
+
+
+def pos_to_cell(x: float, y: float, resolution: float = GRID_RESOLUTION) -> Tuple[int, int]:
+    """
+    Convert world position to grid cell coordinates.
+
+    UNIFIED implementation - use this everywhere instead of class methods.
+
+    Args:
+        x, y: World position in meters
+        resolution: Grid cell size in meters
+
+    Returns:
+        (cell_x, cell_y) tuple
+    """
+    return (int(x / resolution), int(y / resolution))
+
+
+def calculate_turn_duration(turn_degrees: float, turn_speed: float = 1.0) -> float:
+    """
+    Calculate how long a turn will take at given speed.
+
+    Args:
+        turn_degrees: Absolute turn angle in degrees
+        turn_speed: Angular velocity factor (1.0 = max speed)
+
+    Returns:
+        Duration in seconds
+    """
+    actual_vel = ACTUAL_MAX_ANGULAR_VEL * abs(turn_speed)
+    if actual_vel < 0.01:
+        return 999.0  # Avoid division by zero
+    return abs(turn_degrees) * (math.pi / 180) / actual_vel
 
 
 # ============================================================================
@@ -207,11 +271,8 @@ class StateContext:
         if not self.is_action_locked():
             return True
 
-        # Always allow emergency recovery
-        from enum import auto
-        # Note: RobotState is imported at module level, referenced here
-        # Allow STUCK_RECOVERY transitions during lock
-        if hasattr(new_state, 'name') and new_state.name == 'STUCK_RECOVERY':
+        # Always allow emergency recovery transitions during lock
+        if new_state == RobotState.STUCK_RECOVERY:
             return True
 
         return False
@@ -634,6 +695,8 @@ class CollisionVerifier:
         self.efficiency_history.clear()
         self.blocked_position = None
         self.probing_start_position = None
+        self.last_position = None
+        self.last_position_time = 0
 
     def get_status_string(self) -> str:
         """Get human-readable status for display"""
@@ -780,17 +843,20 @@ class VFHController:
                 end = i - 1
                 # Only consider valleys that start in first half (avoid counting wrap-around twice)
                 if start < self.num_sectors:
-                    valley_center = (start + end) // 2 % self.num_sectors
                     valley_width = end - start + 1
                     # Cap width to num_sectors (can't have valley wider than full circle)
                     valley_width = min(valley_width, self.num_sectors)
+                    # FIX: Correct wrap-around center calculation
+                    # For valley from sector 10 to 13 (i.e., 10, 11, 0, 1), center should be 0 not 11
+                    valley_center = (start + valley_width // 2) % self.num_sectors
                     valleys.append((start % self.num_sectors, end % self.num_sectors, valley_center, valley_width))
 
         # Close valley if we ended inside one (all sectors clear at end)
         if in_valley and start < self.num_sectors:
             end = len(extended) - 1
-            valley_center = (start + end) // 2 % self.num_sectors
             valley_width = min(end - start + 1, self.num_sectors)
+            # FIX: Use same correct center calculation for wrap-around
+            valley_center = (start + valley_width // 2) % self.num_sectors
             valleys.append((start % self.num_sectors, end % self.num_sectors, valley_center, valley_width))
 
         if not valleys:
@@ -1180,22 +1246,13 @@ class TrajectoryScorer:
         Returns True if collision detected.
         """
         # Convert sector distances to obstacle points (polar to cartesian)
-        # IMPORTANT: Sectors are in robot frame where:
-        #   sector 0 = FRONT (0°)
-        #   sector 1 = FRONT-LEFT (30° CCW)
-        #   sector 6 = BACK (180°)
-        #   sector 11 = FRONT-RIGHT (-30° or 330°)
+        # Uses unified sector_to_angle() function for consistency
         num_sectors = len(sector_distances)
         obstacle_points = []
         for sector, dist in enumerate(sector_distances):
             if 0.1 < dist < 2.0:  # Valid range
-                # Convert sector to angle in robot frame
-                # Sectors 0-6: 0° to 180° (front to back-left)
-                # Sectors 7-11: -150° to -30° (back-right to front-right)
-                if sector <= num_sectors // 2:
-                    angle = sector * (2 * math.pi / num_sectors)
-                else:
-                    angle = (sector - num_sectors) * (2 * math.pi / num_sectors)
+                # Use global sector_to_angle() for consistent angle calculation
+                angle = sector_to_angle(sector, num_sectors)
                 ox = dist * math.cos(angle)
                 oy = dist * math.sin(angle)
                 obstacle_points.append((ox, oy))
@@ -1233,11 +1290,8 @@ class TrajectoryScorer:
         obstacle_points = []
         for sector, dist in enumerate(sector_distances):
             if 0.1 < dist < 3.0:
-                # Convert sector to angle in robot frame (same as check_trajectory_collision)
-                if sector <= num_sectors // 2:
-                    angle = sector * (2 * math.pi / num_sectors)
-                else:
-                    angle = (sector - num_sectors) * (2 * math.pi / num_sectors)
+                # Use global sector_to_angle() for consistent angle calculation
+                angle = sector_to_angle(sector, num_sectors)
                 ox = dist * math.cos(angle)
                 oy = dist * math.sin(angle)
                 obstacle_points.append((ox, oy))
@@ -1349,7 +1403,7 @@ class UnifiedDirectionScorer:
         "exploration": {
             "clearance": 1.0,      # Basic obstacle safety
             "distance": 1.5,       # Prefer open directions
-            "freedom": 3.0,        # Avoid corners/constrained areas
+            "freedom": 1.5,        # Reduced: was 3.0, was avoiding doorways/passages
             "frontier": 4.0,       # Strongly prefer unexplored areas
             "visited": 2.0,        # Penalize revisiting
             "continuity": 0.5,     # Mild smoothing
@@ -1422,8 +1476,12 @@ class UnifiedDirectionScorer:
         breakdown = {}
 
         # Skip invalid sectors
-        if dist < 0.1:  # Blind spot
+        # NOTE: Blind spots are marked as exactly 0.0
+        # Readings 0.01-0.1m are REAL close obstacles, not blind spots!
+        if dist == 0.0:  # Actual blind spot (no reading)
             return -1000.0, {"invalid": -1000.0}
+        if dist < 0.1:  # Very close obstacle - extremely dangerous!
+            return -800.0, {"critical_obstacle": -800.0}
         if dist < min_distance:  # Blocked
             return -500.0, {"blocked": -500.0}
         if dead_ends and dead_ends[sector]:  # Dead-end
@@ -1482,11 +1540,9 @@ class UnifiedDirectionScorer:
             forward_bias = 0.2
         breakdown["forward_bias"] = forward_bias
 
-        # 8. POCKET PENALTY: Penalize directions leading to small confined spaces
-        # A pocket is detected when:
-        # - Front has moderate distance
-        # - Both sides are narrower than front (space is narrowing)
-        # - The width at the end is too small to turn
+        # 8. POCKET PENALTY: Penalize ONLY truly dangerous pockets (can't turn)
+        # Reduced from previous aggressive values since freedom score handles
+        # narrow passages already. This now only penalizes physical traps.
         pocket_penalty = 0.0
         if dist < 2.0:  # Only check for closer targets
             # Get side distances relative to this sector
@@ -1502,20 +1558,14 @@ class UnifiedDirectionScorer:
             # If both sides are closer than the front, space is narrowing
             if left_min < dist and right_min < dist:
                 estimated_width = left_min + right_min  # Rough width estimate
-                MIN_TURN_WIDTH = 0.5  # Minimum width to turn safely (50cm)
+                MIN_TURN_WIDTH = 0.4  # Reduced from 0.5m - robot is 18cm wide
 
                 if estimated_width < MIN_TURN_WIDTH:
-                    # Heavy penalty for very small pockets
-                    pocket_penalty = -3.0
+                    # Only penalize truly impassable pockets (reduced from -3.0)
+                    pocket_penalty = -1.0
                     breakdown["pocket"] = pocket_penalty
-                elif estimated_width < 0.7:
-                    # Moderate penalty for tight spaces
-                    pocket_penalty = -1.5
-                    breakdown["pocket"] = pocket_penalty
-                elif estimated_width < 1.0:
-                    # Small penalty for somewhat confined spaces
-                    pocket_penalty = -0.5
-                    breakdown["pocket"] = pocket_penalty
+                # Removed penalties for 0.7m and 1.0m widths - let freedom score handle
+                # Valid corridors (0.5-1.0m) should not be penalized
 
         # Calculate weighted total
         total = (
@@ -1540,6 +1590,7 @@ class UnifiedDirectionScorer:
         dead_ends: Optional[List[bool]] = None,
         visited_tracker: Optional['VisitedTracker'] = None,
         current_position: Optional[Tuple[float, float]] = None,
+        current_heading: Optional[float] = None,
     ) -> Tuple[Optional[int], float, Dict[str, float]]:
         """
         Find the best sector to move toward.
@@ -1555,13 +1606,17 @@ class UnifiedDirectionScorer:
         visit_counts = None
         if visited_tracker and current_position:
             visit_counts = []
+            # Use robot heading to convert sector angles to world frame
+            heading = current_heading if current_heading is not None else 0.0
             for sector in range(self.num_sectors):
                 dist = sector_distances[sector]
                 if dist > 0.1:
-                    sector_angle = sector * (2 * math.pi / self.num_sectors)
+                    # Use unified sector_to_angle function (in robot frame), convert to world frame
+                    robot_angle = sector_to_angle(sector, self.num_sectors)
+                    world_angle = heading + robot_angle
                     look_ahead = min(dist, 1.5)
-                    target_x = current_position[0] + look_ahead * math.cos(sector_angle)
-                    target_y = current_position[1] + look_ahead * math.sin(sector_angle)
+                    target_x = current_position[0] + look_ahead * math.cos(world_angle)
+                    target_y = current_position[1] + look_ahead * math.sin(world_angle)
                     visit_counts.append(visited_tracker.get_visit_count(target_x, target_y))
                 else:
                     visit_counts.append(None)
@@ -1990,10 +2045,11 @@ class EscapeMemory:
         self.recent_failures: List[Dict] = []
         self.current_stuck_position: Optional[Tuple[float, float]] = None
         self.current_stuck_time: float = 0.0
+        self.current_attempt = None  # Track current escape attempt
 
-    def pos_to_cell(self, x: float, y: float) -> Tuple[int, int]:
-        """Convert world position to grid cell"""
-        return (int(x / self.grid_resolution), int(y / self.grid_resolution))
+    def _pos_to_cell(self, x: float, y: float) -> Tuple[int, int]:
+        """Convert world position to grid cell - uses global pos_to_cell()"""
+        return pos_to_cell(x, y, self.grid_resolution)
 
     def record_stuck(self, x: float, y: float, front_dist: float,
                      left_dist: float, right_dist: float):
@@ -2018,7 +2074,7 @@ class EscapeMemory:
         if self.current_stuck_position is None:
             return
 
-        cell = self.pos_to_cell(*self.current_stuck_position)
+        cell = self._pos_to_cell(*self.current_stuck_position)
 
         # The last attempt that was made before escaping
         if self.recent_failures:
@@ -2048,7 +2104,7 @@ class EscapeMemory:
         - turn_angle: suggested turn angle in degrees
         - confidence: how many times this worked before
         """
-        cell = self.pos_to_cell(x, y)
+        cell = self._pos_to_cell(x, y)
 
         # Check this cell and adjacent cells
         cells_to_check = [
@@ -2144,10 +2200,8 @@ class VisitedTracker:
         self.load()
 
     def pos_to_cell(self, x: float, y: float) -> Tuple[int, int]:
-        """Convert world position to grid cell coordinates"""
-        cell_x = int(x / self.resolution)
-        cell_y = int(y / self.resolution)
-        return (cell_x, cell_y)
+        """Convert world position to grid cell coordinates - uses global pos_to_cell()"""
+        return pos_to_cell(x, y, self.resolution)
 
     def cell_to_pos(self, cell: Tuple[int, int]) -> Tuple[float, float]:
         """Convert grid cell to world position (center of cell)"""
@@ -2325,7 +2379,7 @@ class SectorObstacleAvoider:
         # Each entry is (x, y, timestamp, confidence)
         # These are used to adjust clearance calculations when lidar shows clear but robot knows there's something
         self.virtual_obstacles: List[Tuple[float, float, float, int]] = []
-        self.virtual_obstacle_radius = 0.25  # How far to stay from virtual obstacles (25cm)
+        self.virtual_obstacle_radius = 0.12  # Reduced from 25cm to 12cm - was blocking valid paths
         self.virtual_obstacle_max_age = 300.0  # Forget virtual obstacles after 5 minutes
         self.virtual_obstacle_max_count = 20  # Maximum stored virtual obstacles
 
@@ -2364,6 +2418,7 @@ class SectorObstacleAvoider:
         self.last_avoidance_direction = "right"  # Track last direction to alternate
         self.avoidance_attempt_count = 0  # Count attempts in same area
         self.last_avoidance_position = None  # Position where we last avoided
+        self.backup_start_position = None  # Position when backup started (for distance tracking)
 
         # Dead-end detection
         self.dead_end_positions: Set[Tuple[int, int]] = set()  # Grid cells marked as dead ends
@@ -2405,14 +2460,18 @@ class SectorObstacleAvoider:
         self.use_path_planning: bool = True  # Enable/disable path planning
 
         # Cache for map exploration scores (expensive subprocess call)
-        self._map_scores_cache = [0.5] * NUM_SECTORS
-        self._map_scores_cache_time = 0
+        # Default to 1.0 (fully unexplored) so if SLAM fails, robot doesn't
+        # penalize any direction - relies on clearance/freedom instead
+        # (0.5 was bad: made robot think everything was "partially explored")
+        self._map_scores_cache = [1.0] * NUM_SECTORS
         self._MAP_SCORES_CACHE_TTL = 3.0  # Refresh every 3 seconds
+        self._map_scores_cache_time = -self._MAP_SCORES_CACHE_TTL  # Force fresh fetch on first call
+        self._map_scores_fetch_failed = False  # Track if SLAM is working
 
         # Cache for dead-end detection
-        self._dead_end_cache = [False] * NUM_SECTORS
-        self._dead_end_cache_time = 0
+        self._dead_end_cache = [True] * NUM_SECTORS  # Safe default: assume all blocked
         self._DEAD_END_CACHE_TTL = 2.0  # Refresh every 2 seconds
+        self._dead_end_cache_time = -self._DEAD_END_CACHE_TTL  # Force fresh fetch on first call
 
         # State machine for cleaner navigation logic
         self.robot_state = RobotState.STOPPED
@@ -2433,6 +2492,249 @@ class SectorObstacleAvoider:
         # Collision verifier FSM - detects invisible obstacles by tracking movement efficiency
         # When LiDAR shows clear but odometry shows no movement, there's an invisible obstacle
         self.collision_verifier = CollisionVerifier()
+
+        # Load obstacle avoidance profiles from calibration
+        # Different obstacles need different avoidance strategies (round vs flat vs thin)
+        self.avoidance_profiles = self._load_avoidance_profiles()
+
+    def _load_avoidance_profiles(self) -> dict:
+        """
+        Load obstacle-specific avoidance profiles from calibration file.
+
+        Profiles contain:
+        - shape: 'round', 'flat', or 'thin'
+        - extra_margin: Additional distance margin (meters)
+        - min_turn_deg: Minimum turn angle for this obstacle
+        - backup_mult: Multiplier for backup duration
+
+        Round obstacles (like pillow chairs) need larger turns because
+        the robot can slide along the curved surface.
+        """
+        default_profiles = {
+            'default': {'shape': 'flat', 'extra_margin': 0.0, 'min_turn_deg': 45, 'backup_mult': 1.0}
+        }
+
+        try:
+            calib_file = CollisionVerifier.CALIBRATION_FILE
+            if os.path.exists(calib_file):
+                with open(calib_file, 'r') as f:
+                    data = json.load(f)
+                    profiles = data.get('avoidance_profiles', {})
+                    if profiles:
+                        # Merge with defaults
+                        default_profiles.update(profiles)
+                        # Count non-default profiles
+                        custom_count = len([k for k in profiles if k != 'default'])
+                        if custom_count > 0:
+                            print(f"[Avoidance] Loaded {custom_count} obstacle-specific avoidance profiles")
+        except Exception as e:
+            print(f"[Avoidance] Using default profiles: {e}")
+
+        return default_profiles
+
+    def get_avoidance_params(self, front_distance: float) -> Tuple[dict, Optional[str]]:
+        """
+        Get avoidance parameters based on current obstacle detection.
+
+        Attempts to identify which calibrated obstacle we're facing
+        based on LiDAR distance patterns and returns appropriate avoidance params.
+
+        Returns:
+            tuple: (params_dict, obstacle_name or None)
+
+        For now, uses a simple distance-based heuristic:
+        - Very close (< 0.4m): Check for round obstacles (pillow chair)
+        - Close obstacles get larger margins
+        """
+        # Default params - ALWAYS works even without calibration
+        default_params = {
+            'shape': 'flat',
+            'extra_margin': 0.0,
+            'min_turn_deg': 45,
+            'backup_mult': 1.0
+        }
+        params = self.avoidance_profiles.get('default', default_params).copy()
+        detected_obstacle = None
+
+        # Check for round obstacle pattern (like pillow_chair)
+        if front_distance < 0.6 and self._detect_round_obstacle():
+            # Look for any round-shape profile in calibration
+            for name, profile in self.avoidance_profiles.items():
+                if name == 'default':
+                    continue
+                if profile.get('shape') == 'round':
+                    params = profile.copy()
+                    detected_obstacle = name
+                    break
+
+            # If no round profile calibrated, use enhanced defaults for round obstacles
+            if detected_obstacle is None:
+                params = {
+                    'shape': 'round',
+                    'extra_margin': 0.10,  # Default extra margin for round obstacles
+                    'min_turn_deg': 60,    # Larger turn for curved surfaces
+                    'backup_mult': 1.3     # More backup for round obstacles
+                }
+                detected_obstacle = "round_obstacle (uncalibrated)"
+
+        # Check for thin obstacle pattern (like chair legs)
+        elif front_distance < 0.5 and self._detect_thin_obstacle():
+            # Look for any thin-shape profile in calibration
+            for name, profile in self.avoidance_profiles.items():
+                if name == 'default':
+                    continue
+                if profile.get('shape') == 'thin':
+                    params = profile.copy()
+                    detected_obstacle = name
+                    break
+
+            # If no thin profile calibrated, use defaults for thin obstacles
+            if detected_obstacle is None:
+                params = {
+                    'shape': 'thin',
+                    'extra_margin': 0.0,
+                    'min_turn_deg': 35,    # Smaller turn for thin obstacles
+                    'backup_mult': 1.0
+                }
+                detected_obstacle = "thin_obstacle (uncalibrated)"
+
+        return params, detected_obstacle
+
+    def get_front_arc_min(self, body_threshold: float = BODY_THRESHOLD_FRONT) -> float:
+        """
+        Get minimum distance in front arc (sectors 11, 0, 1).
+
+        This is the UNIFIED implementation - use this instead of inline calculations.
+        Filters out body readings below threshold.
+
+        Args:
+            body_threshold: Minimum distance to consider valid (filters robot body readings)
+
+        Returns:
+            Minimum distance in front arc, or 0.3 if all invalid
+        """
+        raw_front = [d for d in [self.sector_distances[11], self.sector_distances[0],
+                                 self.sector_distances[1]] if d > body_threshold]
+        return min(raw_front) if raw_front else 0.3
+
+    def get_side_clearances(self) -> Tuple[float, float]:
+        """
+        Get left and right clearance distances.
+
+        This is the UNIFIED implementation - use this instead of inline calculations.
+
+        Returns:
+            (left_clearance, right_clearance) tuple in meters
+        """
+        left = min(self.sector_distances[1], self.sector_distances[2])
+        right = min(self.sector_distances[10], self.sector_distances[11])
+        return left, right
+
+    def check_trapped_state(self, dynamic_min_dist: float, margin: float = 0.40) -> dict:
+        """
+        Check if robot is trapped in a dead-end or tight space.
+
+        UNIFIED implementation - consolidates dead-end/trapped detection logic.
+
+        Args:
+            dynamic_min_dist: Current minimum distance threshold
+            margin: Additional margin for triggering trapped detection
+
+        Returns:
+            Dict with keys: front_blocked, left_blocked, right_blocked, rear_clear, is_trapped
+        """
+        front_arc_min = self.get_front_arc_min()
+        left_dist, right_dist = self.get_side_clearances()
+        rear_dists = [self.sector_distances[5], self.sector_distances[6], self.sector_distances[7]]
+
+        threshold = dynamic_min_dist + margin
+
+        result = {
+            'front_blocked': front_arc_min < threshold,
+            'left_blocked': left_dist < threshold,
+            'right_blocked': right_dist < threshold,
+            'rear_clear': min(rear_dists) > dynamic_min_dist,
+            'front_arc_min': front_arc_min,
+            'left_dist': left_dist,
+            'right_dist': right_dist,
+        }
+        result['is_trapped'] = (result['front_blocked'] and result['left_blocked'] and
+                                result['right_blocked'] and result['rear_clear'])
+        return result
+
+    def _detect_thin_obstacle(self) -> bool:
+        """
+        Detect if current obstacle is thin (like chair leg, pole).
+
+        Thin obstacles show a single sector blocked while adjacent sectors are clear.
+        """
+        if len(self.sector_distances) < 12:
+            return False
+
+        front = self.sector_distances[0]
+        front_left = self.sector_distances[1]
+        front_right = self.sector_distances[11]
+
+        # Also check further side sectors to distinguish from doorways
+        left_side = self.sector_distances[2]
+        right_side = self.sector_distances[10]
+
+        # Thin obstacle: front is blocked but both sides are much clearer
+        if front < 0.5:
+            # Both adjacent sectors should be significantly further
+            left_clear = front_left > front + 0.3
+            right_clear = front_right > front + 0.3
+
+            # DOORWAY CHECK: Doorways have walls on the sides (door frame)
+            # Thin obstacles (poles, chair legs) have clear sides further out
+            # If sectors 2 and 10 are also close, it's a doorway not a thin obstacle
+            if left_side < 0.8 and right_side < 0.8:
+                return False  # It's a doorway with door frame, not thin obstacle
+
+            if left_clear and right_clear:
+                return True
+
+        return False
+
+    def _detect_round_obstacle(self) -> bool:
+        """
+        Detect if current obstacle has round/curved shape.
+
+        Round obstacles show gradually changing distances across sectors
+        (like a curved surface), while flat obstacles show constant distance.
+
+        IMPORTANT: Must distinguish from corners (two walls meeting) which
+        show similar pattern but have walls extending to the sides.
+        """
+        if len(self.sector_distances) < 12:
+            return False
+
+        # Check front sectors (11, 0, 1) for round signature
+        front = self.sector_distances[0]
+        front_left = self.sector_distances[1]
+        front_right = self.sector_distances[11]
+
+        # Also check side sectors to distinguish from corners
+        left_side = self.sector_distances[2]
+        right_side = self.sector_distances[10]
+
+        # For a round obstacle, adjacent sectors are further than center
+        if front < 0.6:  # Only when close
+            # CORNER CHECK: Corners have walls extending to the sides
+            # Round objects are isolated - sides should be clear
+            if left_side < 0.6 or right_side < 0.6:
+                return False  # It's a corner, not a round obstacle
+
+            # Check if we see the "curve" pattern
+            # Both sides should be similar distance (symmetric curve)
+            side_diff = abs(front_left - front_right)
+            both_further = front_left > front and front_right > front
+
+            # Round if: sides are symmetric AND both further than center
+            if side_diff < 0.15 and both_further:
+                return True
+
+        return False
 
     def smooth_velocity(self, target_linear: float, target_angular: float) -> Tuple[float, float]:
         """
@@ -2709,17 +3011,21 @@ class SectorObstacleAvoider:
                     self.last_angular = 0.0
                     skip_smoothing = True  # Bypass smoothing this iteration
 
-            # Execute current maneuver or normal operation
-            if self.maneuver_mode is not None:
-                if self.maneuver_mode == "backup":
+                # Copy maneuver state while holding lock to avoid race condition
+                current_maneuver_mode = self.maneuver_mode
+                current_maneuver_speed = self.maneuver_speed
+
+            # Execute current maneuver or normal operation (using copied values)
+            if current_maneuver_mode is not None:
+                if current_maneuver_mode == "backup":
                     # Send backup command (negative linear, no angular)
                     # At 0.15 m/s, this should move ~15cm per second
-                    self.send_cmd(-abs(self.maneuver_speed), 0.0)
-                elif self.maneuver_mode == "turn":
+                    self.send_cmd(-abs(current_maneuver_speed), 0.0)
+                elif current_maneuver_mode == "turn":
                     # Send turn command (no linear, angular based on speed sign)
                     # At speed=1.0, this sends Z=1.0 which turns at ~0.29 rad/s calibrated
-                    self.send_cmd(0.0, self.maneuver_speed)
-                elif self.maneuver_mode == "stop":
+                    self.send_cmd(0.0, current_maneuver_speed)
+                elif current_maneuver_mode == "stop":
                     # Stationary - send zero
                     self.send_cmd(0.0, 0.0)
             else:
@@ -2870,6 +3176,10 @@ echo '{stop_cmd}' > /dev/ttyAMA0
         # FULLY NON-BLOCKING: Return immediately, let movement thread handle maneuvers
         # No sleep here - main loop will continue but maneuver_mode blocks normal commands
 
+        # Clear sensor history - after a turn, "front distance" points somewhere else
+        # Old history entries would compare distances to different directions
+        self.sensor_history.clear()
+
         self.obstacles_avoided += 1
         self.total_rotations += 1
 
@@ -2882,9 +3192,48 @@ echo '{stop_cmd}' > /dev/ttyAMA0
             self.send_cmd(0.0, 0.0)
             time.sleep(0.05)
 
+    def clear_tracking_data(self):
+        """
+        Clear all tracking data/caches to prevent stale data from affecting
+        subsequent runs. This fixes the RViz erratic display bug where the
+        robot appears to move crazily even when stationary.
+        """
+        # Clear sensor history (used for stuck detection)
+        self.sensor_history.clear()
+
+        # Clear collision verifier state
+        if hasattr(self, 'collision_verifier') and self.collision_verifier:
+            self.collision_verifier.reset()
+
+        # Clear avoidance state
+        self.avoidance_direction = None
+        self.avoidance_start_time = 0
+        self.avoidance_attempt_count = 0
+        self.last_avoidance_position = None
+        self.backup_start_position = None
+
+        # Clear state context
+        if hasattr(self, 'state_context'):
+            self.state_context.clear_lock()
+            self.state_context.consecutive_avoidances = 0
+
+        # Clear escape memory current attempt
+        if hasattr(self, 'escape_memory') and self.escape_memory:
+            self.escape_memory.current_attempt = None
+
+        # Clear maneuver queue
+        if hasattr(self, 'maneuver_queue'):
+            self.maneuver_queue.clear()
+        self.maneuver_mode = None
+        self.maneuver_end_time = 0
+
+        print("[CLEANUP] Cleared all tracking data and caches")
+
     def emergency_stop(self):
         """Hardware-level emergency stop"""
         self.stop()
+        # Clear all tracking data to prevent stale state
+        self.clear_tracking_data()
         try:
             subprocess.run(['./stop_robot.sh'], timeout=2,
                           capture_output=True, cwd='/home/ws/ugv_cont')
@@ -3354,8 +3703,8 @@ for sector in range(12):
     unknown_count = 0
     total_count = 0
 
-    # Sample points along ray from 0.5m to 2m
-    for dist in [0.5, 0.8, 1.0, 1.3, 1.6, 2.0]:
+    # Sample points along ray from 0.5m to 3.5m (increased from 2m to see unexplored rooms)
+    for dist in [0.5, 0.8, 1.2, 1.6, 2.0, 2.5, 3.0, 3.5]:
         px = robot_x + dist * math.cos(map_angle)
         py = robot_y + dist * math.sin(map_angle)
 
@@ -3466,11 +3815,11 @@ data = map_msg.data
 # Check each sector for dead-ends
 # Flag as dead-end when walls block the path ahead
 dead_ends = []
-CHECK_DIST = 1.2  # Check up to 1.2m ahead to detect dead-ends earlier
+CHECK_DIST = 2.0  # Increased from 1.2m to see past doorways
 
 def find_wall_hit(angle, max_dist):
     # Ray-cast to find first wall hit. Returns (x, y, dist) or None
-    for dist in [0.3, 0.5, 0.7, 0.9, 1.1, 1.2]:
+    for dist in [0.3, 0.5, 0.7, 0.9, 1.1, 1.4, 1.7, 2.0]:
         if dist > max_dist:
             break
         px = robot_x + dist * math.cos(angle)
@@ -3647,13 +3996,9 @@ rclpy.shutdown()
             self.sector_distances[robot_sector] = lidar_distances[lidar_sector]
 
     def sector_to_angle(self, sector: int) -> float:
-        """Convert sector number to angle in radians (0 = front, positive = left)"""
-        # Sector 0 = front (0°), sectors go counterclockwise
-        # Sector 6 = back (180°)
-        if sector <= 6:
-            return sector * (math.pi / 6)  # 0 to π
-        else:
-            return (sector - 12) * (math.pi / 6)  # -π to 0
+        """Convert sector number to angle in radians (0 = front, positive = left)
+        NOTE: This is a wrapper around the global sector_to_angle() function."""
+        return sector_to_angle(sector, NUM_SECTORS)
 
     def find_frontier_direction(self) -> Tuple[Optional[int], float]:
         """
@@ -3684,6 +4029,7 @@ rclpy.shutdown()
             dead_ends=dead_ends,
             visited_tracker=self.visited_tracker,
             current_position=self.current_position,
+            current_heading=self.current_heading,
         )
 
         return best_sector, best_score
@@ -3738,10 +4084,12 @@ rclpy.shutdown()
             # VISITED PENALTY: Heavily penalize revisiting areas
             # This is critical for preventing the robot from looping
             if self.current_position:
-                sector_angle = sector * (2 * math.pi / NUM_SECTORS)
+                # FIX: Must add current_heading to convert from robot-relative to world frame
+                sector_angle = sector_to_angle(sector)
+                world_angle = (self.current_heading or 0) + sector_angle
                 look_ahead = min(dist, 1.5)
-                target_x = self.current_position[0] + look_ahead * math.cos(sector_angle)
-                target_y = self.current_position[1] + look_ahead * math.sin(sector_angle)
+                target_x = self.current_position[0] + look_ahead * math.cos(world_angle)
+                target_y = self.current_position[1] + look_ahead * math.sin(world_angle)
 
                 visit_count = self.visited_tracker.get_visit_count(target_x, target_y)
 
@@ -3826,6 +4174,7 @@ rclpy.shutdown()
             dead_ends=dead_ends,
             visited_tracker=self.visited_tracker,
             current_position=self.current_position,
+            current_heading=self.current_heading,
         )
 
         # Default to sector 0 if all blocked
@@ -3873,11 +4222,12 @@ rclpy.shutdown()
 
         # Calculate goal position in that direction
         dist = min(self.sector_distances[best_sector], 2.0)  # Max 2m goal
-        sector_angle = best_sector * (2 * math.pi / NUM_SECTORS)
+        # Use unified sector_to_angle function for consistency
+        robot_angle = sector_to_angle(best_sector, NUM_SECTORS)
 
         # Account for robot heading if available
         heading = self.current_heading if self.current_heading else 0.0
-        world_angle = heading + sector_angle
+        world_angle = heading + robot_angle
 
         goal_x = x + dist * math.cos(world_angle)
         goal_y = y + dist * math.sin(world_angle)
@@ -3955,7 +4305,7 @@ rclpy.shutdown()
 
         return min(120, max(45, base_degrees))  # Clamp between 45-120°
 
-    def transition_state(self, new_state: RobotState, force: bool = False):
+    def transition_state(self, new_state: RobotState, force: bool = False) -> bool:
         """
         Transition to a new state with logging.
         Respects minimum state duration and committed action locking.
@@ -3964,9 +4314,12 @@ rclpy.shutdown()
         Args:
             new_state: Target state to transition to
             force: If True, bypass minimum duration check (not action lock)
+
+        Returns:
+            True if transition succeeded, False if blocked by lock or min duration
         """
         if new_state == self.robot_state:
-            return  # Already in this state
+            return True  # Already in this state - consider success
 
         # Check committed action locking (prevents race conditions)
         if not self.state_context.can_transition(new_state):
@@ -3974,13 +4327,15 @@ rclpy.shutdown()
             # Only log if significant time remaining
             if lock_remaining > 0.1:
                 pass  # Silently ignore to avoid log spam
-            return
+            return False  # Transition blocked by lock
 
         time_in_state = time.time() - self.state_context.state_start_time
         min_duration = self.min_state_duration.get(self.robot_state, 0)
 
         if not force and time_in_state < min_duration:
-            return  # Not enough time in current state
+            # Log blocked transitions for debugging (safety-critical info)
+            print(f"\n[STATE-BLOCKED] {self.robot_state.name} -> {new_state.name} (min_duration={min_duration:.2f}s, elapsed={time_in_state:.2f}s)")
+            return False  # Not enough time in current state - transition blocked
 
         old_state = self.robot_state
         self.robot_state = new_state
@@ -3998,6 +4353,8 @@ rclpy.shutdown()
             self.send_cmd(0.0, 0.0)
             time.sleep(DIRECTION_CHANGE_PAUSE)
             print(f"[PAUSE] Brief stop before backup ({DIRECTION_CHANGE_PAUSE:.2f}s)")
+            # Track backup start position to ensure minimum backup distance
+            self.backup_start_position = self.current_position
 
         # Track escape memory for stuck situations
         if self.current_position:
@@ -4022,6 +4379,8 @@ rclpy.shutdown()
         # Clear old failures periodically
         self.escape_memory.clear_old_failures()
 
+        return True  # Transition succeeded
+
     def update_state_context(self, front_clearance: float, best_sector: int,
                             best_distance: float, stuck_detected: bool):
         """Update state context with current sensor data"""
@@ -4038,6 +4397,11 @@ rclpy.shutdown()
         Returns:
             (linear, angular) velocity command, or (None, None) if discrete maneuver was executed
         """
+        # FIX: Track if safety-critical transition was requested but blocked
+        # If blocked, we'll apply a velocity override at the end
+        safety_transition_blocked = False
+        blocked_target_state = None
+
         # Update VFH histogram with current sector distances
         # Use lidar_min_distance which accounts for LiDAR mounting offset
         self.vfh.update_histogram(self.sector_distances, self.lidar_min_distance)
@@ -4049,11 +4413,8 @@ rclpy.shutdown()
         front_clearance = 1.0 - self.vfh.smoothed_histogram[0]  # Inverse: higher = more clear
         front_clear = self.vfh.is_path_clear(0)  # Binary: is front sector clear?
 
-        # Also check raw distances for safety
-        BODY_THRESHOLD = 0.12
-        raw_front = [d for d in [self.sector_distances[11], self.sector_distances[0],
-                                 self.sector_distances[1]] if d > BODY_THRESHOLD]
-        front_arc_min = min(raw_front) if raw_front else 0.3
+        # Also check raw distances for safety - use unified helper method
+        front_arc_min = self.get_front_arc_min()
 
         # Detect corridor/narrow passage with hysteresis to prevent oscillation
         raw_corridor, raw_width, corridor_direction = self.vfh.detect_corridor(
@@ -4070,16 +4431,21 @@ rclpy.shutdown()
         # Dynamic threshold based on environment context
         # In a corridor where robot fits, use much lower threshold - just physical clearance
         # In open space, use more conservative threshold
+
+        # FIX: Get calibrated extra_margin for obstacle type (applies to both corridor and open space)
+        avoidance_params, detected_obstacle = self.get_avoidance_params(front_arc_min)
+        extra_margin = avoidance_params.get('extra_margin', 0.0)
+
         if is_corridor and corridor_width >= MIN_CORRIDOR_WIDTH:
             # CORRIDOR MODE: More cautious - robot needs physical clearance + margin
             # LiDAR offset (37cm) + safety margin (10cm) = ~47cm
             # This means: if LiDAR reads 47cm, robot front is 10cm from obstacle
             dynamic_min_dist = LIDAR_FRONT_OFFSET + 0.10  # ~0.47m - increased from 0.05
-            DANGER_DISTANCE = dynamic_min_dist + 0.05  # ~0.52m - danger with small margin
+            DANGER_DISTANCE = dynamic_min_dist + 0.05 + extra_margin  # Include extra_margin for round obstacles
         else:
             # OPEN SPACE: Conservative threshold for safer margins
             dynamic_min_dist = self.lidar_min_distance
-            DANGER_DISTANCE = self.lidar_min_distance + 0.35  # Start avoiding earlier (~1.17m total)
+            DANGER_DISTANCE = self.lidar_min_distance + 0.35 + extra_margin  # Include extra_margin
 
         # Update state context
         self.update_state_context(
@@ -4114,7 +4480,10 @@ rclpy.shutdown()
             # Robot is trapped in dead-end - back out directly
             print(f"\n[DEAD-END] Trapped! F={front_arc_min:.2f}m L={self.sector_distances[1]:.2f}m R={self.sector_distances[11]:.2f}m - backing out")
             self.avoidance_direction = None  # Will be set to go straight back
-            self.transition_state(RobotState.BACKING_UP)
+            # FIX: Check transition result - if blocked, flag for velocity override
+            if not self.transition_state(RobotState.BACKING_UP):
+                safety_transition_blocked = True
+                blocked_target_state = RobotState.BACKING_UP
 
         # Evaluate state transitions based on current state
         # Use dynamic_min_dist which adapts to corridor vs open space
@@ -4149,7 +4518,10 @@ rclpy.shutdown()
             elif front_arc_min < dynamic_min_dist:
                 # Too close! Need to back up
                 self.state_context.consecutive_avoidances += 1
-                self.transition_state(RobotState.BACKING_UP)
+                # FIX: Check transition result - if blocked, flag for velocity override
+                if not self.transition_state(RobotState.BACKING_UP):
+                    safety_transition_blocked = True
+                    blocked_target_state = RobotState.BACKING_UP
             elif front_arc_min < DANGER_DISTANCE:
                 # In caution zone - always try to steer around, don't wait for VFH
                 # This prevents driving into walls that raw LiDAR can see
@@ -4175,7 +4547,10 @@ rclpy.shutdown()
                     # No way around - must back up
                     print(f"\n[CORRIDOR] Path blocked (front={front_arc_min:.2f}m < {dynamic_min_dist:.2f}m)")
                     self.state_context.consecutive_avoidances += 1
-                    self.transition_state(RobotState.BACKING_UP)
+                    # FIX: Check transition result - if blocked, flag for velocity override
+                    if not self.transition_state(RobotState.BACKING_UP):
+                        safety_transition_blocked = True
+                        blocked_target_state = RobotState.BACKING_UP
             elif not is_corridor and front_arc_min >= self.lidar_min_distance:
                 # Exited corridor into open space
                 print(f"\n[CORRIDOR] Exited passage into open space")
@@ -4185,7 +4560,10 @@ rclpy.shutdown()
         elif self.robot_state == RobotState.AVOIDING:
             # From AVOIDING: check if we can go forward or need to back up
             if front_arc_min < DANGER_DISTANCE:
-                self.transition_state(RobotState.BACKING_UP)
+                # FIX: Check transition result - if blocked, flag for velocity override
+                if not self.transition_state(RobotState.BACKING_UP):
+                    safety_transition_blocked = True
+                    blocked_target_state = RobotState.BACKING_UP
             elif front_clear and front_arc_min >= dynamic_min_dist:
                 self.state_context.consecutive_avoidances = 0
                 if is_corridor:
@@ -4195,10 +4573,20 @@ rclpy.shutdown()
 
         elif self.robot_state == RobotState.BACKING_UP:
             # From BACKING_UP: back up until we have enough clearance to turn safely
-            # Instead of fixed time, check front distance to know when to stop
+            # Instead of fixed time, check front distance AND minimum backup distance
 
             # Check if we have enough clearance in front to turn safely
             has_turn_clearance = front_arc_min >= SAFE_TURN_CLEARANCE
+
+            # Calculate how far we've backed up
+            backup_distance = 0.0
+            if self.backup_start_position and self.current_position:
+                dx = self.current_position[0] - self.backup_start_position[0]
+                dy = self.current_position[1] - self.backup_start_position[1]
+                backup_distance = math.sqrt(dx*dx + dy*dy)
+
+            # Minimum backup distance before we can transition to turning
+            has_min_distance = backup_distance >= MIN_BACKUP_DISTANCE
 
             # Safety limit: don't backup forever
             exceeded_max_time = time_in_state >= MAX_BACKUP_TIME
@@ -4207,13 +4595,17 @@ rclpy.shutdown()
             MIN_BACKUP_TIME = 0.3
             past_minimum = time_in_state >= MIN_BACKUP_TIME
 
-            if past_minimum and has_turn_clearance:
-                # We have enough clearance - stop backing up and start turning
-                print(f"\n[BACKUP-DONE] Clearance reached: {front_arc_min:.2f}m >= {SAFE_TURN_CLEARANCE:.2f}m (took {time_in_state:.1f}s)")
+            if past_minimum and has_turn_clearance and has_min_distance:
+                # We have enough clearance AND backed up far enough - start turning
+                print(f"\n[BACKUP-DONE] Clearance: {front_arc_min:.2f}m >= {SAFE_TURN_CLEARANCE:.2f}m, dist={backup_distance:.2f}m (took {time_in_state:.1f}s)")
                 self.transition_state(RobotState.TURNING)
+            elif past_minimum and has_turn_clearance and not has_min_distance:
+                # Have clearance but haven't backed up enough - keep backing
+                # This is the key fix: force minimum backup distance even if clearance looks OK
+                pass  # Continue backing up
             elif exceeded_max_time:
                 # Safety limit reached - stop backing even without full clearance
-                print(f"\n[BACKUP-TIMEOUT] Max time {MAX_BACKUP_TIME:.1f}s reached, front={front_arc_min:.2f}m")
+                print(f"\n[BACKUP-TIMEOUT] Max time {MAX_BACKUP_TIME:.1f}s reached, front={front_arc_min:.2f}m, dist={backup_distance:.2f}m")
                 self.transition_state(RobotState.TURNING)
 
         elif self.robot_state == RobotState.TURNING:
@@ -4277,12 +4669,59 @@ rclpy.shutdown()
             # Find the frontier (direction with most unexplored space)
             frontier_sector, frontier_score = self.find_frontier_direction()
 
+            # CRITICAL: Check if front is blocked BEFORE following frontier
+            # The frontier might be to the side, but we can't drive through obstacles!
+            FRONT_DANGER_DIST = self.lidar_min_distance + 0.10  # ~0.92m
+            front_blocked = front_arc_min < FRONT_DANGER_DIST
+
             if frontier_sector is None:
-                # All directions blocked - will be handled by else branch below
-                linear = 0.0
-                angular = 0.0
+                # All directions blocked - transition to BACKING_UP immediately
+                print(f"\n[BLOCKED] No frontier found - all directions blocked!")
+                self.state_context.consecutive_avoidances += 1
+                self.state_context.state_start_time = 0
+                self.transition_state(RobotState.BACKING_UP)
+                # Return safe values and skip margin steering logic
+                return self.linear_speed * 0.3, 0.0  # Slow forward while transitioning
+
+            elif front_blocked:
+                # FRONT IS BLOCKED - must steer away or stop, regardless of frontier!
+                # This is the key fix: don't drive into obstacle while chasing frontier
+                left_clear = self.sector_distances[1] >= FRONT_DANGER_DIST
+                right_clear = self.sector_distances[11] >= FRONT_DANGER_DIST
+
+                if left_clear and right_clear:
+                    # Both sides clear - steer toward frontier if it's to the side
+                    if frontier_sector in [1, 2, 3]:
+                        linear = self.compute_adaptive_speed(front_arc_min) * 0.5
+                        angular = 0.4  # Turn left
+                        print(f"\r[STEER-L] Front blocked ({front_arc_min:.2f}m), steering left toward frontier s{frontier_sector}", end="")
+                    elif frontier_sector in [9, 10, 11]:
+                        linear = self.compute_adaptive_speed(front_arc_min) * 0.5
+                        angular = -0.4  # Turn right
+                        print(f"\r[STEER-R] Front blocked ({front_arc_min:.2f}m), steering right toward frontier s{frontier_sector}", end="")
+                    else:
+                        # Frontier is behind - turn in place
+                        linear = 0.0
+                        angular = 0.5 if frontier_sector <= 6 else -0.5
+                        print(f"\r[TURN] Front blocked, turning toward frontier s{frontier_sector}", end="")
+                elif left_clear:
+                    # Only left is clear - steer left
+                    linear = self.compute_adaptive_speed(front_arc_min) * 0.4
+                    angular = 0.5
+                    print(f"\r[ESCAPE-L] Front blocked ({front_arc_min:.2f}m), only left clear", end="")
+                elif right_clear:
+                    # Only right is clear - steer right
+                    linear = self.compute_adaptive_speed(front_arc_min) * 0.4
+                    angular = -0.5
+                    print(f"\r[ESCAPE-R] Front blocked ({front_arc_min:.2f}m), only right clear", end="")
+                else:
+                    # All front directions blocked - transition to AVOIDING or BACKING_UP
+                    print(f"\n[TRAPPED] Front arc blocked ({front_arc_min:.2f}m), transitioning to AVOIDING")
+                    self.transition_state(RobotState.AVOIDING)
+                    return 0.0, 0.0
+
             elif frontier_sector == 0:
-                # Frontier is straight ahead - go forward!
+                # Frontier is straight ahead AND front is clear - go forward!
                 linear = self.compute_adaptive_speed(front_arc_min)
                 angular = 0.0
             elif frontier_sector in [1, 11]:
@@ -4341,13 +4780,6 @@ rclpy.shutdown()
                     side = "L" if asymmetry > 0 else "R"
                     print(f"\r[MARGIN] {side} obstacle at {closest:.2f}m, steering {margin_angular:+.2f} rad/s", end="")
 
-            # Safety check: if no frontier found (all blocked), force backup
-            if frontier_sector is None:
-                print(f"\n[BLOCKED] No frontier found - all directions blocked!")
-                self.state_context.consecutive_avoidances += 1
-                self.state_context.state_start_time = 0
-                self.transition_state(RobotState.BACKING_UP)
-
             self.emergency_maneuver = False
 
             # Show frontier visualization
@@ -4382,13 +4814,23 @@ rclpy.shutdown()
                 angular = dwa_w
                 status = f"[AVOID-DWA] v={linear:.2f} w={dwa_w:.2f} score={dwa_score:.2f}"
             else:
-                # Fallback to VFH sector steering if DWA finds no valid trajectory
-                sector_angle = self.sector_to_angle(best_sector)
-                turn_factor = abs(sector_angle) / math.pi
-                # Apply both turn factor reduction AND adaptive speed
-                linear = adaptive_speed * (1.0 - turn_factor * 0.4)
-                angular = sector_angle * 0.4
-                status = f"[AVOID-VFH] s{best_sector} ang={math.degrees(sector_angle):.0f}°"
+                # DWA found no valid trajectory - check if front is also blocked
+                # If front is too close, we need to back up, not steer into obstacle
+                if front_arc_min < dynamic_min_dist:
+                    # Can't go forward - transition to BACKING_UP
+                    print(f"\n[AVOID-BLOCKED] DWA failed and front blocked ({front_arc_min:.2f}m), backing up")
+                    self.transition_state(RobotState.BACKING_UP, force=True)
+                    linear = 0.0
+                    angular = 0.0
+                    status = f"[AVOID->BACKUP] front={front_arc_min:.2f}m"
+                else:
+                    # Fallback to VFH sector steering if DWA finds no valid trajectory
+                    sector_angle = self.sector_to_angle(best_sector)
+                    turn_factor = abs(sector_angle) / math.pi
+                    # Apply both turn factor reduction AND adaptive speed
+                    linear = adaptive_speed * (1.0 - turn_factor * 0.4)
+                    angular = sector_angle * 0.4
+                    status = f"[AVOID-VFH] s{best_sector} ang={math.degrees(sector_angle):.0f}°"
 
             self.emergency_maneuver = False
 
@@ -4462,9 +4904,15 @@ rclpy.shutdown()
                 # Choose direction with smaller turn, plus small margin
                 margin = 5  # REDUCED from 10° to 5° for tighter avoidance
 
-                # FORCED ALTERNATION: Always alternate direction to escape passages
-                # This prevents the robot from oscillating by trying same direction repeatedly
-                force_alternate = self.state_context.consecutive_avoidances >= 1  # Alternate after just 1 avoidance
+                # FORCED ALTERNATION: Alternate direction after multiple failures to escape passages
+                # Only trigger after 3+ consecutive avoidances to give same direction a fair chance
+                # Was >= 1, which caused L-shaped corner traps
+                force_alternate = self.state_context.consecutive_avoidances >= 3
+
+                # Get calibrated avoidance params for current obstacle
+                avoidance_params, detected_obstacle = self.get_avoidance_params(front_arc_min)
+                calibrated_turn = avoidance_params.get('min_turn_deg', 45)
+                backup_mult = avoidance_params.get('backup_mult', 1.0)  # FIX: Get backup multiplier
 
                 # First, check escape memory for learned successful escapes
                 escape_suggestion = None
@@ -4472,17 +4920,25 @@ rclpy.shutdown()
                     escape_suggestion = self.escape_memory.get_suggested_escape(*self.current_position)
 
                 if escape_suggestion and escape_suggestion["confidence"] >= 2:
-                    # We have strong history at this location - use what worked before
-                    self.avoidance_direction = escape_suggestion["direction"]
-                    turn_degrees = escape_suggestion.get("turn_angle", 60)
-                    # Record this as an attempt
-                    self.escape_memory.record_escape_attempt(
-                        self.avoidance_direction,
-                        escape_suggestion.get("duration", 1.0),
-                        0.3,  # backup distance
-                        turn_degrees
-                    )
-                    print(f"\n[ESCAPE-MEM] Using learned escape: {self.avoidance_direction} (conf={escape_suggestion['confidence']})")
+                    # We have strong history at this location
+                    # BUT: only use memory if no specific obstacle detected, or obstacle type matches
+                    use_memory = True
+                    if detected_obstacle and detected_obstacle != escape_suggestion.get("obstacle_type"):
+                        # Different obstacle type at this location - use calibration instead
+                        use_memory = False
+                        print(f"\n[ESCAPE-MEM] Ignoring memory (was {escape_suggestion.get('obstacle_type')}, now {detected_obstacle})")
+
+                    if use_memory:
+                        self.avoidance_direction = escape_suggestion["direction"]
+                        turn_degrees = escape_suggestion.get("turn_angle", 60)
+                        # Record this as an attempt
+                        self.escape_memory.record_escape_attempt(
+                            self.avoidance_direction,
+                            escape_suggestion.get("duration", 1.0),
+                            0.3,  # backup distance
+                            turn_degrees
+                        )
+                        print(f"\n[ESCAPE-MEM] Using learned escape: {self.avoidance_direction} (conf={escape_suggestion['confidence']})")
                 elif force_alternate:
                     # Force opposite direction from last time
                     # BUT: don't turn into a dead-end if other direction is viable
@@ -4511,17 +4967,25 @@ rclpy.shutdown()
 
                 self.last_avoidance_direction = self.avoidance_direction
 
-                # Clamp turn angle between 20° and 120°
-                # REDUCED: minimum from 30° to 20°, max from 180° to 120° for tighter avoidance
-                turn_degrees = max(20, min(120, turn_degrees))
+                # Clamp turn angle - use calibrated minimum for obstacle type
+                # For round obstacles (pillow_chair), calibrated_turn might be 60°
+                # For thin obstacles, might be 30°
+                min_turn = max(20, calibrated_turn)  # Use calibrated min, floor at 20°
+                turn_degrees = max(min_turn, min(120, turn_degrees))
+
+                # Print detected obstacle for debugging
+                if detected_obstacle:
+                    print(f"        Detected: {detected_obstacle} (min_turn={calibrated_turn}°)")
 
                 # Apply direction sign
                 if self.avoidance_direction == "right":
                     turn_degrees = -turn_degrees
 
-                # Store maneuver duration for turning state
-                actual_vel = ACTUAL_MAX_ANGULAR_VEL * 1.0
-                self.state_context.maneuver_duration = abs(turn_degrees) * (math.pi / 180) / actual_vel
+                # Store maneuver duration for turning state (use utility function)
+                self.state_context.maneuver_duration = calculate_turn_duration(abs(turn_degrees), 1.0)
+
+                # FIX: Apply backup_mult to backup speed for round obstacles
+                backup_speed = self.linear_speed * backup_mult
 
                 # Lock the backup action to prevent race conditions
                 # Lock for max backup duration - will be cleared early when clearance is reached
@@ -4529,22 +4993,24 @@ rclpy.shutdown()
                     action="backup",
                     duration=MAX_BACKUP_TIME,
                     direction=self.avoidance_direction,
-                    velocity=(-self.linear_speed, 0.0)
+                    velocity=(-backup_speed, 0.0)
                 )
 
                 dead_str = f"L={'D' if left_dead_end else 'ok'} R={'D' if right_dead_end else 'ok'}"
-                print(f"\n[BACKUP] dir={self.avoidance_direction} turn={turn_degrees:.0f}° (L:{left_turn_angle}° R:{right_turn_angle}°) {dead_str}")
+                print(f"\n[BACKUP] dir={self.avoidance_direction} turn={turn_degrees:.0f}° (L:{left_turn_angle}° R:{right_turn_angle}°) {dead_str} backup_mult={backup_mult:.1f}")
 
-                # Send backup command
-                linear = -self.linear_speed
+                # Send backup command with backup_mult applied
+                linear = -backup_speed
                 angular = 0.0
                 status = f"[BACKUP] t={time_in_state:.1f}s front={front_arc_min:.2f}m/{SAFE_TURN_CLEARANCE:.2f}m dir={self.avoidance_direction}"
 
             else:
                 # Direction already determined from previous iteration - continue backing up
-                # This fixes the critical bug where velocity was not set when avoidance_direction
-                # was already "left" or "right" (not None, not "straight", not trapped)
-                linear = -self.linear_speed
+                # FIX: Get backup_mult for consistent backup speed
+                avoidance_params, _ = self.get_avoidance_params(front_arc_min)
+                backup_mult = avoidance_params.get('backup_mult', 1.0)
+                backup_speed = self.linear_speed * backup_mult
+                linear = -backup_speed
                 angular = 0.0
                 status = f"[BACKUP] t={time_in_state:.1f}s front={front_arc_min:.2f}m/{SAFE_TURN_CLEARANCE:.2f}m dir={self.avoidance_direction}"
 
@@ -4583,9 +5049,8 @@ rclpy.shutdown()
             # Steer toward a navigable path, not just center
             corridor_width = self.state_context.corridor_width
 
-            # Calculate clearances
-            left_dist = min(self.sector_distances[2], self.sector_distances[1])
-            right_dist = min(self.sector_distances[10], self.sector_distances[11])
+            # Use consolidated helper for side clearances
+            left_dist, right_dist = self.get_side_clearances()
             front_dist = self.sector_distances[0]
 
             # Check which directions are navigable (above corridor threshold)
@@ -4598,20 +5063,37 @@ rclpy.shutdown()
 
             if front_nav:
                 # Front is clear - center between walls with margin from closer obstacle
-                balance = left_dist - right_dist
+                raw_balance = left_dist - right_dist
+
+                # Apply exponential smoothing to balance to reduce oscillation from sensor noise
+                # Higher alpha = faster response but more noise, lower = smoother but slower
+                BALANCE_SMOOTHING = 0.3  # Smooth heavily to prevent oscillation
+                if not hasattr(self, '_smoothed_balance'):
+                    self._smoothed_balance = raw_balance
+                self._smoothed_balance = BALANCE_SMOOTHING * raw_balance + (1 - BALANCE_SMOOTHING) * self._smoothed_balance
+                balance = self._smoothed_balance
 
                 # MARGIN STEERING: More aggressive steering away from close obstacles
                 # If one side is much closer, steer away more aggressively
                 CORRIDOR_MARGIN_THRESHOLD = 0.5  # 50cm threshold in corridors
                 closest_side = min(left_dist, right_dist)
 
+                # Hysteresis: use different thresholds for starting vs stopping correction
+                # Start correcting at 10cm, stop correcting at 5cm
+                BALANCE_START_THRESHOLD = 0.10  # Start correcting if 10cm+ off-center
+                BALANCE_STOP_THRESHOLD = 0.05   # Stop correcting when within 5cm
+
                 if closest_side < CORRIDOR_MARGIN_THRESHOLD:
                     # Close obstacle - steer away with urgency
                     urgency = 1.0 - (closest_side / CORRIDOR_MARGIN_THRESHOLD)
                     # Stronger correction when closer
                     angular = max(-max_correction, min(max_correction, balance * (0.5 + urgency * 0.5)))
-                elif abs(balance) > 0.08:  # Only correct if 8cm+ off-center
+                elif abs(balance) > BALANCE_START_THRESHOLD:
+                    # Start centering correction
                     angular = max(-max_correction, min(max_correction, balance * 0.4))
+                elif abs(balance) > BALANCE_STOP_THRESHOLD and abs(self.last_angular) > 0.01:
+                    # Continue existing correction (hysteresis) until within stop threshold
+                    angular = max(-max_correction, min(max_correction, balance * 0.3))
                 else:
                     angular = 0.0
             elif left_nav and not right_nav:
@@ -4658,6 +5140,18 @@ rclpy.shutdown()
             hist_viz = ''.join(['█' if b else '░' for b in self.vfh.binary_histogram])
             print(f"\r{status} VFH:[{hist_viz}]", end="", flush=True)
 
+        # FIX: Safety override - if a safety-critical transition was blocked,
+        # apply safe velocity values to prevent collision regardless of current state
+        if safety_transition_blocked:
+            if blocked_target_state == RobotState.BACKING_UP:
+                # Wanted to back up but couldn't - at least stop forward motion!
+                # This prevents driving into obstacles when transition is blocked by min_duration
+                print(f"\n[SAFETY] Transition to BACKING_UP blocked - stopping forward motion")
+                linear = min(linear, 0.0)  # Stop forward, allow backward
+                # If we had a positive linear (going forward), stop completely
+                if linear >= 0:
+                    linear = 0.0
+
         return linear, angular
 
     def compute_velocity(self) -> Tuple[float, float]:
@@ -4678,62 +5172,26 @@ rclpy.shutdown()
         best_sector, best_score = self.find_best_direction()
         best_dist = self.sector_distances[best_sector]
 
-        # With LIDAR_ROTATION_SECTORS=7:
-        # - Blind spots (LiDAR 60-120°) map to Robot sectors 9-10 (R-F, F-R)
-        # - Robot body/close readings in sectors 6-8 (BACK-R, R-BACK, RIGHT)
-        #
-        # Front sectors (0, 1, 11) should be reliable for obstacle detection.
-        # Use lower threshold for front (real obstacles can be close).
-        BODY_THRESHOLD_FRONT = 0.12  # Front sectors: real obstacles can be close
-        BODY_THRESHOLD_SIDE = 0.25   # Side/back sectors: may have body readings
+        # Use consolidated helper method for front arc minimum distance
+        # This replaces duplicated code and ensures consistent calculation
+        front_arc_min = self.get_front_arc_min()
 
-        narrow_front = [
-            self.sector_distances[11],  # FRONT-R
-            self.sector_distances[0],   # FRONT
-            self.sector_distances[1],   # F-L
-        ]
-
-        # Find minimum distance in front arc
-        # For front sectors, use lower threshold (0.12m) - real obstacles can be close
-        front_arc_min = 10.0
-        closest_sector = 0
-        sector_map = [11, 0, 1]
-        for i, d in enumerate(narrow_front):
-            # Skip blind spots (0) and very close body readings (< 0.12m)
-            if d > BODY_THRESHOLD_FRONT and d < front_arc_min:
-                front_arc_min = d
-                closest_sector = sector_map[i]
-
-        # If all narrow front sectors are body/blind, check wider arc
-        if front_arc_min >= 10.0:
-            # Fall back to sectors 10, 0, 1, 4 (skip 2,3 blind)
-            wider_front = [
-                (10, self.sector_distances[10]),  # F-R - use side threshold
-                (0, self.sector_distances[0]),    # FRONT - use front threshold
-                (1, self.sector_distances[1]),    # F-L - use front threshold
-                (4, self.sector_distances[4]),    # BACK-L (might see around)
-            ]
-            for sec, d in wider_front:
-                threshold = BODY_THRESHOLD_FRONT if sec in [0, 1, 11] else BODY_THRESHOLD_SIDE
-                if d > threshold and d < front_arc_min:
-                    front_arc_min = d
-                    closest_sector = sec
-
-        # DANGER_DISTANCE: Only backup when FRONT (sector 0) is too close
-        # Not the side sectors - robot can drive past side obstacles
+        # DANGER_DISTANCE: Backup when front ARC (sectors 11, 0, 1) is too close
+        # Use front_arc_min which includes front-left and front-right, not just sector 0
         DANGER_DISTANCE = self.lidar_min_distance  # 0.82m (includes LiDAR offset)
 
-        # Get FRONT sector only for danger check
-        # NOTE: Sector 0 (directly ahead) should NOT be filtered - robot body doesn't appear there
-        # Only filter if reading is impossibly close (< 0.02m = sensor noise)
-        front_only = self.sector_distances[0]
-        if front_only < 0.02:
-            front_only = 10.0  # Only ignore sensor noise, not real obstacles
+        # Check if round obstacle detected - add extra margin
+        # Round obstacles (pillow chair) need earlier avoidance due to curved surface
+        extra_margin = 0.0
+        if self._detect_round_obstacle():
+            avoidance_params, _ = self.get_avoidance_params(front_arc_min)
+            extra_margin = avoidance_params.get('extra_margin', 0.0)
 
-        # Path is clear if front sector is above threshold
-        path_clear = front_only >= self.lidar_min_distance
+        # Path is clear if front ARC is above threshold (including extra margin for round obstacles)
+        # Uses front_arc_min which considers sectors 11, 0, 1 (front-right, front, front-left)
+        path_clear = front_arc_min >= (self.lidar_min_distance + extra_margin)
 
-        if front_only < DANGER_DISTANCE:
+        if front_arc_min < (DANGER_DISTANCE + extra_margin):
             # OBSTACLE TOO CLOSE! Execute discrete avoidance maneuver
             self.emergency_maneuver = True
 
@@ -4757,7 +5215,8 @@ rclpy.shutdown()
                 thresh = BODY_THRESHOLD_FRONT if s == 1 else BODY_THRESHOLD_SIDE
                 if d > thresh:
                     left_dists.append(d)
-            left_clearance = min(left_dists) if left_dists else 0
+            # FIXED: Empty list means no obstacles detected = clear (10m), not blocked (0m)
+            left_clearance = min(left_dists) if left_dists else 10.0
 
             right_dists = []
             for s in [11, 10, 9, 8]:
@@ -4765,7 +5224,8 @@ rclpy.shutdown()
                 thresh = BODY_THRESHOLD_FRONT if s == 11 else BODY_THRESHOLD_SIDE
                 if d > thresh:
                     right_dists.append(d)
-            right_clearance = min(right_dists) if right_dists else 0
+            # FIXED: Empty list means no obstacles detected = clear (10m), not blocked (0m)
+            right_clearance = min(right_dists) if right_dists else 10.0
 
             # Get exploration scores to prefer unexplored directions
             map_scores = self.get_map_exploration_scores()
@@ -4782,43 +5242,79 @@ rclpy.shutdown()
             clearance_ratio = min(left_clearance, right_clearance) / max(left_clearance, right_clearance, 0.01)
             is_passage = clearance_ratio > 0.5 and left_clearance > 0.3 and right_clearance > 0.3
 
-            # SIMPLE RULE: Always turn toward the side with MORE clearance
-            # This turns the robot AWAY from the obstacle
-            if left_clearance > right_clearance:
-                self.avoidance_direction = "left"
-            else:
-                self.avoidance_direction = "right"
-
-            # Save state
-            self.last_avoidance_direction = self.avoidance_direction
-            self.last_avoidance_position = self.current_position
-            self.avoidance_intensity = 1.0
-            self.avoidance_start_time = time.time()
-            # Show which side has more clearance and which direction was chosen
-            obstacle_side = "LEFT" if left_clearance < right_clearance else "RIGHT"
-            print(f"\n[AVOID] Obstacle on {obstacle_side}, turning {self.avoidance_direction.upper()}")
-            print(f"        LEFT min:  {left_clearance:.2f}m from {left_dists}")
-            print(f"        RIGHT min: {right_clearance:.2f}m from {right_dists}")
-
-            # Larger turn (45°) to properly escape obstacles
-            turn_degrees = 45 if self.avoidance_direction == "left" else -45
-
-            # Track consecutive avoidance attempts - by position OR time
-            # If we avoided in the last 10 seconds, it's probably the same obstacle
+            # Track consecutive avoidance attempts FIRST (before updating avoidance_start_time)
+            # Check time since LAST avoidance to determine if this is a repeated attempt
             time_since_last = time.time() - self.avoidance_start_time if self.avoidance_start_time > 0 else 999
-            recent_avoidance = time_since_last < 10.0  # Within 10 seconds
+            recent_avoidance = time_since_last < 8.0  # Within 8 seconds = same obstacle
 
             if same_area or recent_avoidance:
                 self.avoidance_attempt_count += 1
             else:
                 self.avoidance_attempt_count = 1  # First attempt at new location/time
 
-            # Increase backup distance with each failed attempt - LARGER steps
-            # Base: 0.5s (~5cm), increases by 0.5s per attempt, max 2.5s (~25cm)
-            backup_dur = min(0.5 + (self.avoidance_attempt_count - 1) * 0.5, 2.5)
-            if self.avoidance_attempt_count > 1:
-                reason = "same area" if same_area else f"recent ({time_since_last:.1f}s ago)"
-                print(f"        (Attempt #{self.avoidance_attempt_count} - {reason} - backup {backup_dur:.1f}s)")
+            # DIRECTION SELECTION with forced alternation on repeated attempts
+            # First attempt: turn toward side with MORE clearance
+            # Repeated attempts: ALTERNATE direction to escape corners/traps
+            if self.avoidance_attempt_count == 1:
+                # First attempt - choose based on clearance
+                if left_clearance > right_clearance:
+                    self.avoidance_direction = "left"
+                else:
+                    self.avoidance_direction = "right"
+            else:
+                # Repeated attempt - ALTERNATE from last direction
+                if self.last_avoidance_direction == "left":
+                    self.avoidance_direction = "right"
+                else:
+                    self.avoidance_direction = "left"
+
+            # Save state AFTER determining direction
+            self.last_avoidance_direction = self.avoidance_direction
+            self.last_avoidance_position = self.current_position
+            self.avoidance_intensity = 1.0
+            self.avoidance_start_time = time.time()  # Update AFTER using the old value
+
+            # Show which side has more clearance and which direction was chosen
+            obstacle_side = "LEFT" if left_clearance < right_clearance else "RIGHT"
+            print(f"\n[AVOID] Obstacle on {obstacle_side}, turning {self.avoidance_direction.upper()}")
+            print(f"        LEFT min:  {left_clearance:.2f}m from {left_dists}")
+            print(f"        RIGHT min: {right_clearance:.2f}m from {right_dists}")
+
+            # Get obstacle-specific avoidance parameters (based on shape: round/flat/thin)
+            front_dist = self.sector_distances[0] if self.sector_distances else 1.0
+            avoidance_params, detected_obstacle = self.get_avoidance_params(front_dist)
+            base_turn = avoidance_params.get('min_turn_deg', 45)
+            backup_mult = avoidance_params.get('backup_mult', 1.0)
+            obstacle_shape = avoidance_params.get('shape', 'flat')
+
+            # Print detected obstacle info for user
+            if detected_obstacle:
+                print(f"        Detected: {detected_obstacle} ({obstacle_shape} shape, turn {base_turn}°)")
+
+            # ESCALATING turn angles based on attempt count
+            # Attempt 1: base_turn (45°)
+            # Attempt 2: 60° + alternate direction
+            # Attempt 3: 90° + alternate direction
+            # Attempt 4+: 120° + alternate direction
+            if self.avoidance_attempt_count >= 4:
+                turn_degrees = 120  # Large turn but not full 180° (which can put robot in same spot)
+                print(f"        (Attempt #{self.avoidance_attempt_count} - LARGE TURN 120°, alternating)")
+            elif self.avoidance_attempt_count >= 3:
+                turn_degrees = 90
+                print(f"        (Attempt #{self.avoidance_attempt_count} - ESCALATING to 90°, alternating)")
+            elif self.avoidance_attempt_count >= 2:
+                turn_degrees = 60
+                print(f"        (Attempt #{self.avoidance_attempt_count} - 60° turn, alternating)")
+            else:
+                turn_degrees = base_turn
+
+            # Apply direction sign
+            if self.avoidance_direction == "right":
+                turn_degrees = -turn_degrees
+
+            # Increase backup distance with each failed attempt
+            # Base: 0.5s, increases by 0.3s per attempt, max 2.0s
+            backup_dur = min((0.5 + (self.avoidance_attempt_count - 1) * 0.3) * backup_mult, 2.0)
 
             # Quick backup + turn
             self.backup_then_turn(backup_duration=backup_dur, turn_degrees=turn_degrees)
@@ -5104,6 +5600,11 @@ rclpy.shutdown()
                 pos = None
                 if not skip_scan or iteration_count % 4 == 0:  # Always get odom at least every 4th iteration
                     pos = self.get_odometry()
+                    if pos is None:
+                        # Odometry failed - clear stale position to avoid wrong decisions
+                        # Virtual obstacles, escape memory, visited tracking all use position
+                        self.current_position = None
+                        self.current_heading = None
                 else:
                     pos = self.current_position  # Use cached position
                 if pos:

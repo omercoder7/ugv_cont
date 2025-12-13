@@ -214,6 +214,17 @@ def load_calibration() -> Dict:
             'clear_path': 'clear'
             # Custom: 'glass_door': 'hard', 'carpet_edge': 'soft', etc.
         },
+        'avoidance_profiles': {
+            # Obstacle-specific avoidance parameters
+            # Shape affects how robot should avoid:
+            # - 'round': Curved surface, robot can slide along it - needs larger turns
+            # - 'flat': Standard wall-like obstacle - normal avoidance works
+            # - 'thin': Chair legs, poles - precise small turns work
+            # Format: { 'shape': str, 'extra_margin': float, 'min_turn_deg': int, 'backup_mult': float }
+            'default': {'shape': 'flat', 'extra_margin': 0.0, 'min_turn_deg': 45, 'backup_mult': 1.0},
+            'soft_block': {'shape': 'flat', 'extra_margin': 0.05, 'min_turn_deg': 45, 'backup_mult': 1.0},
+            'hard_block': {'shape': 'flat', 'extra_margin': 0.0, 'min_turn_deg': 45, 'backup_mult': 1.0}
+        },
         'metadata': {
             'robot_id': 'ugv_beast',
             'calibrated_at': None,
