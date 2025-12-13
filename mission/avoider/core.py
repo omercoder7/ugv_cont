@@ -181,8 +181,13 @@ class SectorObstacleAvoider:
         # Escape memory - tracks which maneuvers worked in stuck situations
         self.escape_memory = EscapeMemory(grid_resolution=0.5)
 
-        # DWA-style trajectory scorer for the AVOIDING state
-        self.trajectory_scorer = TrajectoryScorer(max_speed=self.linear_speed, max_yaw_rate=1.0)
+        # DWA-style trajectory scorer for FORWARD, CORRIDOR, and AVOIDING states
+        # Enhanced with better sampling (45 candidates) and optimized collision checking
+        self.trajectory_scorer = TrajectoryScorer(
+            max_speed=self.linear_speed,
+            max_yaw_rate=0.5,  # Conservative turning for slow robot
+            robot_radius=ROBOT_WIDTH / 2
+        )
 
         # Unified direction scorer - consolidates all scoring systems
         self.unified_scorer = UnifiedDirectionScorer(num_sectors=NUM_SECTORS)
@@ -1474,6 +1479,42 @@ rclpy.shutdown()
         self.state_context.best_distance = best_distance
         self.state_context.stuck_detected = stuck_detected
 
+    def compute_velocity_dwa(self, corridor_mode: bool = False) -> Tuple[float, float, float]:
+        """
+        DWA-style trajectory scoring for smooth obstacle avoidance.
+
+        Uses TrajectoryScorer to simulate 45 candidate trajectories and select
+        the best one based on clearance, velocity, heading, and progress scores.
+
+        Args:
+            corridor_mode: If True, use tighter constraints for narrow passages
+
+        Returns:
+            (linear, angular, score) - best velocity command and its score
+        """
+        # Set trajectory scorer mode based on environment
+        self.trajectory_scorer.set_corridor_mode(corridor_mode)
+
+        # Use committed avoidance direction if available
+        committed_dir = self.avoidance_direction
+
+        # Compute best velocity using DWA trajectory scoring
+        linear, angular, score = self.trajectory_scorer.compute_best_velocity_fast(
+            sector_distances=self.sector_distances,
+            committed_direction=committed_dir
+        )
+
+        # Apply adaptive speed limit based on front clearance
+        front_arc_min = self.get_front_arc_min()
+        adaptive_limit = self.get_adaptive_speed(front_arc_min)
+        linear = min(linear, adaptive_limit)
+
+        # In corridor mode, further reduce speed for safety
+        if corridor_mode:
+            linear = min(linear, self.linear_speed * 0.5)
+
+        return linear, angular, score
+
     def compute_velocity_vfh(self) -> Tuple[float, float]:
         """
         VFH-based obstacle avoidance with state machine.
@@ -1849,65 +1890,63 @@ rclpy.shutdown()
                     self.transition_state(RobotState.AVOIDING)
                     return 0.0, 0.0
 
-            elif frontier_sector == 0:
-                # Frontier is straight ahead AND front is clear - go forward!
-                linear = self.get_adaptive_speed(front_arc_min)
-                angular = 0.0
-            elif frontier_sector in [1, 11]:
-                # Frontier is slightly to the side - gentle curve
-                linear = self.get_adaptive_speed(front_arc_min)
-                angular = 0.15 if frontier_sector == 1 else -0.15
-            elif frontier_sector in [2, 10]:
-                # Frontier is more to the side - sharper curve
-                linear = self.get_adaptive_speed(front_arc_min) * 0.8
-                angular = 0.25 if frontier_sector == 2 else -0.25
-            elif frontier_sector in [3, 9]:
-                # Frontier is to the side - turn while moving slowly
-                linear = self.get_adaptive_speed(front_arc_min) * 0.5
-                angular = 0.35 if frontier_sector == 3 else -0.35
             else:
-                # Frontier is behind (sectors 4-8) - need to turn around
-                # Stop forward motion and turn toward frontier
-                linear = 0.0
-                if frontier_sector <= 6:
-                    angular = 0.5  # Turn left
+                # =================================================================
+                # DWA TRAJECTORY SCORING: Use trajectory simulation for smooth motion
+                # Replaces heuristic-based velocity calculation with DWA
+                # =================================================================
+                dwa_linear, dwa_angular, dwa_score = self.compute_velocity_dwa(corridor_mode=False)
+
+                if dwa_score > float('-inf'):
+                    # DWA found valid trajectory - use it
+                    linear = dwa_linear
+                    angular = dwa_angular
+
+                    # Bias toward frontier direction if DWA velocity is mostly forward
+                    if abs(angular) < 0.2 and frontier_sector is not None:
+                        # Add slight steering toward frontier
+                        if frontier_sector in [1, 2, 3]:
+                            angular += 0.1  # Gentle left bias
+                        elif frontier_sector in [9, 10, 11]:
+                            angular -= 0.1  # Gentle right bias
                 else:
-                    angular = -0.5  # Turn right
+                    # DWA found no valid trajectory - use heuristic fallback
+                    if frontier_sector == 0:
+                        linear = self.get_adaptive_speed(front_arc_min)
+                        angular = 0.0
+                    elif frontier_sector in [1, 11]:
+                        linear = self.get_adaptive_speed(front_arc_min)
+                        angular = 0.15 if frontier_sector == 1 else -0.15
+                    elif frontier_sector in [2, 10]:
+                        linear = self.get_adaptive_speed(front_arc_min) * 0.8
+                        angular = 0.25 if frontier_sector == 2 else -0.25
+                    elif frontier_sector in [3, 9]:
+                        linear = self.get_adaptive_speed(front_arc_min) * 0.5
+                        angular = 0.35 if frontier_sector == 3 else -0.35
+                    else:
+                        # Frontier is behind (sectors 4-8) - turn in place
+                        linear = 0.0
+                        angular = 0.5 if frontier_sector <= 6 else -0.5
 
-            # OBSTACLE MARGIN STEERING: Steer away from close obstacles on either side
-            # If obstacle is closer on one side, add angular velocity to steer away
-            left_dist = min(self.sector_distances[1], self.sector_distances[2])  # Front-left
-            right_dist = min(self.sector_distances[10], self.sector_distances[11])  # Front-right
-            front_left = self.sector_distances[1]
-            front_right = self.sector_distances[11]
+                # OBSTACLE MARGIN STEERING: Steer away from close obstacles
+                left_dist = min(self.sector_distances[1], self.sector_distances[2])
+                right_dist = min(self.sector_distances[10], self.sector_distances[11])
 
-            # Only apply margin steering if obstacle is within danger zone
-            MARGIN_THRESHOLD = 0.8  # Apply margin steering within 80cm
-            MARGIN_GAIN = 0.3  # How much to steer away (rad/s per meter difference)
+                MARGIN_THRESHOLD = 0.8
+                MARGIN_GAIN = 0.3
 
-            if left_dist < MARGIN_THRESHOLD or right_dist < MARGIN_THRESHOLD:
-                # Calculate asymmetry: positive = obstacle closer on left, negative = closer on right
-                asymmetry = right_dist - left_dist  # Positive means left is closer
+                if left_dist < MARGIN_THRESHOLD or right_dist < MARGIN_THRESHOLD:
+                    asymmetry = right_dist - left_dist
+                    closest = min(left_dist, right_dist)
+                    urgency = max(0.0, min(1.0, 1.0 - (closest / MARGIN_THRESHOLD)))
+                    margin_angular = max(-0.3, min(0.3, asymmetry * MARGIN_GAIN * urgency))
 
-                # Scale by how close the nearest obstacle is
-                closest = min(left_dist, right_dist)
-                urgency = 1.0 - (closest / MARGIN_THRESHOLD)  # 0 to 1, higher = more urgent
-                urgency = max(0.0, min(1.0, urgency))
+                    if abs(angular) < 0.4:
+                        angular += margin_angular
 
-                # Add steering away from the closer obstacle
-                margin_angular = asymmetry * MARGIN_GAIN * urgency
-
-                # Cap the margin steering
-                margin_angular = max(-0.3, min(0.3, margin_angular))
-
-                # Only apply if it doesn't conflict too much with frontier direction
-                # (don't override strong turns toward frontier)
-                if abs(angular) < 0.4:
-                    angular += margin_angular
-
-                if abs(margin_angular) > 0.05:
-                    side = "L" if asymmetry > 0 else "R"
-                    print(f"\r[MARGIN] {side} obstacle at {closest:.2f}m, steering {margin_angular:+.2f} rad/s", end="")
+                    if abs(margin_angular) > 0.05:
+                        side = "L" if asymmetry > 0 else "R"
+                        print(f"\r[MARGIN] {side} obstacle at {closest:.2f}m, steering {margin_angular:+.2f} rad/s", end="")
 
             # WAYPOINT STEERING: Add bias toward active waypoint
             # Only apply when path is relatively clear and not already turning hard
@@ -2195,79 +2234,60 @@ rclpy.shutdown()
                 status = f"[TURN] dir={self.avoidance_direction} t={time_in_state:.1f}s lock={self.state_context.get_lock_remaining():.1f}s"
 
         elif self.robot_state == RobotState.CORRIDOR:
-            # CORRIDOR mode: Baby steps through narrow passage
-            # Steer toward a navigable path, not just center
+            # CORRIDOR mode: Use DWA with tighter constraints for narrow passages
+            # DWA corridor mode uses fewer angular samples and more conservative speeds
             corridor_width = self.state_context.corridor_width
 
             # Use consolidated helper for side clearances
             left_dist, right_dist = self.get_side_clearances()
             front_dist = self.sector_distances[0]
 
-            # Check which directions are navigable (above corridor threshold)
-            front_nav = front_dist >= dynamic_min_dist
-            left_nav = left_dist >= dynamic_min_dist
-            right_nav = right_dist >= dynamic_min_dist
+            # Use DWA trajectory scoring with corridor mode enabled
+            dwa_linear, dwa_angular, dwa_score = self.compute_velocity_dwa(corridor_mode=True)
 
-            # Steer toward a navigable path
-            max_correction = 0.35  # Slightly higher in corridor for quicker response
+            if dwa_score > float('-inf'):
+                # DWA found valid trajectory
+                linear = dwa_linear
+                angular = dwa_angular
 
-            if front_nav:
-                # Front is clear - center between walls with margin from closer obstacle
-                raw_balance = left_dist - right_dist
+                # Apply balance-based centering as secondary correction
+                # DWA handles obstacle avoidance, but we want to center in corridor
+                if abs(angular) < 0.2:  # Only apply if DWA isn't already turning hard
+                    raw_balance = left_dist - right_dist
 
-                # Apply exponential smoothing to balance to reduce oscillation from sensor noise
-                # Higher alpha = faster response but more noise, lower = smoother but slower
-                BALANCE_SMOOTHING = 0.3  # Smooth heavily to prevent oscillation
-                if not hasattr(self, '_smoothed_balance'):
-                    self._smoothed_balance = raw_balance
-                self._smoothed_balance = BALANCE_SMOOTHING * raw_balance + (1 - BALANCE_SMOOTHING) * self._smoothed_balance
-                balance = self._smoothed_balance
+                    # Smooth the balance to reduce oscillation
+                    BALANCE_SMOOTHING = 0.3
+                    if not hasattr(self, '_smoothed_balance'):
+                        self._smoothed_balance = raw_balance
+                    self._smoothed_balance = BALANCE_SMOOTHING * raw_balance + (1 - BALANCE_SMOOTHING) * self._smoothed_balance
+                    balance = self._smoothed_balance
 
-                # MARGIN STEERING: More aggressive steering away from close obstacles
-                # If one side is much closer, steer away more aggressively
-                CORRIDOR_MARGIN_THRESHOLD = 0.5  # 50cm threshold in corridors
-                closest_side = min(left_dist, right_dist)
+                    # Add centering correction (capped)
+                    center_correction = max(-0.2, min(0.2, balance * 0.3))
+                    angular += center_correction
+            else:
+                # DWA found no valid trajectory - use fallback
+                # Check which directions are navigable
+                front_nav = front_dist >= dynamic_min_dist
+                left_nav = left_dist >= dynamic_min_dist
+                right_nav = right_dist >= dynamic_min_dist
 
-                # Hysteresis: use different thresholds for starting vs stopping correction
-                # Start correcting at 10cm, stop correcting at 5cm
-                BALANCE_START_THRESHOLD = 0.10  # Start correcting if 10cm+ off-center
-                BALANCE_STOP_THRESHOLD = 0.05   # Stop correcting when within 5cm
+                max_correction = 0.35
 
-                if closest_side < CORRIDOR_MARGIN_THRESHOLD:
-                    # Close obstacle - steer away with urgency
-                    urgency = 1.0 - (closest_side / CORRIDOR_MARGIN_THRESHOLD)
-                    # Stronger correction when closer
-                    angular = max(-max_correction, min(max_correction, balance * (0.5 + urgency * 0.5)))
-                elif abs(balance) > BALANCE_START_THRESHOLD:
-                    # Start centering correction
-                    angular = max(-max_correction, min(max_correction, balance * 0.4))
-                elif abs(balance) > BALANCE_STOP_THRESHOLD and abs(self.velocity_smoother.last_angular) > 0.01:
-                    # Continue existing correction (hysteresis) until within stop threshold
-                    angular = max(-max_correction, min(max_correction, balance * 0.3))
+                if left_nav and not right_nav:
+                    angular = max_correction
+                elif right_nav and not left_nav:
+                    angular = -max_correction
+                elif left_nav and right_nav:
+                    angular = max_correction if left_dist > right_dist else -max_correction
                 else:
                     angular = 0.0
-            elif left_nav and not right_nav:
-                # Only left navigable - steer left
-                angular = max_correction
-            elif right_nav and not left_nav:
-                # Only right navigable - steer right
-                angular = -max_correction
-            elif left_nav and right_nav:
-                # Both sides navigable but not front - pick better one
-                if left_dist > right_dist:
-                    angular = max_correction
-                else:
-                    angular = -max_correction
-            else:
-                # Nothing navigable - go straight (state machine will backup)
-                angular = 0.0
 
-            # Use reduced speed in corridor (baby steps)
-            corridor_speed = self.linear_speed * 0.5  # Half speed
-            linear = corridor_speed
+                # Reduced speed in fallback mode
+                linear = self.linear_speed * 0.3
 
-            nav_str = f"{'L' if left_nav else '.'}{'F' if front_nav else '.'}{'R' if right_nav else '.'}"
-            status = f"[CORRIDOR] w={corridor_width:.2f}m L={left_dist:.2f} R={right_dist:.2f} nav={nav_str}"
+            nav_str = f"L={left_dist:.2f} R={right_dist:.2f}"
+            status = f"[CORRIDOR-DWA] w={corridor_width:.2f}m {nav_str} v={linear:.2f} w={angular:.2f}"
 
         elif self.robot_state == RobotState.STUCK_RECOVERY:
             # Aggressive recovery: alternate backup and spin

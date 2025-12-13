@@ -14,109 +14,198 @@ if TYPE_CHECKING:
 
 class TrajectoryScorer:
     """
-    DWA-style trajectory generation and scoring.
-    Predicts multiple trajectories and scores them based on:
-    - Clearance: Distance from obstacles
-    - Heading: Alignment with target direction
-    - Velocity: Prefer higher speeds
-    - Smoothness: Prefer straight paths
+    Enhanced DWA-style trajectory generation and scoring.
+
+    Improvements over basic DWA:
+    - Fixed velocity samples instead of resolution-based (more predictable)
+    - Optimized collision checking using sector projection
+    - Better scoring weights tuned for slow robots
+    - Progress-based scoring to ensure forward motion
     """
 
-    def __init__(self, max_speed: float = 0.10, max_yaw_rate: float = 1.0):
+    def __init__(self, max_speed: float = 0.10, max_yaw_rate: float = 0.5,
+                 robot_radius: float = 0.09):
         self.max_speed = max_speed
         self.max_yaw_rate = max_yaw_rate
+        self.robot_radius = robot_radius
 
-        self.v_resolution = 0.02
-        self.yaw_resolution = 0.2
+        # Trajectory simulation parameters
+        self.predict_time = 1.5  # seconds to simulate ahead
+        self.dt = 0.1  # simulation timestep
 
-        self.predict_time = 1.5
-        self.dt = 0.1
+        # Fixed velocity samples for consistent behavior
+        # Linear: 5 samples from 0 to max_speed
+        self.linear_samples = [0.0, 0.25, 0.5, 0.75, 1.0]  # multiplied by max_speed
+        # Angular: 9 samples from -max_yaw to +max_yaw
+        self.angular_samples = [-1.0, -0.75, -0.5, -0.25, 0.0, 0.25, 0.5, 0.75, 1.0]  # multiplied by max_yaw_rate
 
-        self.heading_weight = 0.3
-        self.clearance_weight = 0.4
-        self.velocity_weight = 0.2
-        self.smoothness_weight = 0.1
+        # Scoring weights (tuned for slow exploration robot)
+        self.clearance_weight = 3.0   # Safety is paramount
+        self.velocity_weight = 1.5    # Prefer moving over stopping
+        self.heading_weight = 1.0     # Prefer straight paths
+        self.progress_weight = 1.0    # Reward forward progress
 
-        self.robot_radius = 0.15
+        # Collision threshold
+        self.min_clearance = robot_radius + 0.05  # collision if closer than this
 
-    def predict_trajectory(self, x: float, y: float, yaw: float,
-                          v: float, w: float) -> List[Tuple[float, float, float]]:
-        """Predict robot trajectory for given velocity command."""
+        # Cache for obstacle points (computed once per update)
+        self._obstacle_cache = None
+        self._cache_distances = None
+
+    def set_corridor_mode(self, enabled: bool):
+        """Switch to corridor mode with tighter constraints."""
+        if enabled:
+            # Fewer samples, more cautious
+            self.linear_samples = [0.3, 0.5, 0.7]  # slower speeds
+            self.angular_samples = [-0.5, -0.25, 0.0, 0.25, 0.5]  # less turning
+            self.clearance_weight = 4.0  # even more safety-focused
+        else:
+            # Normal exploration mode
+            self.linear_samples = [0.0, 0.25, 0.5, 0.75, 1.0]
+            self.angular_samples = [-1.0, -0.75, -0.5, -0.25, 0.0, 0.25, 0.5, 0.75, 1.0]
+            self.clearance_weight = 3.0
+
+    def simulate_trajectory(self, x: float, y: float, yaw: float,
+                           linear: float, angular: float,
+                           duration: float = None) -> List[Tuple[float, float, float]]:
+        """
+        Simulate robot trajectory using differential drive kinematics.
+
+        Args:
+            x, y, yaw: Starting pose
+            linear: Linear velocity (m/s)
+            angular: Angular velocity (rad/s)
+            duration: Simulation duration (default: self.predict_time)
+
+        Returns:
+            List of (x, y, theta) poses along trajectory
+        """
+        if duration is None:
+            duration = self.predict_time
+
         trajectory = [(x, y, yaw)]
+        steps = int(duration / self.dt)
 
-        for _ in range(int(self.predict_time / self.dt)):
-            x += v * math.cos(yaw) * self.dt
-            y += v * math.sin(yaw) * self.dt
-            yaw += w * self.dt
+        for _ in range(steps):
+            # Differential drive kinematics
+            yaw += angular * self.dt
+            x += linear * math.cos(yaw) * self.dt
+            y += linear * math.sin(yaw) * self.dt
             trajectory.append((x, y, yaw))
 
         return trajectory
 
-    def check_trajectory_collision(self, trajectory: List[Tuple[float, float, float]],
-                                   sector_distances: List[float]) -> bool:
-        """Check if trajectory collides with obstacles."""
+    def _update_obstacle_cache(self, sector_distances: List[float]):
+        """Update cached obstacle points if distances changed."""
+        if self._cache_distances == sector_distances:
+            return
+
+        self._cache_distances = sector_distances.copy()
+        self._obstacle_cache = []
+
         num_sectors = len(sector_distances)
-        obstacle_points = []
         for sector, dist in enumerate(sector_distances):
-            if 0.1 < dist < 2.0:
+            # Only consider obstacles within relevant range
+            if 0.1 < dist < 2.5:
                 angle = sector_to_angle(sector, num_sectors)
                 ox = dist * math.cos(angle)
                 oy = dist * math.sin(angle)
-                obstacle_points.append((ox, oy))
+                self._obstacle_cache.append((ox, oy, dist))
+
+    def trajectory_min_clearance(self, trajectory: List[Tuple[float, float, float]],
+                                  sector_distances: List[float]) -> float:
+        """
+        Calculate minimum clearance along trajectory.
+
+        Uses optimized checking - only checks against nearby obstacles.
+
+        Args:
+            trajectory: List of (x, y, theta) poses
+            sector_distances: Current LiDAR sector distances
+
+        Returns:
+            Minimum clearance (0 if collision detected)
+        """
+        self._update_obstacle_cache(sector_distances)
+
+        if not self._obstacle_cache:
+            return float('inf')  # No obstacles nearby
+
+        min_clearance = float('inf')
 
         for tx, ty, _ in trajectory:
-            for ox, oy in obstacle_points:
-                dist = math.sqrt((tx - ox)**2 + (ty - oy)**2)
-                if dist < self.robot_radius + 0.10:
-                    return True
+            for ox, oy, obs_dist in self._obstacle_cache:
+                # Distance from trajectory point to obstacle
+                d = math.sqrt((tx - ox)**2 + (ty - oy)**2)
 
-        return False
+                # Quick collision check
+                if d < self.min_clearance:
+                    return 0.0  # Collision!
+
+                min_clearance = min(min_clearance, d)
+
+        return min_clearance
 
     def score_trajectory(self, trajectory: List[Tuple[float, float, float]],
                         sector_distances: List[float],
-                        target_yaw: float = 0.0,
-                        current_v: float = 0.0,
-                        current_w: float = 0.0) -> float:
-        """Score trajectory using multiple criteria."""
+                        linear: float, angular: float,
+                        target_yaw: float = 0.0) -> Tuple[float, Dict[str, float]]:
+        """
+        Score trajectory using multiple criteria.
+
+        All scores are normalized to 0-1 range before weighting.
+
+        Args:
+            trajectory: Simulated trajectory poses
+            sector_distances: Current LiDAR distances
+            linear: Commanded linear velocity
+            angular: Commanded angular velocity
+            target_yaw: Target heading (default: 0 = forward)
+
+        Returns:
+            (total_score, breakdown_dict)
+        """
         if not trajectory or len(trajectory) < 2:
-            return float('-inf')
+            return float('-inf'), {"invalid": -1000}
 
-        final_x, final_y, final_yaw = trajectory[-1]
+        breakdown = {}
 
-        heading_error = abs(self._normalize_angle(target_yaw - final_yaw))
-        heading_score = 1.0 - (heading_error / math.pi)
+        # 1. CLEARANCE SCORE: How far from obstacles?
+        min_clearance = self.trajectory_min_clearance(trajectory, sector_distances)
+        if min_clearance == 0:
+            return float('-inf'), {"collision": -1000}
 
-        min_clearance = float('inf')
-        num_sectors = len(sector_distances)
-        obstacle_points = []
-        for sector, dist in enumerate(sector_distances):
-            if 0.1 < dist < 3.0:
-                angle = sector_to_angle(sector, num_sectors)
-                ox = dist * math.cos(angle)
-                oy = dist * math.sin(angle)
-                obstacle_points.append((ox, oy))
+        # Normalize: clearance of 1.5m = perfect score
+        clearance_score = min(1.0, min_clearance / 1.5)
+        breakdown["clearance"] = clearance_score
 
-        for tx, ty, _ in trajectory:
-            for ox, oy in obstacle_points:
-                d = math.sqrt((tx - ox)**2 + (ty - oy)**2)
-                min_clearance = min(min_clearance, d)
+        # 2. VELOCITY SCORE: Prefer moving over stopping
+        velocity_score = linear / self.max_speed if self.max_speed > 0 else 0
+        breakdown["velocity"] = velocity_score
 
-        clearance_score = min(1.0, min_clearance / 1.0) if min_clearance < float('inf') else 1.0
+        # 3. HEADING SCORE: Prefer straight paths (less turning)
+        # 1.0 when going straight, lower when turning
+        heading_score = 1.0 - min(1.0, abs(angular) / self.max_yaw_rate)
+        breakdown["heading"] = heading_score
 
-        v = math.sqrt((trajectory[-1][0] - trajectory[0][0])**2 +
-                     (trajectory[-1][1] - trajectory[0][1])**2) / self.predict_time
-        velocity_score = min(1.0, v / self.max_speed)
+        # 4. PROGRESS SCORE: Reward forward distance traveled
+        start_x, start_y, _ = trajectory[0]
+        end_x, end_y, _ = trajectory[-1]
+        forward_dist = math.sqrt((end_x - start_x)**2 + (end_y - start_y)**2)
+        # Normalize: 0.3m traveled = perfect score (for 1.5s at low speed)
+        progress_score = min(1.0, forward_dist / 0.3)
+        breakdown["progress"] = progress_score
 
-        first_yaw = trajectory[0][2]
-        yaw_change = abs(self._normalize_angle(final_yaw - first_yaw))
-        smoothness_score = 1.0 - min(1.0, yaw_change / math.pi)
+        # Weighted sum
+        total = (
+            self.clearance_weight * clearance_score +
+            self.velocity_weight * velocity_score +
+            self.heading_weight * heading_score +
+            self.progress_weight * progress_score
+        )
+        breakdown["total"] = total
 
-        total = (self.heading_weight * heading_score +
-                self.clearance_weight * clearance_score +
-                self.velocity_weight * velocity_score +
-                self.smoothness_weight * smoothness_score)
-
-        return total
+        return total, breakdown
 
     def _normalize_angle(self, angle: float) -> float:
         """Normalize angle to [-pi, pi]"""
@@ -130,39 +219,70 @@ class TrajectoryScorer:
                              current_v: float, current_w: float,
                              sector_distances: List[float],
                              target_yaw: float = 0.0,
-                             max_accel: float = 0.2,
-                             max_yaw_accel: float = 0.8) -> Tuple[float, float, float]:
-        """Main DWA function: find best velocity command."""
-        min_v = max(0.0, current_v - max_accel * self.dt)
-        max_v = min(self.max_speed, current_v + max_accel * self.dt)
-        min_w = max(-self.max_yaw_rate, current_w - max_yaw_accel * self.dt)
-        max_w = min(self.max_yaw_rate, current_w + max_yaw_accel * self.dt)
+                             committed_direction: str = None) -> Tuple[float, float, float]:
+        """
+        Main DWA function: find best velocity command.
 
+        Samples candidate trajectories and returns the best one.
+
+        Args:
+            x, y, yaw: Current robot pose (can be 0,0,0 for local frame)
+            current_v, current_w: Current velocities (for smoothness)
+            sector_distances: LiDAR sector distances
+            target_yaw: Target heading
+            committed_direction: "left" or "right" to bias sampling
+
+        Returns:
+            (best_linear, best_angular, best_score)
+        """
         best_v, best_w = 0.0, 0.0
         best_score = float('-inf')
+        valid_count = 0
 
-        v = min_v
-        while v <= max_v:
-            w = min_w
-            while w <= max_w:
-                trajectory = self.predict_trajectory(x, y, yaw, v, w)
+        # Generate candidate velocities
+        for lin_mult in self.linear_samples:
+            linear = lin_mult * self.max_speed
 
-                if self.check_trajectory_collision(trajectory, sector_distances):
-                    w += self.yaw_resolution
-                    continue
+            for ang_mult in self.angular_samples:
+                angular = ang_mult * self.max_yaw_rate
 
-                score = self.score_trajectory(
-                    trajectory, sector_distances, target_yaw, current_v, current_w
+                # If committed to a direction, bias the samples
+                if committed_direction == "left" and angular < -0.1:
+                    continue  # Skip hard right turns
+                elif committed_direction == "right" and angular > 0.1:
+                    continue  # Skip hard left turns
+
+                # Simulate trajectory
+                trajectory = self.simulate_trajectory(x, y, yaw, linear, angular)
+
+                # Score it
+                score, breakdown = self.score_trajectory(
+                    trajectory, sector_distances, linear, angular, target_yaw
                 )
+
+                if score > float('-inf'):
+                    valid_count += 1
 
                 if score > best_score:
                     best_score = score
-                    best_v, best_w = v, w
-
-                w += self.yaw_resolution
-            v += self.v_resolution
+                    best_v, best_w = linear, angular
 
         return best_v, best_w, best_score
+
+    def compute_best_velocity_fast(self, sector_distances: List[float],
+                                    committed_direction: str = None) -> Tuple[float, float, float]:
+        """
+        Faster version using local frame (robot at origin facing forward).
+
+        This is more efficient when we don't need global coordinates.
+        """
+        return self.compute_best_velocity(
+            x=0.0, y=0.0, yaw=0.0,
+            current_v=0.0, current_w=0.0,
+            sector_distances=sector_distances,
+            target_yaw=0.0,
+            committed_direction=committed_direction
+        )
 
 
 class UnifiedDirectionScorer:
