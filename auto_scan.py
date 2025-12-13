@@ -4107,35 +4107,32 @@ rclpy.shutdown()
                 self.last_good_heading_time = current_time
 
             if front_blocked:
-                # FRONT IS BLOCKED - steer around obstacle
+                # FRONT IS BLOCKED - steer around obstacle with GENTLE turns
                 left_clear = self.sector_distances[1] >= FRONT_DANGER_DIST
                 right_clear = self.sector_distances[11] >= FRONT_DANGER_DIST
 
+                # Clear mission heading - don't try to return toward obstacle
+                self.mission_heading = None
+
                 if left_clear and right_clear:
-                    # Both sides open - pick based on which returns to mission heading faster
-                    if self.mission_heading is not None and self.current_heading is not None:
-                        heading_diff = self.mission_heading - self.current_heading
-                        # Normalize to [-pi, pi]
-                        while heading_diff > math.pi: heading_diff -= 2 * math.pi
-                        while heading_diff < -math.pi: heading_diff += 2 * math.pi
-                        # Turn toward mission heading side
-                        if heading_diff > 0:
-                            angular = 0.4  # Turn left (positive)
-                            print(f"\r[AVOID-L] Front blocked, steering left toward mission hdg (diff={math.degrees(heading_diff):.0f}°)", end="")
-                        else:
-                            angular = -0.4  # Turn right (negative)
-                            print(f"\r[AVOID-R] Front blocked, steering right toward mission hdg (diff={math.degrees(heading_diff):.0f}°)", end="")
+                    # Both sides open - alternate or pick randomly
+                    if not hasattr(self, 'last_avoid_dir'):
+                        self.last_avoid_dir = "left"
+                    if self.last_avoid_dir == "left":
+                        angular = -0.2  # Gentle right
+                        self.last_avoid_dir = "right"
                     else:
-                        angular = 0.4  # Default left when no mission heading
-                        print(f"\r[AVOID-L] Front blocked ({front_arc_min:.2f}m), defaulting left", end="")
+                        angular = 0.2  # Gentle left
+                        self.last_avoid_dir = "left"
+                    print(f"\r[AVOID] Front blocked ({front_arc_min:.2f}m), gentle steer", end="")
                     linear = self.compute_adaptive_speed(front_arc_min) * 0.5
                 elif left_clear:
                     linear = self.compute_adaptive_speed(front_arc_min) * 0.4
-                    angular = 0.5
+                    angular = 0.25  # Reduced from 0.5
                     print(f"\r[ESCAPE-L] Front blocked ({front_arc_min:.2f}m), only left clear", end="")
                 elif right_clear:
                     linear = self.compute_adaptive_speed(front_arc_min) * 0.4
-                    angular = -0.5
+                    angular = -0.25  # Reduced from 0.5
                     print(f"\r[ESCAPE-R] Front blocked ({front_arc_min:.2f}m), only right clear", end="")
                 else:
                     # All front directions blocked - transition to AVOIDING
@@ -4143,24 +4140,30 @@ rclpy.shutdown()
                     self.transition_state(RobotState.AVOIDING)
                     return 0.0, 0.0
             else:
-                # FRONT CLEAR: Return to mission heading (or go straight if none)
+                # FRONT CLEAR: Go straight with gentle heading correction
+                linear = self.compute_adaptive_speed(front_arc_min)
+                angular = 0.0  # Default: go straight
+
+                # Only correct toward mission_heading if significantly off (>15°)
                 if self.mission_heading is not None and self.current_heading is not None:
                     heading_diff = self.mission_heading - self.current_heading
-                    # Normalize to [-pi, pi]
                     while heading_diff > math.pi: heading_diff -= 2 * math.pi
                     while heading_diff < -math.pi: heading_diff += 2 * math.pi
 
-                    # Proportional steering back to mission heading
-                    MAX_CORRECTION = 0.35
-                    angular = max(-MAX_CORRECTION, min(MAX_CORRECTION, heading_diff * 0.5))
+                    # DEAD-BAND: Don't correct if within 15 degrees
+                    DEAD_BAND = 0.26  # ~15 degrees
+                    if abs(heading_diff) > DEAD_BAND:
+                        # Check if mission direction is actually clear
+                        target_sector = 1 if heading_diff > 0.5 else (11 if heading_diff < -0.5 else 0)
+                        target_clear = self.sector_distances[target_sector] >= FRONT_DANGER_DIST
 
-                    # Full speed when aligned, slower when correcting
-                    alignment = 1.0 - min(abs(heading_diff) / math.pi, 1.0)
-                    linear = self.compute_adaptive_speed(front_arc_min) * (0.6 + 0.4 * alignment)
-                else:
-                    # No mission heading yet - just go forward
-                    linear = self.compute_adaptive_speed(front_arc_min)
-                    angular = 0.0
+                        if target_clear:
+                            # GENTLE correction - max 0.15 rad/s
+                            MAX_CORRECTION = 0.15
+                            angular = max(-MAX_CORRECTION, min(MAX_CORRECTION, heading_diff * 0.3))
+                        else:
+                            # Mission direction blocked - clear it
+                            self.mission_heading = None
 
             # OBSTACLE MARGIN STEERING: Steer away from close obstacles on either side
             left_dist = min(self.sector_distances[1], self.sector_distances[2])
