@@ -101,7 +101,7 @@ MIN_CORRIDOR_WIDTH = ROBOT_WIDTH + 0.10  # 28cm - robot width + 10cm clearance
 # Robot needs enough space in front to turn without hitting obstacles
 # This is used by BACKING_UP state to know when to stop backing and start turning
 SAFE_TURN_CLEARANCE = 0.25  # 25cm - minimum clearance to start turning
-MAX_BACKUP_TIME = 0.4  # Maximum backup duration - halved for shorter backups
+MAX_BACKUP_TIME = 0.2  # Maximum backup duration - very short
 
 # Brief stop duration between forward and backward movement
 # This prevents mechanical stress and gives robot time to settle
@@ -2044,15 +2044,15 @@ class SectorObstacleAvoider:
         self.state_context = StateContext()
         self.state_context.state_start_time = time.time()
 
-        # Minimum time to stay in each state (prevents oscillation)
+        # Minimum time to stay in each state (prevents oscillation) - reduced for snappy response
         self.min_state_duration = {
-            RobotState.FORWARD: 0.3,      # At least 0.3s forward before changing
-            RobotState.CORRIDOR: 0.3,     # Same as FORWARD for corridor navigation
-            RobotState.TURNING: 0.5,      # Complete turn before evaluating
-            RobotState.BACKING_UP: 0.5,   # Complete backup before evaluating
-            RobotState.AVOIDING: 0.5,     # Stay in avoidance mode briefly
-            RobotState.STUCK_RECOVERY: 1.5,  # Give recovery time to work
-            RobotState.STOPPED: 0.1,      # Can exit stopped quickly
+            RobotState.FORWARD: 0.1,      # Quick transitions
+            RobotState.CORRIDOR: 0.1,     # Quick transitions
+            RobotState.TURNING: 0.15,     # Short turn before evaluating
+            RobotState.BACKING_UP: 0.1,   # Short backup before evaluating
+            RobotState.AVOIDING: 0.15,    # Brief avoidance mode
+            RobotState.STUCK_RECOVERY: 0.5,  # Reduced recovery time
+            RobotState.STOPPED: 0.05,     # Exit stopped very quickly
         }
 
         # Collision verifier FSM - detects invisible obstacles by tracking movement efficiency
@@ -4012,7 +4012,7 @@ rclpy.shutdown()
             has_turn_clearance = front_arc_min >= required_clearance
 
             # Minimum backup time before checking clearance (let robot start moving)
-            MIN_BACKUP_TIME = 0.12  # Minimum backup time - halved
+            MIN_BACKUP_TIME = 0.08  # Minimum backup time - very short
             past_minimum = time_in_state >= MIN_BACKUP_TIME
 
             # Safety limit: don't backup forever
@@ -4357,12 +4357,10 @@ rclpy.shutdown()
 
                 self.last_avoidance_direction = self.avoidance_direction
 
-                # Clamp turn angle - use calibrated minimum for obstacle type
-                # For round obstacles (pillow_chair), calibrated_turn might be 60°
-                # For thin obstacles, might be 30°
-                # Max 60° to keep turns under 3.5s (was 120° = 6.8s at 0.31 rad/s)
-                min_turn = max(20, calibrated_turn)  # Use calibrated min, floor at 20°
-                turn_degrees = max(min_turn, min(60, turn_degrees))
+                # Clamp turn angle - reduced for tighter maneuvers
+                # Max 30° (~1.7s at 0.31 rad/s) for quick turns
+                min_turn = max(15, min(calibrated_turn, 30))  # Floor 15°, cap calibrated at 30°
+                turn_degrees = max(min_turn, min(30, turn_degrees))
 
                 # Print detected obstacle for debugging
                 if detected_obstacle:
