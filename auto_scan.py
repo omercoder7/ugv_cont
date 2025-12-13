@@ -4108,10 +4108,10 @@ rclpy.shutdown()
                         angular = -0.4  # Turn right
                         print(f"\r[STEER-R] Front blocked ({front_arc_min:.2f}m), steering right toward frontier s{frontier_sector}", end="")
                     else:
-                        # Frontier is behind - turn in place
-                        linear = 0.0
-                        angular = 0.5 if frontier_sector <= 6 else -0.5
-                        print(f"\r[TURN] Front blocked, turning toward frontier s{frontier_sector}", end="")
+                        # Frontier is behind - use AVOIDING state for controlled turn
+                        print(f"\n[FORWARD] Frontier behind (s{frontier_sector}), front blocked - AVOIDING")
+                        self.transition_state(RobotState.AVOIDING)
+                        return 0.0, 0.0
                 elif left_clear:
                     # Only left is clear - steer left
                     linear = self.compute_adaptive_speed(front_arc_min) * 0.4
@@ -4145,13 +4145,11 @@ rclpy.shutdown()
                 linear = self.compute_adaptive_speed(front_arc_min) * 0.5
                 angular = 0.35 if frontier_sector == 3 else -0.35
             else:
-                # Frontier is behind (sectors 4-8) - need to turn around
-                # Stop forward motion and turn toward frontier
-                linear = 0.0
-                if frontier_sector <= 6:
-                    angular = 0.5  # Turn left
-                else:
-                    angular = -0.5  # Turn right
+                # Frontier is behind (sectors 4-8) - use AVOIDING for controlled turn
+                # Don't spin indefinitely in FORWARD state
+                print(f"\n[FORWARD] Frontier behind (s{frontier_sector}) - transitioning to AVOIDING")
+                self.transition_state(RobotState.AVOIDING)
+                return 0.0, 0.0
 
             # OBSTACLE MARGIN STEERING: Steer away from close obstacles on either side
             # If obstacle is closer on one side, add angular velocity to steer away
