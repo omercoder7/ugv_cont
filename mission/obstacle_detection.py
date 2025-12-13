@@ -123,14 +123,29 @@ def get_front_arc_min(sector_distances: List[float],
 
     Args:
         sector_distances: List of 12 sector distances
-        body_threshold: Minimum distance to consider valid
+        body_threshold: Minimum distance to consider valid (filters noise, not real obstacles)
 
     Returns:
-        Minimum distance in front arc, or 0.3 if all invalid
+        Minimum distance in front arc
     """
-    raw_front = [d for d in [sector_distances[11], sector_distances[0],
-                             sector_distances[1]] if d > body_threshold]
-    return min(raw_front) if raw_front else 0.3
+    front_readings = [sector_distances[11], sector_distances[0], sector_distances[1]]
+
+    # Filter out readings below body_threshold (likely noise or sensor error)
+    filtered = [d for d in front_readings if d > body_threshold]
+
+    if filtered:
+        return min(filtered)
+    else:
+        # All readings below threshold - this means VERY CLOSE obstacle, not "clear"!
+        # Return the actual minimum reading (even if below threshold)
+        # Only return 0.0 if all readings are exactly 0 (blind spot)
+        actual_min = min(front_readings)
+        if actual_min > 0.01:
+            # Real obstacle very close - return actual distance
+            return actual_min
+        else:
+            # All readings are ~0 (blind spot) - assume blocked for safety
+            return 0.05  # Assume 5cm - triggers backing up
 
 
 def get_side_clearances(sector_distances: List[float]) -> Tuple[float, float]:
