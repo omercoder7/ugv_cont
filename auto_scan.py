@@ -101,7 +101,7 @@ MIN_CORRIDOR_WIDTH = ROBOT_WIDTH + 0.10  # 28cm - robot width + 10cm clearance
 # Robot needs enough space in front to turn without hitting obstacles
 # This is used by BACKING_UP state to know when to stop backing and start turning
 SAFE_TURN_CLEARANCE = 0.25  # 25cm - minimum clearance to start turning
-MAX_BACKUP_TIME = 0.8  # Maximum backup duration - keep it short
+MAX_BACKUP_TIME = 0.4  # Maximum backup duration - halved for shorter backups
 
 # Brief stop duration between forward and backward movement
 # This prevents mechanical stress and gives robot time to settle
@@ -4012,7 +4012,7 @@ rclpy.shutdown()
             has_turn_clearance = front_arc_min >= required_clearance
 
             # Minimum backup time before checking clearance (let robot start moving)
-            MIN_BACKUP_TIME = 0.25  # Quarter second minimum
+            MIN_BACKUP_TIME = 0.12  # Minimum backup time - halved
             past_minimum = time_in_state >= MIN_BACKUP_TIME
 
             # Safety limit: don't backup forever
