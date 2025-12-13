@@ -15,14 +15,14 @@ class StuckDetector:
     fallback. Detects stuck when movement efficiency drops below threshold.
     """
 
-    def __init__(self, efficiency_threshold: float = 0.35,
-                 history_max_len: int = 10,
-                 min_data_time: float = 0.25):
+    def __init__(self, efficiency_threshold: float = 0.40,
+                 history_max_len: int = 8,
+                 min_data_time: float = 0.15):
         """
         Args:
-            efficiency_threshold: Below this ratio = stuck (0.35 = 35%)
+            efficiency_threshold: Below this ratio = stuck (0.40 = 40%)
             history_max_len: Number of position samples to keep
-            min_data_time: Minimum time window for efficiency calculation
+            min_data_time: Minimum time window for efficiency calculation (0.15s = faster detection)
         """
         self.efficiency_threshold = efficiency_threshold
         self.history_max_len = history_max_len
@@ -73,8 +73,8 @@ class StuckDetector:
         # METHOD 1: Use CollisionVerifier's efficiency data if available
         if collision_verifier and hasattr(collision_verifier, 'efficiency_history'):
             cv_efficiency = collision_verifier.efficiency_history
-            if len(cv_efficiency) >= 5:
-                avg_efficiency = sum(cv_efficiency[-5:]) / 5
+            if len(cv_efficiency) >= 3:  # Reduced from 5 for faster detection
+                avg_efficiency = sum(cv_efficiency[-3:]) / 3
                 if avg_efficiency < self.efficiency_threshold:
                     print(f"\n[STUCK] CollisionVerifier efficiency={avg_efficiency:.0%}")
                     print(f"  Position: ({current_position[0]:.2f}, {current_position[1]:.2f})")
@@ -95,8 +95,8 @@ class StuckDetector:
         while len(self.sensor_history) > self.history_max_len:
             self.sensor_history.pop(0)
 
-        # Need enough samples for efficiency calculation
-        if len(self.sensor_history) >= 5:
+        # Need enough samples for efficiency calculation (reduced from 5 for faster detection)
+        if len(self.sensor_history) >= 3:
             oldest = self.sensor_history[0]
             newest = self.sensor_history[-1]
             dt = newest[0] - oldest[0]

@@ -127,7 +127,8 @@ class SectorObstacleAvoider:
         self.total_rotations = 0
 
         # Stuck detection using efficiency-based algorithm
-        self.stuck_detector = StuckDetector(efficiency_threshold=0.35)
+        # Higher threshold (0.40) + fewer samples = faster detection
+        self.stuck_detector = StuckDetector(efficiency_threshold=0.40)
         self.stuck_counter = 0
         self.blocked_sectors = set()  # Sectors that led to being stuck
         self.emergency_maneuver = False  # True when in danger/backing up mode
@@ -533,8 +534,8 @@ class SectorObstacleAvoider:
             backup_duration: How long to back up (default 0.5s)
             turn_degrees: How many degrees to turn (positive = left, negative = right)
         """
-        # Use smaller, quicker turns (30° = ~1s turn time)
-        turn_degrees = max(-45, min(45, turn_degrees))  # Cap at 45°
+        # Cap turns at 45° for standard backup maneuver
+        turn_degrees = max(-45, min(45, turn_degrees))
         turn_speed = 1.0
         turn_duration = calc_turn_duration(turn_degrees, turn_speed)
         angular_speed = turn_speed if turn_degrees > 0 else -turn_speed
@@ -545,7 +546,8 @@ class SectorObstacleAvoider:
             self.maneuver_queue.clear()
             # Queue the new maneuvers BEFORE clearing current mode
             # This ensures movement thread always has something to do
-            self.maneuver_queue.append(("backup", self.linear_speed, backup_duration))
+            if backup_duration > 0:
+                self.maneuver_queue.append(("backup", self.linear_speed, backup_duration))
             self.maneuver_queue.append(("turn", angular_speed, turn_duration))
             # Now clear current maneuver - next iteration will pick up backup
             self.maneuver_mode = None
@@ -656,6 +658,144 @@ class SectorObstacleAvoider:
         return self.stuck_detector.check(
             is_driving, commanded_linear, self.current_position, self.collision_verifier
         )
+
+    def count_danger_zone_obstacles(self, danger_threshold: float = None) -> Tuple[int, List[int]]:
+        """
+        Count how many sectors have obstacles in the danger zone (very close).
+
+        Args:
+            danger_threshold: Distance threshold for danger zone (default: lidar_min_distance)
+
+        Returns:
+            (count, sector_indices) - number of close obstacles and which sectors
+        """
+        if danger_threshold is None:
+            danger_threshold = self.lidar_min_distance
+
+        close_sectors = []
+        for i, dist in enumerate(self.sector_distances):
+            if dist < danger_threshold:
+                close_sectors.append(i)
+
+        return len(close_sectors), close_sectors
+
+    def find_clearest_escape_direction(self, blocked_sectors: List[int]) -> Tuple[float, int]:
+        """
+        Find the best escape direction when surrounded by multiple obstacles.
+        Looks for the sector with maximum clearance that's away from blocked areas.
+
+        Args:
+            blocked_sectors: List of sector indices with close obstacles
+
+        Returns:
+            (turn_degrees, target_sector) - degrees to turn and target sector
+        """
+        best_sector = 0
+        best_distance = 0.0
+
+        # Find sector with maximum distance that's not blocked
+        for i, dist in enumerate(self.sector_distances):
+            if i not in blocked_sectors and dist > best_distance:
+                best_distance = dist
+                best_sector = i
+
+        # If all sectors blocked, pick the one with most clearance anyway
+        if best_distance == 0.0:
+            best_sector = max(range(len(self.sector_distances)),
+                            key=lambda i: self.sector_distances[i])
+
+        # Calculate turn needed to face the best sector
+        # Sector 0 = front, positive sectors are left, negative are right
+        if best_sector <= 6:
+            # Turn left
+            turn_degrees = best_sector * 30
+        else:
+            # Turn right (sectors 7-11 map to -150 to -30)
+            turn_degrees = (best_sector - 12) * 30
+
+        return turn_degrees, best_sector
+
+    def aggressive_backup_recovery(self, close_obstacle_count: int, blocked_sectors: List[int]):
+        """
+        Perform aggressive backup and turn when stuck with multiple close obstacles.
+
+        This is triggered when:
+        - Robot is stuck
+        - Multiple sectors (2+) show obstacles in danger zone
+
+        The robot will:
+        1. Back up for longer duration (scaled by obstacle count)
+        2. Turn to face the clearest direction (can be up to 180°)
+
+        Note: Robot is blind backwards (LiDAR doesn't cover rear), so we always back up.
+        """
+        # Track aggressive recovery attempts for escalation
+        if not hasattr(self, '_aggressive_recovery_count'):
+            self._aggressive_recovery_count = 0
+            self._last_aggressive_recovery_time = 0
+
+        # Reset counter if it's been a while since last recovery
+        if time.time() - self._last_aggressive_recovery_time > 30:
+            self._aggressive_recovery_count = 0
+
+        self._aggressive_recovery_count += 1
+        self._last_aggressive_recovery_time = time.time()
+
+        # Find the clearest escape direction
+        turn_degrees, target_sector = self.find_clearest_escape_direction(blocked_sectors)
+
+        # If turn is small but we have many obstacles, increase turn
+        # This helps escape from corners/tight spots
+        if abs(turn_degrees) < 60 and close_obstacle_count >= 3:
+            # Pick opposite direction from the blocked majority
+            blocked_left = sum(1 for s in blocked_sectors if 1 <= s <= 5)
+            blocked_right = sum(1 for s in blocked_sectors if 7 <= s <= 11)
+
+            if blocked_left > blocked_right:
+                turn_degrees = -120  # Turn right away from left obstacles
+            elif blocked_right > blocked_left:
+                turn_degrees = 120   # Turn left away from right obstacles
+            else:
+                # Equal blocking on both sides, turn around
+                turn_degrees = 150 if self.last_avoidance_direction == "left" else -150
+
+        # ESCALATION: After multiple aggressive recoveries, try more extreme measures
+        if self._aggressive_recovery_count >= 3:
+            # Try a full 180° turn to completely reverse direction
+            turn_degrees = 180 if self.last_avoidance_direction == "left" else -180
+            print(f"\n[ESCALATION] {self._aggressive_recovery_count} aggressive recoveries - trying full reversal")
+
+        # Scale backup duration by number of close obstacles
+        # Base: 1.0s, +0.3s per additional obstacle, max 2.5s
+        backup_duration = min(2.5, 1.0 + (close_obstacle_count - 1) * 0.3)
+
+        # If escalating, back up more
+        if self._aggressive_recovery_count >= 3:
+            backup_duration = min(3.0, backup_duration * 1.5)
+
+        print(f"\n[AGGRESSIVE RECOVERY] {close_obstacle_count} close obstacles in sectors {blocked_sectors}")
+        print(f"[AGGRESSIVE RECOVERY] Backup {backup_duration:.1f}s then turn {turn_degrees}°")
+
+        # Execute the aggressive maneuver
+        turn_speed = 1.0
+        turn_duration = calc_turn_duration(turn_degrees, turn_speed)
+        angular_speed = turn_speed if turn_degrees > 0 else -turn_speed
+
+        # Clear queue and queue aggressive maneuvers
+        with self.movement_lock:
+            self.maneuver_queue.clear()
+            self.maneuver_queue.append(("backup", self.linear_speed, backup_duration))
+            self.maneuver_queue.append(("turn", angular_speed, turn_duration))
+            self.maneuver_mode = None
+            self.maneuver_end_time = time.time()
+
+        # Update tracking
+        self.stuck_detector.reset()
+        self.obstacles_avoided += 1
+        self.total_rotations += 1
+
+        # Update avoidance direction for future reference
+        self.last_avoidance_direction = "left" if turn_degrees > 0 else "right"
 
     def update_scan(self) -> bool:
         """Fetch latest LiDAR scan and compute sector distances"""
@@ -1416,9 +1556,10 @@ rclpy.shutdown()
         left_close = min(self.sector_distances[1], self.sector_distances[2]) < dynamic_min_dist + DEAD_END_MARGIN
         right_close = min(self.sector_distances[10], self.sector_distances[11]) < dynamic_min_dist + DEAD_END_MARGIN
         front_close = front_arc_min < dynamic_min_dist + DEAD_END_MARGIN
-        rear_clear = min(self.sector_distances[5], self.sector_distances[6], self.sector_distances[7]) > dynamic_min_dist
+        # Note: Robot is blind backwards (rear sectors 5,6,7 return 0.0), so assume rear is clear
+        # We can't check rear clearance, but if front/left/right are all blocked, backing up is only option
 
-        in_dead_end = front_close and left_close and right_close and rear_clear
+        in_dead_end = front_close and left_close and right_close  # Removed rear_clear check
 
         if in_dead_end and self.robot_state not in [RobotState.BACKING_UP, RobotState.TURNING]:
             # Robot is trapped in dead-end - back out directly
@@ -1450,6 +1591,25 @@ rclpy.shutdown()
             # Reset avoidance counter after sustained forward movement
             if time_in_state > 2.0 and self.state_context.consecutive_avoidances > 0:
                 self.state_context.consecutive_avoidances = 0
+
+            # EARLY DIRECTION DECISION: Commit to avoidance direction BEFORE reaching danger zone
+            # This prevents indecision and oscillation when approaching obstacles
+            PLANNING_THRESHOLD = 1.2  # Start planning at 1.2m (well before danger zone)
+            if front_arc_min < PLANNING_THRESHOLD and self.avoidance_direction is None:
+                # Obstacle approaching - decide direction NOW based on which side is clearer
+                left_dist = min(self.sector_distances[1], self.sector_distances[2])
+                right_dist = min(self.sector_distances[10], self.sector_distances[11])
+
+                if left_dist > right_dist + 0.2:  # Left is significantly clearer
+                    self.avoidance_direction = "left"
+                elif right_dist > left_dist + 0.2:  # Right is significantly clearer
+                    self.avoidance_direction = "right"
+                else:
+                    # Similar clearance - alternate from last direction
+                    self.avoidance_direction = "left" if self.last_avoidance_direction == "right" else "right"
+
+                self.avoidance_start_time = time.time()
+                print(f"\n[EARLY-PLAN] Obstacle at {front_arc_min:.2f}m, committed to {self.avoidance_direction} (L={left_dist:.2f}m R={right_dist:.2f}m)")
 
             # PREDICTIVE dead-end check - avoid BEFORE getting trapped
             if self.predict_dead_end_ahead(look_ahead_distance=1.5):
@@ -1633,8 +1793,8 @@ rclpy.shutdown()
                 self.state_context.consecutive_avoidances += 1
                 self.state_context.state_start_time = 0
                 self.transition_state(RobotState.BACKING_UP)
-                # Return safe values and skip margin steering logic
-                return self.linear_speed * 0.3, 0.0  # Slow forward while transitioning
+                # STOP - don't drive forward when blocked!
+                return 0.0, 0.0
 
             elif front_blocked:
                 # FRONT IS BLOCKED - must steer away or stop, regardless of frontier!
@@ -1642,31 +1802,47 @@ rclpy.shutdown()
                 left_clear = self.sector_distances[1] >= DANGER_DISTANCE
                 right_clear = self.sector_distances[11] >= DANGER_DISTANCE
 
+                # CRITICAL FIX: If front is VERY close (below min threshold), NO forward motion!
+                # Only turn in place to avoid driving into the obstacle
+                too_close = front_arc_min < dynamic_min_dist
+
                 if left_clear and right_clear:
-                    # Both sides clear - steer toward frontier if it's to the side
-                    if frontier_sector in [1, 2, 3]:
-                        linear = self.get_adaptive_speed(front_arc_min) * 0.5
-                        angular = 0.4  # Turn left
-                        print(f"\r[STEER-L] Front blocked ({front_arc_min:.2f}m), steering left toward frontier s{frontier_sector}", end="")
+                    # Both sides clear - USE COMMITTED DIRECTION if available
+                    # This ensures we follow through on early planning decision
+                    if self.avoidance_direction == "left":
+                        linear = 0.0 if too_close else self.get_adaptive_speed(front_arc_min) * 0.3
+                        angular = 0.5  # Turn left (committed)
+                        print(f"\r[COMMIT-L] Front {'DANGER' if too_close else 'blocked'} ({front_arc_min:.2f}m), turning left (committed)", end="")
+                    elif self.avoidance_direction == "right":
+                        linear = 0.0 if too_close else self.get_adaptive_speed(front_arc_min) * 0.3
+                        angular = -0.5  # Turn right (committed)
+                        print(f"\r[COMMIT-R] Front {'DANGER' if too_close else 'blocked'} ({front_arc_min:.2f}m), turning right (committed)", end="")
+                    elif frontier_sector in [1, 2, 3]:
+                        linear = 0.0 if too_close else self.get_adaptive_speed(front_arc_min) * 0.3
+                        angular = 0.5  # Turn left toward frontier
+                        print(f"\r[STEER-L] Front {'DANGER' if too_close else 'blocked'} ({front_arc_min:.2f}m), turning left", end="")
                     elif frontier_sector in [9, 10, 11]:
-                        linear = self.get_adaptive_speed(front_arc_min) * 0.5
-                        angular = -0.4  # Turn right
-                        print(f"\r[STEER-R] Front blocked ({front_arc_min:.2f}m), steering right toward frontier s{frontier_sector}", end="")
+                        linear = 0.0 if too_close else self.get_adaptive_speed(front_arc_min) * 0.3
+                        angular = -0.5  # Turn right toward frontier
+                        print(f"\r[STEER-R] Front {'DANGER' if too_close else 'blocked'} ({front_arc_min:.2f}m), turning right", end="")
                     else:
-                        # Frontier is behind - turn in place
+                        # Frontier is behind - turn in place based on committed or default
                         linear = 0.0
-                        angular = 0.5 if frontier_sector <= 6 else -0.5
+                        if self.avoidance_direction:
+                            angular = 0.5 if self.avoidance_direction == "left" else -0.5
+                        else:
+                            angular = 0.5 if frontier_sector <= 6 else -0.5
                         print(f"\r[TURN] Front blocked, turning toward frontier s{frontier_sector}", end="")
                 elif left_clear:
-                    # Only left is clear - steer left
-                    linear = self.get_adaptive_speed(front_arc_min) * 0.4
-                    angular = 0.5
-                    print(f"\r[ESCAPE-L] Front blocked ({front_arc_min:.2f}m), only left clear", end="")
+                    # Only left is clear - turn left (NO forward if too close!)
+                    linear = 0.0 if too_close else self.get_adaptive_speed(front_arc_min) * 0.2
+                    angular = 0.6  # Fast turn
+                    print(f"\r[ESCAPE-L] Front {'DANGER' if too_close else 'blocked'} ({front_arc_min:.2f}m), turning left", end="")
                 elif right_clear:
-                    # Only right is clear - steer right
-                    linear = self.get_adaptive_speed(front_arc_min) * 0.4
-                    angular = -0.5
-                    print(f"\r[ESCAPE-R] Front blocked ({front_arc_min:.2f}m), only right clear", end="")
+                    # Only right is clear - turn right (NO forward if too close!)
+                    linear = 0.0 if too_close else self.get_adaptive_speed(front_arc_min) * 0.2
+                    angular = -0.6  # Fast turn
+                    print(f"\r[ESCAPE-R] Front {'DANGER' if too_close else 'blocked'} ({front_arc_min:.2f}m), turning right", end="")
                 else:
                     # All front directions blocked - transition to AVOIDING or BACKING_UP
                     print(f"\n[TRAPPED] Front arc blocked ({front_arc_min:.2f}m), transitioning to AVOIDING")
@@ -1735,13 +1911,24 @@ rclpy.shutdown()
 
             # WAYPOINT STEERING: Add bias toward active waypoint
             # Only apply when path is relatively clear and not already turning hard
+            # SAFETY: Don't apply if it would steer toward a close obstacle
             if self.use_waypoints and abs(angular) < 0.3:
                 waypoint_angular, waypoint_dist = self.get_waypoint_steering()
                 if waypoint_dist > 0.5:  # Only if waypoint is far enough
-                    # Blend waypoint steering - stronger when path is clear
-                    blend_factor = min(1.0, (front_arc_min - dynamic_min_dist) / 0.5)
-                    blend_factor = max(0.0, blend_factor) * 0.3  # Cap at 30% influence
-                    angular += waypoint_angular * blend_factor
+                    # Check if waypoint steering would fight obstacle avoidance
+                    # Waypoint left (positive) but left obstacle close = skip
+                    # Waypoint right (negative) but right obstacle close = skip
+                    waypoint_fights_obstacle = False
+                    if waypoint_angular > 0.1 and left_dist < MARGIN_THRESHOLD:
+                        waypoint_fights_obstacle = True  # Don't steer left toward left obstacle
+                    elif waypoint_angular < -0.1 and right_dist < MARGIN_THRESHOLD:
+                        waypoint_fights_obstacle = True  # Don't steer right toward right obstacle
+
+                    if not waypoint_fights_obstacle:
+                        # Blend waypoint steering - stronger when path is clear
+                        blend_factor = min(1.0, (front_arc_min - dynamic_min_dist) / 0.5)
+                        blend_factor = max(0.0, blend_factor) * 0.3  # Cap at 30% influence
+                        angular += waypoint_angular * blend_factor
 
             self.emergency_maneuver = False
 
@@ -2682,14 +2869,23 @@ rclpy.shutdown()
                             # Visible obstacle - just publish marker for visualization
                             self.mark_virtual_obstacle(stuck_x, stuck_y)
 
-                    # Use calibrated backup + turn maneuver
-                    # Pick direction based on committed direction or default
-                    if self.avoidance_direction is None:
-                        self.avoidance_direction = "left"  # Default
-                        self.avoidance_start_time = time.time()
+                    # Check for multiple close obstacles - triggers aggressive recovery
+                    # This handles situations like corners or tight spots with obstacles on multiple sides
+                    close_count, close_sectors = self.count_danger_zone_obstacles()
 
-                    turn_degrees = 50 if self.avoidance_direction == "left" else -50
-                    self.backup_then_turn(backup_duration=1.0, turn_degrees=turn_degrees)
+                    if close_count >= 2:
+                        # Multiple obstacles detected - use aggressive recovery
+                        # Backs up longer and turns to face clearest escape direction
+                        self.aggressive_backup_recovery(close_count, close_sectors)
+                    else:
+                        # Single or no close obstacles - use standard recovery
+                        # Pick direction based on committed direction or default
+                        if self.avoidance_direction is None:
+                            self.avoidance_direction = "left"  # Default
+                            self.avoidance_start_time = time.time()
+
+                        turn_degrees = 50 if self.avoidance_direction == "left" else -50
+                        self.backup_then_turn(backup_duration=1.0, turn_degrees=turn_degrees)
 
                     # Reset position tracking after recovery maneuver
                     self.last_position = None
