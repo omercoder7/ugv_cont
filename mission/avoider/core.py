@@ -60,6 +60,7 @@ from ..obstacle_detection import (
     get_avoidance_params as _get_avoidance_params
 )
 from ..virtual_obstacles import VirtualObstacleTracker
+from ..waypoints import WaypointManager
 
 # Import from avoider subpackage
 from .lidar import compute_sector_distances
@@ -193,6 +194,18 @@ class SectorObstacleAvoider:
         self.current_goal: Optional[Tuple[float, float]] = None  # Current navigation goal
         self.use_path_planning: bool = True  # Enable/disable path planning
 
+        # Waypoint manager for frontier-based exploration
+        # Sets waypoints at "free ray" points where LiDAR sees furthest
+        self.waypoint_manager = WaypointManager(
+            min_waypoint_distance=2.5,  # Waypoints must be 2.5m apart
+            max_waypoints=5,
+            waypoint_reach_threshold=0.6,  # Consider reached within 60cm
+            min_free_ray_distance=2.0  # Only set waypoint if >2m clear
+        )
+        self.use_waypoints: bool = True  # Enable waypoint-based exploration
+        self._last_waypoint_check_time = 0.0
+        self._WAYPOINT_CHECK_INTERVAL = 2.0  # Check for new waypoints every 2s
+
         # Cache for map exploration scores (expensive subprocess call)
         # Default to 1.0 (fully unexplored) so if SLAM fails, robot doesn't
         # penalize any direction - relies on clearance/freedom instead
@@ -317,6 +330,65 @@ class SectorObstacleAvoider:
                 return True
 
         return False
+
+    def update_waypoints(self):
+        """
+        Update waypoint system - check for reached waypoints and create new ones.
+
+        Called periodically from main loop when position is known.
+        """
+        if not self.use_waypoints or self.current_position is None:
+            return
+
+        current_time = time.time()
+
+        # Update waypoint manager with current position
+        self.waypoint_manager.update(self.current_position[0], self.current_position[1])
+
+        # Check if we should look for new waypoint locations
+        if current_time - self._last_waypoint_check_time < self._WAYPOINT_CHECK_INTERVAL:
+            return
+
+        self._last_waypoint_check_time = current_time
+
+        # Find best sector for a new waypoint
+        map_scores = self.get_map_exploration_scores()
+        dead_ends = self.get_dead_end_sectors()
+
+        best_sector = self.waypoint_manager.find_best_sector_for_waypoint(
+            self.sector_distances, map_scores, dead_ends
+        )
+
+        if best_sector is not None and self.current_heading is not None:
+            self.waypoint_manager.add_waypoint_from_lidar(
+                self.current_position[0],
+                self.current_position[1],
+                self.current_heading,
+                self.sector_distances,
+                best_sector
+            )
+
+    def get_waypoint_steering(self) -> Tuple[float, float]:
+        """
+        Get steering adjustment toward active waypoint.
+
+        Returns:
+            (angular_bias, distance) - suggested angular velocity bias and distance
+        """
+        if not self.use_waypoints or self.current_position is None or self.current_heading is None:
+            return 0.0, 0.0
+
+        angle_error, distance = self.waypoint_manager.get_steering_bias(
+            self.current_position[0],
+            self.current_position[1],
+            self.current_heading
+        )
+
+        # Convert angle error to angular velocity bias
+        # Larger error = stronger steering, but cap it
+        angular_bias = max(-0.3, min(0.3, angle_error * 0.5))
+
+        return angular_bias, distance
 
     def start_movement_thread(self):
         """Start the continuous movement thread for smooth motion"""
@@ -1661,6 +1733,16 @@ rclpy.shutdown()
                     side = "L" if asymmetry > 0 else "R"
                     print(f"\r[MARGIN] {side} obstacle at {closest:.2f}m, steering {margin_angular:+.2f} rad/s", end="")
 
+            # WAYPOINT STEERING: Add bias toward active waypoint
+            # Only apply when path is relatively clear and not already turning hard
+            if self.use_waypoints and abs(angular) < 0.3:
+                waypoint_angular, waypoint_dist = self.get_waypoint_steering()
+                if waypoint_dist > 0.5:  # Only if waypoint is far enough
+                    # Blend waypoint steering - stronger when path is clear
+                    blend_factor = min(1.0, (front_arc_min - dynamic_min_dist) / 0.5)
+                    blend_factor = max(0.0, blend_factor) * 0.3  # Cap at 30% influence
+                    angular += waypoint_angular * blend_factor
+
             self.emergency_maneuver = False
 
             # Show frontier visualization
@@ -2500,6 +2582,9 @@ rclpy.shutdown()
                         self.sensor_logger.log_scan_sync(self.scan_ranges)
                         self.sensor_logger.log_odom_sync(pos[0], pos[1])
 
+                    # Update waypoint system - check for reached waypoints and create new ones
+                    self.update_waypoints()
+
                     # Check for dead-end at current position
                     if self.is_dead_end():
                         if not self.is_in_dead_end(pos[0], pos[1]):
@@ -2580,6 +2665,10 @@ rclpy.shutdown()
                     print(f"\n*** STUCK DETECTED! Blocking sectors: {self.blocked_sectors} ***")
                     self.stuck_counter = 0
                     self.stuck_detector.set_cooldown(2)  # Wait 2 iterations before checking again
+
+                    # Mark waypoint as blocked - may switch to different waypoint
+                    if self.use_waypoints and self.current_position:
+                        self.waypoint_manager.mark_blocked(self.current_position[0], self.current_position[1])
 
                     # Add virtual obstacle at stuck position
                     # This helps robot remember invisible obstacles and avoid them in the future
