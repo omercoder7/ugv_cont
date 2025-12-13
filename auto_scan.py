@@ -1893,9 +1893,9 @@ class SectorObstacleAvoider:
         self.sensor_logger: Optional[SensorLogger] = None
         if self.log_sensors:
             self.sensor_logger = SensorLogger(output_dir=log_output_dir)
-        # Increased min distance floor to 0.45m for safer obstacle margins
-        # Robot is ~17cm wide but needs extra buffer for reaction time
-        self.min_distance = max(min_distance, 0.45)
+        # Reduced min distance floor to 0.30m for tighter navigation
+        # Robot is ~17cm wide, 30cm gives reasonable buffer
+        self.min_distance = max(min_distance, 0.30)
         # LiDAR threshold = min_distance + LiDAR offset from robot front
         # This compensates for LiDAR being mounted ~37cm behind robot front
         self.lidar_min_distance = self.min_distance + LIDAR_FRONT_OFFSET
@@ -3874,9 +3874,9 @@ rclpy.shutdown()
             dynamic_min_dist = LIDAR_FRONT_OFFSET + 0.10 + extra_margin  # FIX: Include extra_margin
             DANGER_DISTANCE = dynamic_min_dist + 0.05  # Small buffer above dynamic_min_dist
         else:
-            # OPEN SPACE: Conservative threshold for safer margins
+            # OPEN SPACE: Reduced threshold for tighter navigation
             dynamic_min_dist = self.lidar_min_distance
-            DANGER_DISTANCE = self.lidar_min_distance + 0.35 + extra_margin  # Include extra_margin
+            DANGER_DISTANCE = self.lidar_min_distance + 0.15 + extra_margin  # Reduced from +0.35
 
         # Update state context
         self.update_state_context(
@@ -4092,9 +4092,9 @@ rclpy.shutdown()
                 angular = 0.0
                 self.transition_state(RobotState.STOPPED)
 
-            # Distance thresholds
-            FRONT_DANGER_DIST = self.lidar_min_distance + 0.10  # ~0.92m
-            OPEN_SPACE_DIST = DANGER_DISTANCE + 0.3  # ~1.5m - clear ahead
+            # Distance thresholds - reduced for tighter navigation
+            FRONT_DANGER_DIST = self.lidar_min_distance  # ~0.67m (was +0.10)
+            OPEN_SPACE_DIST = DANGER_DISTANCE + 0.2  # Reduced from +0.3
 
             front_blocked = front_arc_min < FRONT_DANGER_DIST
             in_open_space = front_arc_min > OPEN_SPACE_DIST
