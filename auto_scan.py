@@ -1639,258 +1639,12 @@ class UnifiedDirectionScorer:
 
 
 # ============================================================================
-# A* Path Planner
+# A* Path Planner - REMOVED (dead code, was never called)
 # ============================================================================
-
-class AStarPlanner:
-    """
-    A* path planner for smarter navigation using occupancy grid data.
-
-    Uses the SLAM map to plan paths around obstacles rather than purely
-    reactive obstacle avoidance. Integrates with the existing sector-based
-    navigation by providing waypoint directions.
-
-    Features:
-    - Grid-based A* search on occupancy grid
-    - Caches paths for efficiency
-    - Falls back to reactive navigation if no path found
-    - Considers robot width for collision checking
-    """
-
-    # Grid cell states
-    FREE = 0
-    OCCUPIED = 1
-    UNKNOWN = 2
-
-    def __init__(self, resolution: float = 0.1, robot_radius: float = 0.2):
-        """
-        Args:
-            resolution: Grid cell size in meters
-            robot_radius: Robot collision radius (half-width + margin)
-        """
-        self.resolution = resolution
-        self.robot_radius = robot_radius
-        self.robot_cells = int(math.ceil(robot_radius / resolution))
-
-        # Cached path data
-        self.current_path: List[Tuple[float, float]] = []
-        self.path_goal: Optional[Tuple[float, float]] = None
-        self.path_timestamp: float = 0.0
-        self.path_cache_ttl: float = 2.0  # Replan every 2 seconds max
-
-        # Grid map (updated from SLAM)
-        self.grid: Optional[np.ndarray] = None
-        self.grid_origin: Tuple[float, float] = (0.0, 0.0)
-        self.grid_resolution: float = 0.05  # From SLAM map
-
-    def world_to_grid(self, x: float, y: float) -> Tuple[int, int]:
-        """Convert world coordinates to grid cell indices."""
-        gx = int((x - self.grid_origin[0]) / self.grid_resolution)
-        gy = int((y - self.grid_origin[1]) / self.grid_resolution)
-        return (gx, gy)
-
-    def grid_to_world(self, gx: int, gy: int) -> Tuple[float, float]:
-        """Convert grid cell indices to world coordinates (cell center)."""
-        x = gx * self.grid_resolution + self.grid_origin[0] + self.grid_resolution / 2
-        y = gy * self.grid_resolution + self.grid_origin[1] + self.grid_resolution / 2
-        return (x, y)
-
-    def update_grid(self, occupancy_grid: np.ndarray, origin: Tuple[float, float],
-                    resolution: float):
-        """
-        Update the internal grid from SLAM occupancy grid.
-
-        Args:
-            occupancy_grid: 2D numpy array (-1=unknown, 0=free, 100=occupied)
-            origin: World coordinates of grid[0,0]
-            resolution: Grid cell size
-        """
-        self.grid = occupancy_grid.copy()
-        self.grid_origin = origin
-        self.grid_resolution = resolution
-
-    def is_cell_free(self, gx: int, gy: int) -> bool:
-        """Check if a grid cell and surrounding area is free for robot."""
-        if self.grid is None:
-            return True  # Assume free if no map
-
-        h, w = self.grid.shape
-
-        # Check robot footprint (circle of robot_cells radius)
-        for dx in range(-self.robot_cells, self.robot_cells + 1):
-            for dy in range(-self.robot_cells, self.robot_cells + 1):
-                if dx*dx + dy*dy <= self.robot_cells * self.robot_cells:
-                    nx, ny = gx + dx, gy + dy
-                    if nx < 0 or nx >= w or ny < 0 or ny >= h:
-                        return False  # Out of bounds = not free
-                    cell_val = self.grid[ny, nx]
-                    if cell_val > 50:  # Occupied threshold
-                        return False
-        return True
-
-    def heuristic(self, a: Tuple[int, int], b: Tuple[int, int]) -> float:
-        """A* heuristic: Euclidean distance."""
-        return math.sqrt((a[0] - b[0])**2 + (a[1] - b[1])**2)
-
-    def get_neighbors(self, pos: Tuple[int, int]) -> List[Tuple[Tuple[int, int], float]]:
-        """Get valid neighboring cells with movement cost."""
-        gx, gy = pos
-        neighbors = []
-
-        # 8-connected grid
-        directions = [
-            (1, 0, 1.0), (-1, 0, 1.0), (0, 1, 1.0), (0, -1, 1.0),  # Cardinal
-            (1, 1, 1.414), (1, -1, 1.414), (-1, 1, 1.414), (-1, -1, 1.414)  # Diagonal
-        ]
-
-        for dx, dy, cost in directions:
-            nx, ny = gx + dx, gy + dy
-            if self.is_cell_free(nx, ny):
-                neighbors.append(((nx, ny), cost))
-
-        return neighbors
-
-    def find_path(self, start: Tuple[float, float],
-                  goal: Tuple[float, float]) -> List[Tuple[float, float]]:
-        """
-        Find path from start to goal using A*.
-
-        Args:
-            start: Start position in world coordinates (x, y)
-            goal: Goal position in world coordinates (x, y)
-
-        Returns:
-            List of waypoints [(x, y), ...] or empty list if no path
-        """
-        if self.grid is None:
-            return []
-
-        start_cell = self.world_to_grid(*start)
-        goal_cell = self.world_to_grid(*goal)
-
-        # Check if start/goal are valid
-        if not self.is_cell_free(*start_cell):
-            return []  # Start is blocked
-        if not self.is_cell_free(*goal_cell):
-            return []  # Goal is blocked
-
-        # A* search
-        open_set = []
-        heapq.heappush(open_set, (0, start_cell))
-
-        came_from: Dict[Tuple[int, int], Tuple[int, int]] = {}
-        g_score: Dict[Tuple[int, int], float] = {start_cell: 0}
-        f_score: Dict[Tuple[int, int], float] = {start_cell: self.heuristic(start_cell, goal_cell)}
-
-        max_iterations = 10000  # Prevent infinite loops
-        iterations = 0
-
-        while open_set and iterations < max_iterations:
-            iterations += 1
-            current = heapq.heappop(open_set)[1]
-
-            if current == goal_cell:
-                # Reconstruct path
-                path = []
-                while current in came_from:
-                    path.append(self.grid_to_world(*current))
-                    current = came_from[current]
-                path.append(start)
-                path.reverse()
-                return path
-
-            for neighbor, cost in self.get_neighbors(current):
-                tentative_g = g_score[current] + cost
-
-                if neighbor not in g_score or tentative_g < g_score[neighbor]:
-                    came_from[neighbor] = current
-                    g_score[neighbor] = tentative_g
-                    f_score[neighbor] = tentative_g + self.heuristic(neighbor, goal_cell)
-                    heapq.heappush(open_set, (f_score[neighbor], neighbor))
-
-        return []  # No path found
-
-    def get_next_waypoint(self, current_pos: Tuple[float, float],
-                          goal: Tuple[float, float],
-                          lookahead: float = 0.5) -> Optional[Tuple[float, float]]:
-        """
-        Get the next waypoint to navigate toward.
-
-        Args:
-            current_pos: Current robot position (x, y)
-            goal: Goal position (x, y)
-            lookahead: Distance ahead on path to look
-
-        Returns:
-            Next waypoint (x, y) or None if no path
-        """
-        # Check if we need to replan
-        now = time.time()
-        if (self.path_goal != goal or
-            now - self.path_timestamp > self.path_cache_ttl or
-            not self.current_path):
-            # Replan
-            self.current_path = self.find_path(current_pos, goal)
-            self.path_goal = goal
-            self.path_timestamp = now
-
-        if not self.current_path:
-            return None
-
-        # Find the waypoint that's approximately lookahead distance ahead
-        accumulated_dist = 0.0
-        prev_point = current_pos
-
-        for waypoint in self.current_path:
-            dist = math.sqrt((waypoint[0] - prev_point[0])**2 +
-                           (waypoint[1] - prev_point[1])**2)
-            accumulated_dist += dist
-
-            if accumulated_dist >= lookahead:
-                return waypoint
-
-            prev_point = waypoint
-
-        # Return final waypoint if path is shorter than lookahead
-        return self.current_path[-1] if self.current_path else None
-
-    def get_direction_to_waypoint(self, current_pos: Tuple[float, float],
-                                  current_heading: float,
-                                  waypoint: Tuple[float, float]) -> int:
-        """
-        Convert waypoint to sector direction.
-
-        Args:
-            current_pos: Current robot position (x, y)
-            current_heading: Current robot heading (radians)
-            waypoint: Target waypoint (x, y)
-
-        Returns:
-            Sector index (0-11) pointing toward waypoint
-        """
-        # Calculate direction to waypoint in world frame
-        dx = waypoint[0] - current_pos[0]
-        dy = waypoint[1] - current_pos[1]
-        world_angle = math.atan2(dy, dx)
-
-        # Convert to robot-relative angle
-        relative_angle = world_angle - current_heading
-
-        # Normalize to -π to π
-        while relative_angle > math.pi:
-            relative_angle -= 2 * math.pi
-        while relative_angle < -math.pi:
-            relative_angle += 2 * math.pi
-
-        # Convert to sector (0 = front, positive = left)
-        sector = int(round(relative_angle / (math.pi / 6))) % 12
-
-        return sector
-
-    def clear_path(self):
-        """Clear cached path (force replan on next call)."""
-        self.current_path = []
-        self.path_goal = None
+# NOTE: AStarPlanner class was removed as it was never integrated.
+# Path planning could be added in future using the SLAM map for
+# smarter navigation instead of purely reactive obstacle avoidance.
+# ============================================================================
 
 
 class KeyboardMonitor:
@@ -2314,7 +2068,7 @@ class SectorObstacleAvoider:
     """
 
     def __init__(self, linear_speed: float = 0.04, min_distance: float = 0.45,
-                 duration: float = 60.0, clear_visited: bool = False, use_vfh: bool = False,
+                 duration: float = 60.0, clear_visited: bool = False, use_vfh: bool = True,
                  log_sensors: bool = False, log_output_dir: str = "/tmp/exploration_data"):
         # Cap max speed at 0.10 m/s - rf2o odometry overestimates at higher speeds
         # causing mismatch between RViz display and actual robot position
@@ -2451,13 +2205,8 @@ class SectorObstacleAvoider:
         # Unified direction scorer - consolidates all scoring systems
         self.unified_scorer = UnifiedDirectionScorer(num_sectors=NUM_SECTORS)
 
-        # A* path planner for smarter navigation
-        self.path_planner = AStarPlanner(
-            resolution=0.05,  # Match SLAM map resolution
-            robot_radius=ROBOT_HALF_WIDTH + 0.05  # Robot half-width + safety margin
-        )
-        self.current_goal: Optional[Tuple[float, float]] = None  # Current navigation goal
-        self.use_path_planning: bool = True  # Enable/disable path planning
+        # NOTE: AStarPlanner was removed - dead code never called
+        # Path planning integration could be added in future if needed
 
         # Cache for map exploration scores (expensive subprocess call)
         # Default to 1.0 (fully unexplored) so if SLAM fails, robot doesn't
@@ -4030,77 +3779,8 @@ rclpy.shutdown()
 
         return best_sector, best_score
 
-    def find_frontier_direction_legacy(self) -> Tuple[Optional[int], float]:
-        """
-        Legacy frontier direction finder (kept for reference/fallback).
-        """
-        best_sector = None
-        best_score = 0.0
-
-        # Get map-based scores for obstacle density / exploration
-        map_scores = self.get_map_exploration_scores()
-        dead_ends = self.get_dead_end_sectors()
-
-        for sector in range(NUM_SECTORS):
-            dist = self.sector_distances[sector]
-
-            # Skip blind spots (sensor noise)
-            if dist < 0.1:
-                continue
-
-            # Skip blocked directions
-            if dist < self.lidar_min_distance:
-                continue
-
-            # Skip dead-ends detected from map
-            if dead_ends[sector]:
-                continue
-
-            # FRONTIER SCORE: How far can we see?
-            # Farther = more unexplored = higher score!
-            # Cap at 3m for scoring (beyond that is equally good)
-            lidar_score = min(dist / 3.0, 1.0)
-
-            # MAP EXPLORATION SCORE: Prefer directions with unknown/free cells
-            # High score = more unknown cells = unexplored frontier!
-            # This helps avoid obstacle-dense areas
-            map_score = map_scores[sector]  # 0.0-1.0
-
-            # COMBINED SCORE: Weight LiDAR and map equally
-            # LiDAR gives immediate obstacle info, map gives exploration info
-            frontier_score = 0.5 * lidar_score + 0.5 * map_score
-
-            # FORWARD BONUS: When scores are similar, prefer forward
-            # This gives more natural movement instead of spinning
-            if sector in [0, 1, 11]:  # Front sectors
-                frontier_score += 0.15
-            elif sector in [2, 10]:  # Front-side sectors
-                frontier_score += 0.05
-
-            # VISITED PENALTY: Heavily penalize revisiting areas
-            # This is critical for preventing the robot from looping
-            if self.current_position:
-                # FIX: Must add current_heading to convert from robot-relative to world frame
-                sector_angle = sector_to_angle(sector)
-                world_angle = (self.current_heading or 0) + sector_angle
-                look_ahead = min(dist, 1.5)
-                target_x = self.current_position[0] + look_ahead * math.cos(world_angle)
-                target_y = self.current_position[1] + look_ahead * math.sin(world_angle)
-
-                visit_count = self.visited_tracker.get_visit_count(target_x, target_y)
-
-                if visit_count == 1:
-                    frontier_score *= 0.5  # 50% penalty for visited once
-                elif visit_count == 2:
-                    frontier_score *= 0.25  # 75% penalty for visited twice
-                elif visit_count > 2:
-                    frontier_score *= 0.1  # 90% penalty for heavily visited
-
-            if frontier_score > best_score:
-                best_score = frontier_score
-                best_sector = sector
-
-        return best_sector, best_score
+    # NOTE: find_frontier_direction_legacy() was removed - dead code never called
+    # Use find_frontier_direction() via UnifiedDirectionScorer instead
 
     def get_frontier_visualization(self) -> str:
         """
@@ -4230,40 +3910,8 @@ rclpy.shutdown()
 
         return (goal_x, goal_y)
 
-    def get_path_planned_direction(self) -> Optional[int]:
-        """
-        Use A* path planning to get optimal direction.
-
-        Returns:
-            Sector index (0-11) to move toward, or None if no path
-        """
-        if not self.use_path_planning:
-            return None
-
-        if not self.current_position or not self.current_heading:
-            return None
-
-        # Find or update frontier goal
-        goal = self.find_frontier_goal()
-        if goal is None:
-            return None
-
-        self.current_goal = goal
-
-        # Get next waypoint from path planner
-        waypoint = self.path_planner.get_next_waypoint(
-            self.current_position, goal, lookahead=0.5
-        )
-
-        if waypoint is None:
-            return None
-
-        # Convert waypoint to sector direction
-        sector = self.path_planner.get_direction_to_waypoint(
-            self.current_position, self.current_heading, waypoint
-        )
-
-        return sector
+    # NOTE: get_path_planned_direction() was removed - dead code never called
+    # AStarPlanner integration is not currently used
 
     def calculate_turn_degrees(self, obstacle_sector: int, obstacle_distance: float) -> float:
         """
