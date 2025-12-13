@@ -2667,6 +2667,7 @@ class SectorObstacleAvoider:
         Detect if current obstacle is thin (like chair leg, pole).
 
         Thin obstacles show a single sector blocked while adjacent sectors are clear.
+        Must distinguish from doorways which have similar pattern but with open sides.
         """
         if len(self.sector_distances) < 12:
             return False
@@ -2685,11 +2686,16 @@ class SectorObstacleAvoider:
             left_clear = front_left > front + 0.3
             right_clear = front_right > front + 0.3
 
-            # DOORWAY CHECK: Doorways have walls on the sides (door frame)
-            # Thin obstacles (poles, chair legs) have clear sides further out
-            # If sectors 2 and 10 are also close, it's a doorway not a thin obstacle
-            if left_side < 0.8 and right_side < 0.8:
-                return False  # It's a doorway with door frame, not thin obstacle
+            # DOORWAY CHECK: Doorways have BOTH sides very open (no walls nearby)
+            # Thin obstacles have open adjacent sectors but walls nearby in side sectors
+            # If both side sectors are very open, it's likely a doorway, not thin obstacle
+            both_sides_very_open = left_side > 0.8 and right_side > 0.8
+            if both_sides_very_open and left_clear and right_clear:
+                return False  # Doorway - both sides wide open, not thin obstacle
+
+            # If sides are blocked (door frame or wall), it's also not thin obstacle
+            if left_side < 0.5 and right_side < 0.5:
+                return False  # Doorway with door frame, not thin obstacle
 
             if left_clear and right_clear:
                 return True
@@ -2718,12 +2724,21 @@ class SectorObstacleAvoider:
         left_side = self.sector_distances[2]
         right_side = self.sector_distances[10]
 
+        # Check back-side sectors for wall continuation (corners have walls extending back)
+        left_back = self.sector_distances[3]
+        right_back = self.sector_distances[9]
+
         # For a round obstacle, adjacent sectors are further than center
         if front < 0.6:  # Only when close
             # CORNER CHECK: Corners have walls extending to the sides
             # Round objects are isolated - sides should be clear
             if left_side < 0.6 or right_side < 0.6:
                 return False  # It's a corner, not a round obstacle
+
+            # NEW: Corners have walls extending backward
+            # Round objects are isolated - back-side sectors should be clear
+            if left_back < 0.8 or right_back < 0.8:
+                return False  # Wall continues backward = corner, not round object
 
             # Check if we see the "curve" pattern
             # Both sides should be similar distance (symmetric curve)
@@ -2952,6 +2967,10 @@ class SectorObstacleAvoider:
     def set_target_velocity(self, linear: float, angular: float):
         """Set target velocity for the movement thread (thread-safe)"""
         with self.movement_lock:
+            # FIX: Clear sensor history when starting significant turn
+            # Old "front distance" entries point to different world locations after turning
+            if abs(angular) > 0.25 and abs(self.target_angular) <= 0.1:
+                self.sensor_history = []
             self.target_linear = linear
             self.target_angular = angular
 
@@ -3481,9 +3500,10 @@ rclpy.shutdown()
 
     def check_if_stuck(self, is_driving: bool, commanded_linear: float = 0.0) -> bool:
         """
-        Check if robot is stuck using multiple methods:
-        1. Odometry distance tracking (behavior_ctrl.py approach)
-        2. Derivative of sensor data - if average LiDAR/odometry isn't changing, we're stuck
+        Check if robot is stuck using efficiency-based detection.
+
+        Uses CollisionVerifier's efficiency history when available, with odometry
+        fallback. Detects stuck when movement efficiency drops below 35%.
 
         Returns True if stuck is detected.
         """
@@ -3500,89 +3520,65 @@ rclpy.shutdown()
             return False
 
         # Use cached position from main loop instead of calling get_odometry() again
-        # This avoids an extra ~300ms subprocess call
         current_pos = self.current_position
         if current_pos is None:
             return False
 
         current_time = time.time()
 
-        # Get current front distance for derivative-based detection
-        front_dist = self.sector_distances[0] if self.sector_distances else 10.0
+        # --- METHOD 1: Use CollisionVerifier's efficiency data if available ---
+        # CollisionVerifier already tracks movement efficiency precisely
+        if self.collision_verifier and hasattr(self.collision_verifier, 'efficiency_history'):
+            cv_efficiency = self.collision_verifier.efficiency_history
+            if len(cv_efficiency) >= 5:
+                avg_efficiency = sum(cv_efficiency[-5:]) / 5
+                # Stuck if less than 35% of expected movement
+                if avg_efficiency < 0.35:
+                    print(f"\n[STUCK] CollisionVerifier efficiency={avg_efficiency:.0%}")
+                    print(f"  Position: ({current_pos[0]:.2f}, {current_pos[1]:.2f})")
+                    self.stuck_position = current_pos
+                    return True
 
+        # --- METHOD 2: Fallback to odometry-based efficiency check ---
         # Initialize tracking on first call
         if self.last_position is None:
             self.last_position = current_pos
             self.last_position_time = current_time
-            self.sensor_history = [(current_time, front_dist, current_pos[0], current_pos[1])]
+            self.sensor_history = [(current_time, current_pos[0], current_pos[1])]
             return False
 
-        # --- METHOD 1: Odometry distance tracking ---
-        diff_x = current_pos[0] - self.last_position[0]
-        diff_y = current_pos[1] - self.last_position[1]
-        distance_moved = math.hypot(diff_x, diff_y)
-        time_elapsed = current_time - self.last_position_time
-
-        # Only check after enough time has passed (avoid false positives at start)
-        if time_elapsed >= WHEEL_ENCODER_STUCK_TIME:
-            # Calculate expected distance based on commanded velocity
-            expected_distance = commanded_linear * time_elapsed
-
-            # If we should have moved significantly but didn't, we're stuck
-            # Use 30% threshold like NAV2's progress checker
-            if expected_distance > 0.02 and distance_moved < expected_distance * 0.3:
-                print(f"\n[STUCK] Odometry shows no movement!")
-                print(f"  Expected: {expected_distance:.3f}m, Actual: {distance_moved:.3f}m in {time_elapsed:.1f}s")
-                print(f"  Position: ({current_pos[0]:.2f}, {current_pos[1]:.2f})")
-                self.stuck_position = current_pos
-                self.last_position = current_pos
-                self.last_position_time = current_time
-                self.sensor_history = []
-                return True
-
-            # Robot is moving, update tracking periodically
-            if time_elapsed > 0.5:  # Reduced from 1.0s for faster response
-                self.last_position = current_pos
-                self.last_position_time = current_time
-
-        # --- METHOD 2: Derivative of sensor data ---
-        # Track history of sensor readings
-        self.sensor_history.append((current_time, front_dist, current_pos[0], current_pos[1]))
+        # Track history of positions
+        self.sensor_history.append((current_time, current_pos[0], current_pos[1]))
 
         # Keep only recent samples
         while len(self.sensor_history) > self.sensor_history_max_len:
             self.sensor_history.pop(0)
 
-        # Need enough samples to compute derivative
-        if len(self.sensor_history) >= 5:  # Reduced from 10 for faster detection
+        # Need enough samples for efficiency calculation
+        if len(self.sensor_history) >= 5:
             oldest = self.sensor_history[0]
             newest = self.sensor_history[-1]
             dt = newest[0] - oldest[0]
 
-            if dt > 0.15:  # Reduced from 0.2s for faster stuck detection
-                # Compute average change in front distance
-                front_delta = abs(newest[1] - oldest[1])
-
-                # Compute average change in position
-                odom_delta = math.hypot(newest[2] - oldest[2], newest[3] - oldest[3])
-
-                # Combined metric: both LiDAR and odometry should be changing when moving
-                combined_change = front_delta + odom_delta
-
-                # If robot is commanded to move but sensor data isn't changing, we're stuck
-                # Use BOTH absolute threshold AND ratio-based check for tolerance
+            if dt > 0.25:  # Need at least 250ms of data
+                odom_delta = math.hypot(newest[1] - oldest[1], newest[2] - oldest[2])
                 expected_change = commanded_linear * dt
-                is_below_absolute = combined_change < self.derivative_stuck_threshold
-                is_below_ratio = expected_change > 0.02 and combined_change < expected_change * self.derivative_stuck_ratio
 
-                if is_below_absolute and is_below_ratio:
-                    print(f"\n[STUCK] Sensor derivative near zero!")
-                    print(f"  LiDAR front change: {front_delta:.4f}m, Odom change: {odom_delta:.4f}m")
-                    print(f"  Over {dt:.2f}s - Combined: {combined_change:.4f}m (threshold: {self.derivative_stuck_threshold:.3f}m)")
-                    print(f"  Expected: {expected_change:.3f}m, Actual ratio: {(combined_change/expected_change if expected_change > 0 else 0):.1%}")
-                    self.stuck_position = current_pos
-                    self.sensor_history = []
-                    return True
+                if expected_change > 0.015:
+                    efficiency = odom_delta / expected_change
+                    # Stuck if less than 35% of expected movement
+                    if efficiency < 0.35:
+                        print(f"\n[STUCK] Efficiency={efficiency:.0%} (moved {odom_delta:.3f}m, expected {expected_change:.3f}m)")
+                        print(f"  Position: ({current_pos[0]:.2f}, {current_pos[1]:.2f})")
+                        self.stuck_position = current_pos
+                        self.sensor_history = []
+                        return True
+
+        # Update tracking periodically
+        time_elapsed = current_time - self.last_position_time
+        if time_elapsed > 0.5:
+            self.last_position = current_pos
+            self.last_position_time = current_time
 
         return False
 
@@ -4575,8 +4571,15 @@ rclpy.shutdown()
             # From BACKING_UP: back up until we have enough clearance to turn safely
             # Instead of fixed time, check front distance AND minimum backup distance
 
+            # FIX: Get calibrated backup_mult for obstacle type
+            # Round obstacles need MORE clearance before turning (backup_mult > 1.0)
+            avoidance_params, detected_obstacle = self.get_avoidance_params(front_arc_min)
+            backup_mult = avoidance_params.get('backup_mult', 1.0)
+
             # Check if we have enough clearance in front to turn safely
-            has_turn_clearance = front_arc_min >= SAFE_TURN_CLEARANCE
+            # Scale required clearance by backup_mult for round/curved obstacles
+            required_clearance = SAFE_TURN_CLEARANCE * backup_mult
+            has_turn_clearance = front_arc_min >= required_clearance
 
             # Calculate how far we've backed up
             backup_distance = 0.0
@@ -4585,8 +4588,9 @@ rclpy.shutdown()
                 dy = self.current_position[1] - self.backup_start_position[1]
                 backup_distance = math.sqrt(dx*dx + dy*dy)
 
-            # Minimum backup distance before we can transition to turning
-            has_min_distance = backup_distance >= MIN_BACKUP_DISTANCE
+            # Minimum backup distance - also scale by backup_mult
+            required_min_distance = MIN_BACKUP_DISTANCE * backup_mult
+            has_min_distance = backup_distance >= required_min_distance
 
             # Safety limit: don't backup forever
             exceeded_max_time = time_in_state >= MAX_BACKUP_TIME
@@ -4597,7 +4601,7 @@ rclpy.shutdown()
 
             if past_minimum and has_turn_clearance and has_min_distance:
                 # We have enough clearance AND backed up far enough - start turning
-                print(f"\n[BACKUP-DONE] Clearance: {front_arc_min:.2f}m >= {SAFE_TURN_CLEARANCE:.2f}m, dist={backup_distance:.2f}m (took {time_in_state:.1f}s)")
+                print(f"\n[BACKUP-DONE] Clearance: {front_arc_min:.2f}m >= {required_clearance:.2f}m, dist={backup_distance:.2f}m (took {time_in_state:.1f}s)")
                 self.transition_state(RobotState.TURNING)
             elif past_minimum and has_turn_clearance and not has_min_distance:
                 # Have clearance but haven't backed up enough - keep backing
