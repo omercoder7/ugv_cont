@@ -78,10 +78,10 @@ class FSMAvoider:
         self.virtual_obstacles = VirtualObstacleManager(default_radius=0.3, default_ttl=120.0)
         self.frontier = FrontierExplorer(
             num_sectors=NUM_SECTORS,
-            min_frontier_distance=0.8,
-            distance_weight=1.0,
-            novelty_weight=2.0,  # Prefer unexplored areas
-            turn_weight=0.3
+            min_frontier_distance=0.5,
+            potential_scale=1.0,  # Distance penalty
+            gain_scale=2.0,  # Prefer larger frontiers with more info gain
+            orientation_scale=0.3  # Small penalty for turning
         )
 
         # State tracking
