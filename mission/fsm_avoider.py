@@ -193,14 +193,23 @@ class FSMAvoider:
                         if self.current_heading is not None:
                             self.target_heading = self.current_heading
 
-                        # Choose direction based on which side has more space
-                        if sectors[1] < sectors[11]:
+                        # Check FULL side sectors to determine obstacle location
+                        # Right side: sectors 1, 2, 3 (30°, 60°, 90° right)
+                        # Left side: sectors 9, 10, 11 (90°, 60°, 30° left)
+                        right_side_min = min(sectors[1], sectors[2], sectors[3])
+                        left_side_min = min(sectors[9], sectors[10], sectors[11])
+
+                        # Steer AWAY from the side with obstacle (smaller distance)
+                        if right_side_min < left_side_min:
+                            # Obstacle on RIGHT → steer LEFT
                             self.committed_direction = "left"
                         else:
+                            # Obstacle on LEFT → steer RIGHT
                             self.committed_direction = "right"
+
                         self.commit_time = time.time()
                         self.avoid_start_time = time.time()
-                        print(f"\n[AVOID] Obstacle at {front_min:.2f}m, steering {self.committed_direction}")
+                        print(f"\n[AVOID] Obstacle at {front_min:.2f}m, R={right_side_min:.2f} L={left_side_min:.2f}, steering {self.committed_direction}")
                         self.obstacles_avoided += 1
 
                     # Dead end detection - if avoiding for too long, it's blocked
@@ -227,8 +236,11 @@ class FSMAvoider:
                     elif self.committed_direction == "right":
                         safe_w = -0.3
                     else:
-                        # No direction committed - use sector data
-                        safe_w = 0.3 if sectors[11] > sectors[1] else -0.3
+                        # No direction committed - check full sides
+                        right_min = min(sectors[1], sectors[2], sectors[3])
+                        left_min = min(sectors[9], sectors[10], sectors[11])
+                        # Steer away from obstacle
+                        safe_w = 0.3 if right_min < left_min else -0.3
 
                 else:
                     self.state = State.FORWARD
