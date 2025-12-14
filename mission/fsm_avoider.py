@@ -88,10 +88,6 @@ class FSMAvoider:
         self.state = State.STOPPED
         self.current_pos: Optional[Tuple[float, float]] = None
         self.current_heading: Optional[float] = None
-
-        # Entry tracking - remember where we came from for escape
-        self.entry_heading: Optional[float] = None  # Heading when entering new area
-        self.entry_pos: Optional[Tuple[float, float]] = None
         self.last_open_heading: Optional[float] = None  # Last heading when path was clear
 
         # Statistics
@@ -162,8 +158,8 @@ class FSMAvoider:
                     if virtual_dist < front_min:
                         front_min = virtual_dist
 
-                # 2. COMPUTE
-                safe_v, safe_w, debug = self.pro.compute_safe_velocity(
+                # 2. COMPUTE - get base velocities
+                safe_v, safe_w, _ = self.pro.compute_safe_velocity(
                     sector_distances=sectors,
                     min_distance=self.danger_threshold,
                     base_linear=self.linear_speed,
@@ -171,9 +167,6 @@ class FSMAvoider:
                     target_sector=0,
                     is_stuck=False
                 )
-
-                env = debug.get('environment', '?')
-                ttc = debug.get('ttc')
 
                 # 3. DECIDE
                 if front_min < self.backup_threshold:
@@ -427,11 +420,11 @@ class FSMAvoider:
             print(f"[ESCAPE] Turning right toward open back-right")
             return -0.5
 
-        # Final fallback - use side sectors
-        if sectors[11] > sectors[1]:
-            return 0.6
-        else:
-            return -0.6
+        # Final fallback - use full side sectors
+        right_min = min(sectors[1], sectors[2], sectors[3])
+        left_min = min(sectors[9], sectors[10], sectors[11])
+        # Turn away from obstacle (toward more open side)
+        return 0.6 if right_min < left_min else -0.6
 
     def emergency_stop(self):
         """Stop the robot."""
