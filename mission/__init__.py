@@ -1,28 +1,28 @@
 """
 Mission package for autonomous scanning and navigation.
 
-This package contains the refactored code from auto_scan.py, split into
-logical modules for better maintainability.
+Modules:
+- fsm_avoider: Main obstacle avoidance FSM
+- exploration: Visited cell tracking, stuck detection
+- virtual_obstacles: Invisible obstacle management
+- pro_avoidance: TTC and environment detection
 """
 
 from .constants import *
-from .utils import sector_to_angle, pos_to_cell, calculate_turn_duration
-from .state import RobotState, StateContext
-from .avoider import SectorObstacleAvoider
-from .waypoints import WaypointManager, ExplorationWaypoint
+from .fsm_avoider import FSMAvoider, State
+from .exploration import ExplorationTracker, StuckDetector
+from .virtual_obstacles import VirtualObstacle, VirtualObstacleManager
 from .main import main, ensure_slam_running, check_prerequisites, start_driver
 
 __all__ = [
-    'SectorObstacleAvoider',
-    'RobotState',
-    'StateContext',
-    'WaypointManager',
-    'ExplorationWaypoint',
+    'FSMAvoider',
+    'State',
+    'ExplorationTracker',
+    'StuckDetector',
+    'VirtualObstacle',
+    'VirtualObstacleManager',
     'main',
     'ensure_slam_running',
     'check_prerequisites',
     'start_driver',
-    'sector_to_angle',
-    'pos_to_cell',
-    'calculate_turn_duration',
 ]

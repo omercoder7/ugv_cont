@@ -1,120 +1,130 @@
 """
-Virtual obstacle tracking for invisible obstacles.
+Virtual obstacle management for invisible obstacles.
 
-Tracks obstacles that the robot has physically encountered but LiDAR cannot see
-(e.g., glass walls, low objects, narrow gaps).
+When robot detects it's stuck (moving but position not changing),
+it places a virtual obstacle that gets treated like a real one.
 """
 
-import math
 import time
+import math
 from typing import List, Tuple, Optional
 
-from .ros_interface import publish_virtual_obstacle
 
+class VirtualObstacle:
+    """Virtual obstacle placed when robot detects invisible obstacle."""
 
-class VirtualObstacleTracker:
-    """
-    Tracks virtual obstacles that the robot has encountered but LiDAR cannot detect.
-
-    Each obstacle entry is (x, y, timestamp, confidence).
-    Confidence increases when robot repeatedly gets stuck at same location.
-    """
-
-    def __init__(self, radius: float = 0.12, max_age: float = 300.0, max_count: int = 20):
+    def __init__(self, x: float, y: float, radius: float = 0.3, ttl: float = 120.0):
         """
+        Create virtual obstacle.
+
         Args:
-            radius: Obstacle radius for clearance calculations (meters)
-            max_age: Forget obstacles after this time (seconds)
-            max_count: Maximum stored virtual obstacles
+            x, y: Position in world coordinates
+            radius: Obstacle radius for avoidance
+            ttl: Time to live in seconds (expires after this)
         """
-        self.obstacles: List[Tuple[float, float, float, int]] = []
+        self.x = x
+        self.y = y
         self.radius = radius
-        self.max_age = max_age
-        self.max_count = max_count
+        self.created_at = time.time()
+        self.ttl = ttl
 
-    def add(self, x: float, y: float, publish: bool = True):
+    def is_expired(self) -> bool:
+        """Check if obstacle has expired."""
+        return time.time() - self.created_at > self.ttl
+
+    def distance_to(self, x: float, y: float) -> float:
+        """Get distance from point to obstacle center."""
+        return math.hypot(x - self.x, y - self.y)
+
+    def __repr__(self):
+        age = time.time() - self.created_at
+        return f"VirtualObstacle(({self.x:.2f}, {self.y:.2f}), r={self.radius}, age={age:.0f}s)"
+
+
+class VirtualObstacleManager:
+    """Manages virtual obstacles for invisible obstacle detection."""
+
+    def __init__(self, default_radius: float = 0.3, default_ttl: float = 120.0):
+        self.obstacles: List[VirtualObstacle] = []
+        self.default_radius = default_radius
+        self.default_ttl = default_ttl
+
+    def add_obstacle(self, x: float, y: float, heading: float,
+                     distance_ahead: float = 0.3) -> Optional[VirtualObstacle]:
         """
-        Add a virtual obstacle at the given position.
+        Add virtual obstacle in front of robot.
 
         Args:
-            x, y: World coordinates of the obstacle
-            publish: Whether to publish marker for RViz visualization
-        """
-        now = time.time()
-
-        # Check if there's already a virtual obstacle nearby (avoid duplicates)
-        for i, (ox, oy, ts, conf) in enumerate(self.obstacles):
-            dist = math.sqrt((x - ox)**2 + (y - oy)**2)
-            if dist < 0.3:  # Within 30cm - update existing
-                self.obstacles[i] = (ox, oy, now, min(conf + 1, 5))
-                print(f"\n[VIRTUAL-OBS] Reinforced obstacle at ({ox:.2f}, {oy:.2f}), conf={conf+1}")
-                return
-
-        # Add new virtual obstacle
-        self.obstacles.append((x, y, now, 1))
-        print(f"\n[VIRTUAL-OBS] Added new obstacle at ({x:.2f}, {y:.2f})")
-
-        # Limit total count
-        if len(self.obstacles) > self.max_count:
-            self.obstacles.sort(key=lambda o: o[2])  # Sort by timestamp
-            self.obstacles = self.obstacles[-self.max_count:]
-
-        # Publish for visualization
-        if publish:
-            publish_virtual_obstacle(x, y)
-            print(f"\n[OBSTACLE] Marked virtual obstacle at ({x:.2f}, {y:.2f})")
-
-    def cleanup(self):
-        """Remove old virtual obstacles"""
-        now = time.time()
-        self.obstacles = [
-            (x, y, ts, conf) for x, y, ts, conf in self.obstacles
-            if now - ts < self.max_age
-        ]
-
-    def get_clearance(self, robot_x: float, robot_y: float, robot_heading: float) -> float:
-        """
-        Get the minimum clearance to any virtual obstacle in front of the robot.
-
-        Args:
-            robot_x, robot_y: Robot position in world frame
-            robot_heading: Robot heading in radians
+            x, y: Robot position
+            heading: Robot heading in radians
+            distance_ahead: How far ahead to place obstacle
 
         Returns:
-            Distance to nearest virtual obstacle in front arc, or inf if none
+            New obstacle if added, None if duplicate
         """
-        if not self.obstacles or robot_x is None:
-            return float('inf')
+        # Place obstacle ahead of robot
+        obs_x = x + distance_ahead * math.cos(heading)
+        obs_y = y + distance_ahead * math.sin(heading)
 
-        min_clearance = float('inf')
+        # Check for nearby existing obstacle
+        for obs in self.obstacles:
+            if obs.distance_to(obs_x, obs_y) < self.default_radius:
+                return None  # Already have one here
 
-        for ox, oy, ts, conf in self.obstacles:
-            dx = ox - robot_x
-            dy = oy - robot_y
-            dist = math.sqrt(dx*dx + dy*dy)
+        new_obs = VirtualObstacle(obs_x, obs_y, self.default_radius, self.default_ttl)
+        self.obstacles.append(new_obs)
+        return new_obs
 
-            if dist < 0.1:  # Too close to matter
-                continue
+    def cleanup_expired(self):
+        """Remove expired obstacles."""
+        before = len(self.obstacles)
+        self.obstacles = [o for o in self.obstacles if not o.is_expired()]
+        removed = before - len(self.obstacles)
+        if removed > 0:
+            print(f"[VIRTUAL] Removed {removed} expired obstacles")
 
-            # Check if obstacle is in front of robot (within ±60 degrees)
-            angle_to_obs = math.atan2(dy, dx)
-            angle_diff = angle_to_obs - robot_heading
+    def get_nearest_in_front(self, x: float, y: float, heading: float,
+                              fov_angle: float = math.pi / 3) -> float:
+        """
+        Get distance to nearest virtual obstacle in front of robot.
 
-            # Normalize to [-pi, pi]
-            while angle_diff > math.pi:
-                angle_diff -= 2 * math.pi
-            while angle_diff < -math.pi:
-                angle_diff += 2 * math.pi
+        Args:
+            x, y: Robot position
+            heading: Robot heading in radians
+            fov_angle: Field of view angle (default 60 degrees each side)
 
-            # Check if in front arc (±60 degrees = ±1.05 radians)
-            if abs(angle_diff) < 1.05:
-                clearance = dist - self.radius
-                if clearance < min_clearance:
-                    min_clearance = clearance
+        Returns:
+            Distance to nearest obstacle, or inf if none in front
+        """
+        self.cleanup_expired()
 
-        return min_clearance
+        min_dist = float('inf')
 
-    def mark(self, x: float, y: float):
-        """Publish a virtual obstacle marker for visualization only (no tracking)."""
-        publish_virtual_obstacle(x, y)
-        print(f"\n[OBSTACLE] Marked virtual obstacle at ({x:.2f}, {y:.2f})")
+        for obs in self.obstacles:
+            # Angle from robot to obstacle
+            angle_to_obs = math.atan2(obs.y - y, obs.x - x)
+
+            # Angle difference (handle wraparound)
+            angle_diff = abs(angle_to_obs - heading)
+            if angle_diff > math.pi:
+                angle_diff = 2 * math.pi - angle_diff
+
+            # Check if in front
+            if angle_diff < fov_angle:
+                dist = obs.distance_to(x, y) - obs.radius
+                min_dist = min(min_dist, max(0, dist))
+
+        return min_dist
+
+    def count(self) -> int:
+        """Get number of active obstacles."""
+        return len(self.obstacles)
+
+    def clear(self):
+        """Remove all obstacles."""
+        self.obstacles.clear()
+
+    def get_all(self) -> List[VirtualObstacle]:
+        """Get all active obstacles."""
+        self.cleanup_expired()
+        return self.obstacles.copy()

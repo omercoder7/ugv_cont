@@ -1,5 +1,9 @@
 """
 Main entry point and launcher functions for autonomous scanning.
+
+FSM-based obstacle avoidance inspired by:
+- Nav2: https://docs.nav2.org/configuration/packages/configuring-behavior-server.html
+- YASMIN: https://github.com/uleroboticsgroup/yasmin
 """
 
 import os
@@ -114,75 +118,40 @@ def start_driver():
         return False
 
 
-def check_rf2o_health():
-    """Check if RF2O is running and publishing. Restart if dead."""
-    result = subprocess.run(
-        ['docker', 'exec', CONTAINER_NAME, 'pgrep', '-f', 'rf2o_laser_odometry_node'],
-        capture_output=True, text=True
-    )
-
-    if result.returncode != 0:
-        print("\n[RF2O] Process dead! Restarting...")
-        subprocess.Popen(
-            ['docker', 'exec', '-d', CONTAINER_NAME, 'bash', '-c',
-             'source /opt/ros/humble/setup.bash && '
-             'source /root/ugv_ws/install/setup.bash && '
-             'ros2 launch rf2o_laser_odometry rf2o_laser_odometry.launch.py > /tmp/rf2o.log 2>&1'],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL
-        )
-        time.sleep(3)
-        result = subprocess.run(
-            ['docker', 'exec', CONTAINER_NAME, 'pgrep', '-f', 'rf2o_laser_odometry_node'],
-            capture_output=True, text=True
-        )
-        if result.returncode == 0:
-            print("[RF2O] Restarted successfully")
-            return True
-        else:
-            print("[RF2O] FAILED TO RESTART - EKF will be slow!")
-            return False
-    return True
-
-
 def main():
     """Main entry point for autonomous scanning."""
-    # Import here to avoid circular imports
-    from .avoider import SectorObstacleAvoider
+    from .fsm_avoider import FSMAvoider
 
     parser = argparse.ArgumentParser(
-        description='Autonomous scanning with sector-based obstacle avoidance',
+        description='Autonomous scanning with FSM-based obstacle avoidance',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
   ./auto_scan.py                      # Default: 60s at 0.06 m/s
   ./auto_scan.py --duration 120       # 2 minute scan
   ./auto_scan.py --duration 0         # Unlimited
-  ./auto_scan.py --speed 0.08         # Slower scanning
-  ./auto_scan.py --min-dist 0.7       # More cautious
+  ./auto_scan.py --speed 0.08         # Faster scanning
+  ./auto_scan.py --min-dist 0.5       # More cautious
 
 Algorithm:
-  Divides 360° LiDAR scan into 12 sectors (30° each).
-  Finds clearest path and navigates with minimal rotation.
-  Based on: github.com/Rad-hi/Obstacle-Avoidance-ROS
+  FSM-based obstacle avoidance with states:
+  - FORWARD: Moving with adaptive speed
+  - AVOIDING: Steering around obstacles
+  - BACKING_UP: Reversing when too close (Nav2 backup)
+  - SPINNING: In-place rotation (Nav2 spin)
+  - RECOVERY: Stuck recovery maneuvers
+
+References:
+  - Nav2: https://docs.nav2.org/configuration/packages/configuring-behavior-server.html
+  - YASMIN: https://github.com/uleroboticsgroup/yasmin
         """
     )
     parser.add_argument('--speed', '-s', type=float, default=0.06,
-                        help='Linear speed m/s (default: 0.06, max: 0.08)')
+                        help='Linear speed m/s (default: 0.06, max: 0.12)')
     parser.add_argument('--min-dist', '-m', type=float, default=0.35,
                         help='Min obstacle distance m (default: 0.35)')
     parser.add_argument('--duration', '-d', type=float, default=60,
                         help='Scan duration seconds, 0=unlimited (default: 60)')
-    parser.add_argument('--clear-visited', '-c', action='store_true',
-                        help='Clear visited locations history before starting')
-    parser.add_argument('--test-front', action='store_true',
-                        help='Test front sector calibration (place obstacle in front)')
-    parser.add_argument('--vfh', action='store_true',
-                        help='Use VFH algorithm with state machine (smoother navigation)')
-    parser.add_argument('--log-sensors', '-l', action='store_true',
-                        help='Enable sensor logging for offline mapping')
-    parser.add_argument('--log-dir', type=str, default='/tmp/exploration_data',
-                        help='Output directory for sensor logs (default: /tmp/exploration_data)')
     args = parser.parse_args()
 
     if not check_prerequisites():
@@ -191,19 +160,11 @@ Algorithm:
     start_driver()
     ensure_slam_running()
 
-    avoider = SectorObstacleAvoider(
+    avoider = FSMAvoider(
         linear_speed=args.speed,
         min_distance=args.min_dist,
-        duration=args.duration,
-        clear_visited=args.clear_visited,
-        use_vfh=args.vfh,
-        log_sensors=args.log_sensors,
-        log_output_dir=args.log_dir
+        duration=args.duration
     )
-
-    if args.test_front:
-        avoider.test_front_sector()
-        sys.exit(0)
 
     def signal_handler(sig, frame):
         avoider.running = False
