@@ -227,28 +227,49 @@ class FSMAvoider:
 
                     # Frontier-based exploration (like explore_lite)
                     if self.current_pos and self.current_heading is not None:
-                        # Find best frontier to explore
-                        best_sector, is_dead_end = self.frontier.select_best_frontier(
-                            sectors=sectors,
-                            visited_cells=self.explorer.visited,
-                            robot_x=self.current_pos[0],
-                            robot_y=self.current_pos[1],
-                            robot_heading=self.current_heading,
-                            grid_resolution=self.explorer.grid_res
-                        )
+                        # PROACTIVE dead-end detection - check BEFORE entering
+                        is_dead_end_ahead, pattern = self.frontier.detect_dead_end_ahead(
+                            sectors, threshold=0.5)
 
-                        if is_dead_end:
-                            # No good frontiers - turn around proactively
-                            print(f"\n[DEAD END] No frontiers, turning around")
-                            self._execute_backup(sectors)
-                            self.frontier.reset()
-                            continue
+                        if is_dead_end_ahead:
+                            # Don't enter the dead end - find escape route
+                            print(f"\n[DEAD END AHEAD] Pattern: {pattern}, avoiding")
+                            escape_sector = self.frontier.get_best_escape_direction(
+                                sectors, self.explorer.visited,
+                                self.current_pos[0], self.current_pos[1],
+                                self.current_heading, self.explorer.grid_res
+                            )
+                            if escape_sector is not None:
+                                escape_angle = self.frontier.sector_to_angle(escape_sector)
+                                safe_w = max(-0.4, min(0.4, escape_angle * 0.6))
+                            else:
+                                # No escape, backup
+                                self._execute_backup(sectors)
+                                self.frontier.reset()
+                                continue
 
-                        if best_sector is not None:
-                            # Steer toward best frontier
-                            frontier_steer = self.frontier.get_steering_toward_frontier(
-                                best_sector, sectors)
-                            safe_w += frontier_steer
+                        else:
+                            # Find best frontier to explore
+                            best_frontier, no_frontiers = self.frontier.select_frontier(
+                                sectors=sectors,
+                                visited_cells=self.explorer.visited,
+                                robot_x=self.current_pos[0],
+                                robot_y=self.current_pos[1],
+                                robot_heading=self.current_heading,
+                                grid_res=self.explorer.grid_res
+                            )
+
+                            if no_frontiers:
+                                # No good frontiers - turn around
+                                print(f"\n[NO FRONTIERS] Turning around")
+                                self._execute_backup(sectors)
+                                self.frontier.reset()
+                                continue
+
+                            if best_frontier is not None:
+                                # Steer toward best frontier
+                                frontier_steer = self.frontier.get_steering(best_frontier)
+                                safe_w += frontier_steer
 
                 # 4. ACT
                 send_velocity_cmd(safe_v, safe_w)
@@ -257,10 +278,9 @@ class FSMAvoider:
                 stats = self.explorer.get_stats()
                 frontier_stats = self.frontier.get_stats()
                 state_abbr = self.state.name[:3]
-                dead_ends = frontier_stats['consecutive_dead_ends']
                 status = (f"[{self.iteration:3d}] {state_abbr} front={front_min:.2f}m "
                          f"cells={stats['unique_cells']} revisit={stats['revisit_pct']:.0f}% "
-                         f"virt={self.virtual_obstacles.count()}")
+                         f"dead_ends={frontier_stats['dead_ends_detected']}")
                 print(f"\r{status}", end="", flush=True)
 
                 time.sleep(0.1)

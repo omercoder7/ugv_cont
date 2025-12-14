@@ -1,241 +1,476 @@
 """
 Frontier-based exploration for autonomous scanning.
 
-Based on explore_lite and WFD (Wavefront Frontier Detector) algorithms.
-Uses LiDAR readings + visited cells as proxy for occupancy grid.
+Based on professional algorithms:
+- explore_lite (ROS2): https://github.com/robo-friends/m-explore-ros2
+- Wavefront Frontier Detector (WFD): https://arxiv.org/pdf/1806.03581
+- Husarion tutorials: https://husarion.com/tutorials/ros2-tutorials/10-exploration/
 
-Key concept: Frontiers are boundaries between explored and unexplored space.
-The robot navigates to frontiers to maximize exploration efficiency.
-Dead ends are avoided implicitly - they have no frontiers (nothing unknown beyond).
-
-References:
-- explore_lite: https://github.com/robo-friends/m-explore-ros2
-- WFD algorithm: https://arxiv.org/pdf/1806.03581
+Key concepts:
+1. Frontiers = boundaries between explored and unexplored space
+2. Cost function: C = distance_cost - gain * frontier_size + orientation_cost
+3. Information gain: prefer frontiers revealing more unexplored area
+4. Min frontier size: ignore tiny frontiers (likely dead ends or noise)
+5. Progress timeout: abandon goals if no progress made
 """
 
 import math
+import time
 from typing import List, Tuple, Optional, Dict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass
-class FrontierCandidate:
-    """A potential frontier direction to explore."""
-    sector: int  # LiDAR sector index
-    distance: float  # Free distance in this direction
-    visit_count: int  # How many times we've visited cells in this direction
-    angle_from_front: float  # Angle offset from front (radians)
-    score: float  # Combined exploration score
+class Frontier:
+    """A frontier (boundary between explored and unexplored)."""
+    sector: int  # Primary LiDAR sector
+    distance: float  # Distance to frontier
+    size: float  # Estimated frontier size (width)
+    info_gain: float  # Expected information gain
+    angle: float  # Angle from robot front (radians)
+    cost: float = 0.0  # Computed cost (lower = better)
+
+    def __post_init__(self):
+        """Ensure valid values."""
+        self.size = max(0.1, self.size)
+        self.info_gain = max(0.0, self.info_gain)
 
 
 class FrontierExplorer:
     """
-    Frontier-based exploration using LiDAR + visited cells.
+    Professional frontier-based exploration.
 
-    Approximates frontier detection without full occupancy grid by:
-    - Long LiDAR reading = likely frontier (unexplored space ahead)
-    - Low visit count = unexplored area
-    - Combines into a cost function similar to explore_lite
+    Uses explore_lite-style cost function:
+    cost = potential_scale * distance - gain_scale * size + orientation_scale * |angle|
 
-    Cost function: score = λ1*distance + λ2*novelty - λ3*turn_cost
+    Lower cost = better frontier to explore.
     """
 
     def __init__(self,
                  num_sectors: int = 12,
-                 min_frontier_distance: float = 0.8,
-                 distance_weight: float = 1.0,
-                 novelty_weight: float = 2.0,
-                 turn_weight: float = 0.3):
+                 # Cost function weights (like explore_lite)
+                 potential_scale: float = 1.0,  # Distance penalty
+                 gain_scale: float = 2.0,  # Size/info gain bonus
+                 orientation_scale: float = 0.5,  # Turning penalty
+                 # Thresholds
+                 min_frontier_size: float = 0.3,  # Minimum frontier width (meters)
+                 min_frontier_distance: float = 0.5,  # Minimum distance to consider
+                 max_frontier_distance: float = 5.0,  # Maximum useful distance
+                 # Progress tracking
+                 progress_timeout: float = 10.0,  # Abandon goal if no progress
+                 min_progress: float = 0.1):  # Minimum movement to count as progress
         """
         Args:
             num_sectors: Number of LiDAR sectors
-            min_frontier_distance: Minimum distance to consider a frontier
-            distance_weight: Weight for distance in scoring (λ1)
-            novelty_weight: Weight for novelty/unvisited bonus (λ2)
-            turn_weight: Penalty for turning away from front (λ3)
+            potential_scale: Weight for distance (higher = prefer closer)
+            gain_scale: Weight for information gain (higher = prefer larger frontiers)
+            orientation_scale: Weight for turning (higher = prefer straight ahead)
+            min_frontier_size: Ignore frontiers smaller than this (meters)
+            min_frontier_distance: Ignore frontiers closer than this
+            max_frontier_distance: Clip distances beyond this
+            progress_timeout: Seconds without progress before abandoning goal
+            min_progress: Minimum meters moved to count as progress
         """
         self.num_sectors = num_sectors
+        self.potential_scale = potential_scale
+        self.gain_scale = gain_scale
+        self.orientation_scale = orientation_scale
+        self.min_frontier_size = min_frontier_size
         self.min_frontier_distance = min_frontier_distance
-        self.distance_weight = distance_weight
-        self.novelty_weight = novelty_weight
-        self.turn_weight = turn_weight
+        self.max_frontier_distance = max_frontier_distance
+        self.progress_timeout = progress_timeout
+        self.min_progress = min_progress
 
-        # Dead end detection
-        self.dead_end_threshold = 0.5  # If best score below this, it's a dead end
-        self.consecutive_dead_ends = 0
-        self.max_dead_ends_before_turn = 3
+        # Current target tracking
+        self.current_target: Optional[Frontier] = None
+        self.target_start_time: float = 0
+        self.target_start_pos: Optional[Tuple[float, float]] = None
+        self.last_progress_time: float = 0
+        self.last_progress_pos: Optional[Tuple[float, float]] = None
+
+        # Statistics
+        self.frontiers_explored = 0
+        self.frontiers_abandoned = 0
+        self.dead_ends_detected = 0
 
     def sector_to_angle(self, sector: int) -> float:
-        """Convert sector index to angle offset from front (radians)."""
+        """Convert sector index to angle from front (radians, -pi to pi)."""
         # Sector 0 = front, increases counterclockwise
-        # Returns angle in [-pi, pi] relative to front
         angle = sector * 2 * math.pi / self.num_sectors
         if angle > math.pi:
             angle -= 2 * math.pi
         return angle
 
-    def find_frontiers(self, sectors: List[float],
-                       visited_cells: Dict[Tuple[int, int], int],
-                       robot_x: float, robot_y: float,
-                       robot_heading: float,
-                       grid_resolution: float = 0.5) -> List[FrontierCandidate]:
+    def estimate_frontier_size(self, sectors: List[float], sector_idx: int) -> float:
         """
-        Find frontier candidates from LiDAR sectors.
+        Estimate frontier size based on adjacent sector readings.
 
-        Args:
-            sectors: LiDAR distance readings per sector
-            visited_cells: Dict of (cell_x, cell_y) -> visit count
-            robot_x, robot_y: Robot position
-            robot_heading: Robot heading in radians
-            grid_resolution: Grid cell size for visited tracking
-
-        Returns:
-            List of FrontierCandidate sorted by score (best first)
+        Larger open areas suggest bigger frontiers with more to explore.
         """
-        candidates = []
+        distance = sectors[sector_idx]
+        if distance < self.min_frontier_distance:
+            return 0.0
+
+        # Check adjacent sectors for continuity
+        left_idx = (sector_idx - 1) % self.num_sectors
+        right_idx = (sector_idx + 1) % self.num_sectors
+
+        left_dist = sectors[left_idx]
+        right_dist = sectors[right_idx]
+
+        # Estimate width based on sector angle and distance
+        sector_angle = 2 * math.pi / self.num_sectors  # ~30 degrees for 12 sectors
+        base_width = 2 * distance * math.tan(sector_angle / 2)
+
+        # Bonus for adjacent open sectors (indicates larger frontier)
+        continuity_bonus = 0.0
+        if left_dist > self.min_frontier_distance:
+            continuity_bonus += 0.5
+        if right_dist > self.min_frontier_distance:
+            continuity_bonus += 0.5
+
+        return base_width * (1.0 + continuity_bonus)
+
+    def calculate_info_gain(self, sectors: List[float], sector_idx: int,
+                           visited_cells: Dict[Tuple[int, int], int],
+                           robot_x: float, robot_y: float, robot_heading: float,
+                           grid_res: float) -> float:
+        """
+        Calculate expected information gain for exploring this frontier.
+
+        Higher gain = more unexplored cells in this direction.
+        """
+        distance = sectors[sector_idx]
+        if distance < self.min_frontier_distance:
+            return 0.0
+
+        angle = self.sector_to_angle(sector_idx)
+        world_angle = robot_heading + angle
+
+        # Sample points along this direction
+        info_gain = 0.0
+        sample_distances = [0.5, 1.0, 1.5, 2.0, 2.5, 3.0]
+
+        for sample_dist in sample_distances:
+            if sample_dist > distance:
+                break
+
+            sample_x = robot_x + sample_dist * math.cos(world_angle)
+            sample_y = robot_y + sample_dist * math.sin(world_angle)
+
+            cell_x = int(sample_x / grid_res)
+            cell_y = int(sample_y / grid_res)
+
+            visit_count = visited_cells.get((cell_x, cell_y), 0)
+
+            # Unvisited cells have high info gain
+            if visit_count == 0:
+                info_gain += 1.0
+            elif visit_count == 1:
+                info_gain += 0.3  # Some value for rarely visited
+            # Heavily visited = no info gain
+
+        # Bonus for distance (further = more unexplored beyond)
+        distance_bonus = min(distance / self.max_frontier_distance, 1.0)
+
+        return info_gain * (1.0 + distance_bonus)
+
+    def detect_frontiers(self, sectors: List[float],
+                        visited_cells: Dict[Tuple[int, int], int],
+                        robot_x: float, robot_y: float,
+                        robot_heading: float,
+                        grid_res: float = 0.5) -> List[Frontier]:
+        """
+        Detect all valid frontiers from current sensor data.
+
+        Returns list of Frontier objects sorted by cost (best first).
+        """
+        frontiers = []
 
         for sector_idx, distance in enumerate(sectors):
-            # Skip sectors with obstacles too close
+            # Skip too close or too far
             if distance < self.min_frontier_distance:
                 continue
 
-            # Calculate angle from front
-            angle_offset = self.sector_to_angle(sector_idx)
-            world_angle = robot_heading + angle_offset
+            # Clip max distance
+            distance = min(distance, self.max_frontier_distance)
 
-            # Sample points along this direction to check visit counts
-            visit_count = 0
-            sample_distances = [0.5, 1.0, 1.5, 2.0]  # meters
+            # Estimate frontier size
+            size = self.estimate_frontier_size(sectors, sector_idx)
+            if size < self.min_frontier_size:
+                continue  # Too small, likely dead end or noise
 
-            for sample_dist in sample_distances:
-                if sample_dist > distance:
-                    break
-                sample_x = robot_x + sample_dist * math.cos(world_angle)
-                sample_y = robot_y + sample_dist * math.sin(world_angle)
+            # Calculate information gain
+            info_gain = self.calculate_info_gain(
+                sectors, sector_idx, visited_cells,
+                robot_x, robot_y, robot_heading, grid_res
+            )
 
-                # Convert to grid cell
-                cell_x = int(sample_x / grid_resolution)
-                cell_y = int(sample_y / grid_resolution)
-                visit_count += visited_cells.get((cell_x, cell_y), 0)
+            # Get angle from front
+            angle = self.sector_to_angle(sector_idx)
 
-            # Calculate novelty (inverse of visit count)
-            # More visits = less novel = lower score
-            novelty = 1.0 / (1.0 + visit_count * 0.5)
+            # Calculate cost (explore_lite style)
+            # Lower cost = better frontier
+            cost = (self.potential_scale * distance -
+                   self.gain_scale * (size + info_gain) +
+                   self.orientation_scale * abs(angle))
 
-            # Turn cost (prefer going straight)
-            turn_cost = abs(angle_offset)
-
-            # Combined score (higher = better frontier)
-            score = (self.distance_weight * distance +
-                     self.novelty_weight * novelty -
-                     self.turn_weight * turn_cost)
-
-            candidates.append(FrontierCandidate(
+            frontiers.append(Frontier(
                 sector=sector_idx,
                 distance=distance,
-                visit_count=visit_count,
-                angle_from_front=angle_offset,
-                score=score
+                size=size,
+                info_gain=info_gain,
+                angle=angle,
+                cost=cost
             ))
 
-        # Sort by score (best first)
-        candidates.sort(key=lambda c: c.score, reverse=True)
-        return candidates
+        # Sort by cost (lowest first = best)
+        frontiers.sort(key=lambda f: f.cost)
+        return frontiers
 
-    def select_best_frontier(self, sectors: List[float],
-                             visited_cells: Dict[Tuple[int, int], int],
-                             robot_x: float, robot_y: float,
-                             robot_heading: float,
-                             grid_resolution: float = 0.5) -> Tuple[Optional[int], bool]:
+    def check_progress(self, robot_x: float, robot_y: float) -> bool:
         """
-        Select the best frontier direction.
+        Check if robot is making progress toward current target.
 
-        Args:
-            sectors: LiDAR distance readings per sector
-            visited_cells: Dict of (cell_x, cell_y) -> visit count
-            robot_x, robot_y: Robot position
-            robot_heading: Robot heading in radians
-            grid_resolution: Grid cell size
+        Returns False if stuck (triggers goal abandonment).
+        """
+        if self.current_target is None:
+            return True
+
+        now = time.time()
+
+        # Initialize progress tracking
+        if self.last_progress_pos is None:
+            self.last_progress_pos = (robot_x, robot_y)
+            self.last_progress_time = now
+            return True
+
+        # Calculate movement since last progress check
+        dx = robot_x - self.last_progress_pos[0]
+        dy = robot_y - self.last_progress_pos[1]
+        movement = math.hypot(dx, dy)
+
+        if movement >= self.min_progress:
+            # Made progress, reset timer
+            self.last_progress_pos = (robot_x, robot_y)
+            self.last_progress_time = now
+            return True
+
+        # Check timeout
+        if now - self.last_progress_time > self.progress_timeout:
+            return False  # Stuck, abandon goal
+
+        return True
+
+    def select_frontier(self, sectors: List[float],
+                       visited_cells: Dict[Tuple[int, int], int],
+                       robot_x: float, robot_y: float,
+                       robot_heading: float,
+                       grid_res: float = 0.5) -> Tuple[Optional[Frontier], bool]:
+        """
+        Select best frontier to explore.
 
         Returns:
-            (best_sector, is_dead_end)
-            best_sector: Index of best sector to navigate toward, or None
-            is_dead_end: True if no good frontiers found (should turn around)
+            (frontier, is_dead_end)
+            frontier: Best frontier to explore, or None
+            is_dead_end: True if no valid frontiers found
         """
-        candidates = self.find_frontiers(
-            sectors, visited_cells, robot_x, robot_y,
-            robot_heading, grid_resolution
+        # Check progress on current target
+        if not self.check_progress(robot_x, robot_y):
+            print(f"\n[FRONTIER] No progress for {self.progress_timeout}s, abandoning target")
+            self.frontiers_abandoned += 1
+            self.current_target = None
+            self.last_progress_pos = None
+
+        # Detect all frontiers
+        frontiers = self.detect_frontiers(
+            sectors, visited_cells,
+            robot_x, robot_y, robot_heading, grid_res
         )
 
-        if not candidates:
-            self.consecutive_dead_ends += 1
+        if not frontiers:
+            self.dead_ends_detected += 1
             return None, True
 
-        best = candidates[0]
+        # Select best frontier
+        best = frontiers[0]
 
-        # Check if best frontier is good enough
-        if best.score < self.dead_end_threshold:
-            self.consecutive_dead_ends += 1
-            if self.consecutive_dead_ends >= self.max_dead_ends_before_turn:
-                return None, True
-        else:
-            self.consecutive_dead_ends = 0
+        # Check if this is a new target
+        if (self.current_target is None or
+            best.sector != self.current_target.sector):
+            self.current_target = best
+            self.target_start_time = time.time()
+            self.target_start_pos = (robot_x, robot_y)
+            self.last_progress_pos = (robot_x, robot_y)
+            self.last_progress_time = time.time()
 
-        return best.sector, False
+        return best, False
 
-    def get_steering_toward_frontier(self, target_sector: int,
-                                     current_sectors: List[float]) -> float:
+    def get_steering(self, frontier: Frontier) -> float:
         """
         Get angular velocity to steer toward frontier.
 
-        Args:
-            target_sector: Target sector index
-            current_sectors: Current LiDAR readings
-
-        Returns:
-            Angular velocity (positive = left, negative = right)
+        Returns angular velocity (positive = left, negative = right).
         """
-        angle_offset = self.sector_to_angle(target_sector)
+        if frontier is None:
+            return 0.0
 
-        # Proportional control with limit
-        angular_vel = max(-0.3, min(0.3, angle_offset * 0.4))
+        # Proportional control with limits
+        # Stronger steering for larger angles
+        kp = 0.5
+        max_angular = 0.35
 
-        return angular_vel
+        angular = kp * frontier.angle
+        angular = max(-max_angular, min(max_angular, angular))
 
-    def is_dead_end(self, sectors: List[float],
-                    visited_cells: Dict[Tuple[int, int], int],
-                    robot_x: float, robot_y: float,
-                    robot_heading: float,
-                    grid_resolution: float = 0.5) -> bool:
-        """
-        Check if current position is a dead end.
+        return angular
 
-        A dead end is when:
-        - All directions have obstacles close by, OR
-        - All directions lead to heavily visited areas
-
-        Returns:
-            True if this is a dead end
-        """
-        # Check if any sector has a good frontier
-        candidates = self.find_frontiers(
-            sectors, visited_cells, robot_x, robot_y,
-            robot_heading, grid_resolution
-        )
-
-        if not candidates:
-            return True
-
-        # Check if best candidate is good enough
-        best_score = candidates[0].score
-        return best_score < self.dead_end_threshold
+    def mark_explored(self):
+        """Mark current target as explored (reached)."""
+        if self.current_target is not None:
+            self.frontiers_explored += 1
+            self.current_target = None
+            self.last_progress_pos = None
 
     def reset(self):
-        """Reset dead end counter (call after successful turn-around)."""
-        self.consecutive_dead_ends = 0
+        """Reset exploration state (after backup/recovery)."""
+        self.current_target = None
+        self.last_progress_pos = None
+        self.last_progress_time = 0
+
+    def detect_dead_end_ahead(self, sectors: List[float],
+                               threshold: float = 0.6) -> Tuple[bool, str]:
+        """
+        Proactively detect if we're heading toward a dead end.
+
+        Patterns that indicate dead end ahead:
+        1. Corridor: Front open, both sides blocked
+        2. U-shape: Left and right blocked, only front open
+        3. Narrowing: Front getting narrower (converging walls)
+
+        Returns:
+            (is_dead_end, pattern_name)
+        """
+        # Get key sector distances
+        front = sectors[0]
+        front_left = sectors[11]
+        front_right = sectors[1]
+        left = sectors[10] if len(sectors) > 10 else sectors[9]
+        right = sectors[2]
+        back_left = sectors[8] if len(sectors) > 8 else sectors[7]
+        back_right = sectors[4] if len(sectors) > 4 else sectors[3]
+
+        # Pattern 1: Corridor (front open, sides blocked)
+        # This often leads to dead ends
+        if (front > threshold * 2 and
+            front_left < threshold and front_right < threshold and
+            left < threshold and right < threshold):
+            return True, "corridor"
+
+        # Pattern 2: U-shape trap (surrounded on 3 sides)
+        blocked_count = sum(1 for d in [front_left, left, back_left,
+                                        front_right, right, back_right]
+                           if d < threshold)
+        if blocked_count >= 5 and front > threshold:
+            return True, "u_shape"
+
+        # Pattern 3: Narrowing passage (walls converging)
+        if (front > threshold and
+            front_left < front * 0.5 and front_right < front * 0.5):
+            # Walls are closer on sides than front suggests
+            # This indicates a narrowing passage
+            return True, "narrowing"
+
+        # Pattern 4: Dead-end pocket (front blocked, only came from behind)
+        if (front < threshold and
+            front_left < threshold and front_right < threshold):
+            # Check if back is open (we came from there)
+            back = sectors[6] if len(sectors) > 6 else sectors[5]
+            if back > threshold:
+                return True, "pocket"
+
+        return False, ""
+
+    def should_avoid_direction(self, sectors: List[float],
+                               target_sector: int,
+                               visited_cells: Dict[Tuple[int, int], int],
+                               robot_x: float, robot_y: float,
+                               robot_heading: float,
+                               grid_res: float) -> bool:
+        """
+        Check if we should avoid going in target direction.
+
+        Returns True if:
+        - Direction leads to heavily visited area (likely already explored)
+        - Direction shows dead-end pattern
+        """
+        # Check if target direction is toward visited area
+        angle = self.sector_to_angle(target_sector)
+        world_angle = robot_heading + angle
+
+        # Sample cells in target direction
+        visit_count = 0
+        for dist in [0.5, 1.0, 1.5]:
+            x = robot_x + dist * math.cos(world_angle)
+            y = robot_y + dist * math.sin(world_angle)
+            cell = (int(x / grid_res), int(y / grid_res))
+            visit_count += visited_cells.get(cell, 0)
+
+        # If heavily visited, avoid this direction
+        if visit_count > 10:
+            return True
+
+        return False
+
+    def get_best_escape_direction(self, sectors: List[float],
+                                  visited_cells: Dict[Tuple[int, int], int],
+                                  robot_x: float, robot_y: float,
+                                  robot_heading: float,
+                                  grid_res: float) -> Optional[int]:
+        """
+        Find best direction to escape when in/near dead end.
+
+        Prefers:
+        1. Open directions (long LiDAR readings)
+        2. Unvisited areas
+        3. Away from where we came from
+        """
+        best_sector = None
+        best_score = -float('inf')
+
+        for sector_idx, distance in enumerate(sectors):
+            if distance < self.min_frontier_distance:
+                continue
+
+            # Calculate escape score
+            angle = self.sector_to_angle(sector_idx)
+            world_angle = robot_heading + angle
+
+            # Prefer back directions when escaping
+            # (we likely came from a good area)
+            back_bonus = 1.0 if abs(angle) > math.pi * 0.5 else 0.0
+
+            # Check visited cells
+            visit_penalty = 0
+            for dist in [0.5, 1.0]:
+                x = robot_x + dist * math.cos(world_angle)
+                y = robot_y + dist * math.sin(world_angle)
+                cell = (int(x / grid_res), int(y / grid_res))
+                visit_penalty += visited_cells.get(cell, 0) * 0.1
+
+            score = distance + back_bonus - visit_penalty
+
+            if score > best_score:
+                best_score = score
+                best_sector = sector_idx
+
+        return best_sector
 
     def get_stats(self) -> dict:
         """Get exploration statistics."""
         return {
-            'consecutive_dead_ends': self.consecutive_dead_ends
+            'frontiers_explored': self.frontiers_explored,
+            'frontiers_abandoned': self.frontiers_abandoned,
+            'dead_ends_detected': self.dead_ends_detected,
+            'has_target': self.current_target is not None
         }

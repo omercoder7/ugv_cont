@@ -11,7 +11,7 @@ Modules:
 
 from .constants import *
 from .fsm_avoider import FSMAvoider, State
-from .frontier import FrontierExplorer, FrontierCandidate
+from .frontier import FrontierExplorer, Frontier
 from .exploration import ExplorationTracker, StuckDetector
 from .virtual_obstacles import VirtualObstacle, VirtualObstacleManager
 from .main import main, ensure_slam_running, check_prerequisites, start_driver
@@ -20,7 +20,7 @@ __all__ = [
     'FSMAvoider',
     'State',
     'FrontierExplorer',
-    'FrontierCandidate',
+    'Frontier',
     'ExplorationTracker',
     'StuckDetector',
     'VirtualObstacle',
