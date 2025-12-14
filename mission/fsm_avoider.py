@@ -176,7 +176,11 @@ class FSMAvoider:
                         print(f"\n[AVOID] Obstacle at {front_min:.2f}m, turning {self.committed_direction}")
                         self.obstacles_avoided += 1
 
-                    safe_w = 0.5 if self.committed_direction == "left" else -0.5
+                        # Report obstacle to waypoint navigator - may skip waypoint
+                        self.waypoint_nav.report_obstacle()
+
+                    # Gentler turn for smoother avoidance
+                    safe_w = 0.4 if self.committed_direction == "left" else -0.4
 
                 else:
                     self.state = State.FORWARD
@@ -252,5 +256,6 @@ class FSMAvoider:
         print(f"Unique cells: {stats['unique_cells']}")
         print(f"Revisit rate: {stats['revisit_pct']:.1f}%")
         print(f"Waypoints reached: {wp_stats['waypoints_reached']}")
+        print(f"Waypoints skipped: {wp_stats['waypoints_skipped']}")
         print(f"Virtual obstacles: {self.virtual_obstacles.count()}")
         print(f"Obstacles avoided: {self.obstacles_avoided}")

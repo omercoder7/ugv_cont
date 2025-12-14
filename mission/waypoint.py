@@ -35,6 +35,7 @@ class WaypointNavigator:
     Manages waypoints for exploration.
 
     Places waypoints at furthest free distance, robot steers toward them.
+    Skips waypoints when path is blocked or area is obstacle-dense.
     """
 
     def __init__(self, reach_threshold: float = 0.5, min_waypoint_dist: float = 1.0):
@@ -47,6 +48,9 @@ class WaypointNavigator:
         self.reach_threshold = reach_threshold
         self.min_waypoint_dist = min_waypoint_dist
         self.waypoints_reached = 0
+        self.waypoints_skipped = 0
+        self.obstacle_encounters = 0  # Count obstacles while heading to waypoint
+        self.max_obstacle_encounters = 3  # Skip waypoint after this many obstacles
 
     def update_waypoint(self, robot_x: float, robot_y: float, robot_heading: float,
                         sectors: List[float], num_sectors: int = 12) -> Optional[Waypoint]:
@@ -71,6 +75,7 @@ class WaypointNavigator:
                 print(f"\n[WAYPOINT] Reached ({self.current_waypoint.x:.1f}, {self.current_waypoint.y:.1f})")
                 self.waypoints_reached += 1
                 self.current_waypoint = None
+                self.obstacle_encounters = 0  # Reset for next waypoint
 
         # Create new waypoint if none exists
         if self.current_waypoint is None:
@@ -148,19 +153,60 @@ class WaypointNavigator:
             angle_error += 2 * math.pi
 
         # Convert to angular velocity (proportional control)
-        # Limit to reasonable range
-        angular_bias = max(-0.3, min(0.3, angle_error * 0.5))
+        # Gentle steering - limit to small values for straighter paths
+        angular_bias = max(-0.15, min(0.15, angle_error * 0.3))
 
         dist = self.current_waypoint.distance_to(robot_x, robot_y)
         return angular_bias, dist
 
+    def report_obstacle(self) -> bool:
+        """
+        Report encountering an obstacle while heading to waypoint.
+
+        Returns:
+            True if waypoint was skipped due to too many obstacles
+        """
+        self.obstacle_encounters += 1
+
+        if self.obstacle_encounters >= self.max_obstacle_encounters:
+            if self.current_waypoint:
+                print(f"\n[WAYPOINT] Skipping - too many obstacles ({self.obstacle_encounters})")
+                self.waypoints_skipped += 1
+                self.current_waypoint = None
+                self.obstacle_encounters = 0
+                return True
+        return False
+
+    def check_path_blocked(self, front_distance: float, danger_threshold: float) -> bool:
+        """
+        Check if path to waypoint appears blocked.
+
+        Args:
+            front_distance: Current front sensor reading
+            danger_threshold: Threshold for obstacle detection
+
+        Returns:
+            True if waypoint should be skipped
+        """
+        if self.current_waypoint is None:
+            return False
+
+        # If we keep hitting obstacles, skip this waypoint
+        if front_distance < danger_threshold:
+            return self.report_obstacle()
+        return False
+
     def clear_waypoint(self):
         """Clear current waypoint (e.g., when stuck)."""
+        if self.current_waypoint:
+            self.waypoints_skipped += 1
         self.current_waypoint = None
+        self.obstacle_encounters = 0
 
     def get_stats(self) -> dict:
         """Get navigation statistics."""
         return {
             'waypoints_reached': self.waypoints_reached,
+            'waypoints_skipped': self.waypoints_skipped,
             'has_waypoint': self.current_waypoint is not None
         }
