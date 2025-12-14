@@ -8,6 +8,7 @@ Features:
 - Exploration bias toward unvisited areas
 """
 
+import math
 import time
 from enum import Enum, auto
 from typing import Optional, List, Tuple
@@ -62,6 +63,11 @@ class FSMAvoider:
         self.committed_direction: Optional[str] = None
         self.commit_time: float = 0
         self.commit_duration: float = 1.5
+
+        # Path memory - remember where we were heading before avoidance
+        self.target_heading: Optional[float] = None
+        self.avoid_start_time: float = 0
+        self.max_avoid_duration: float = 5.0  # Dead end if avoiding longer than this
 
         # Exploration and virtual obstacles (separate modules)
         self.explorer = ExplorationTracker(grid_resolution=0.5)
@@ -165,30 +171,70 @@ class FSMAvoider:
 
                 elif front_min < self.danger_threshold:
                     self.state = State.AVOIDING
-                    safe_v = 0.0
 
                     if self.committed_direction is None:
+                        # Save current heading as target to return to after avoidance
+                        if self.current_heading is not None:
+                            self.target_heading = self.current_heading
+
+                        # Choose direction based on which side has more space
                         if sectors[1] < sectors[11]:
-                            self.committed_direction = "right"
-                        else:
                             self.committed_direction = "left"
+                        else:
+                            self.committed_direction = "right"
                         self.commit_time = time.time()
-                        print(f"\n[AVOID] Obstacle at {front_min:.2f}m, turning {self.committed_direction}")
+                        self.avoid_start_time = time.time()
+                        print(f"\n[AVOID] Obstacle at {front_min:.2f}m, steering {self.committed_direction}")
                         self.obstacles_avoided += 1
 
                         # Report obstacle to waypoint navigator - may skip waypoint
                         self.waypoint_nav.report_obstacle()
 
-                    # Gentler turn for smoother avoidance
-                    safe_w = 0.4 if self.committed_direction == "left" else -0.4
+                    # Dead end detection - if avoiding for too long, it's blocked
+                    avoid_duration = time.time() - self.avoid_start_time
+                    if avoid_duration > self.max_avoid_duration:
+                        # Dead end - turn around completely
+                        print(f"\n[DEAD END] Avoiding for {avoid_duration:.1f}s, turning around")
+                        self.committed_direction = None
+                        self.target_heading = None
+                        # Force backup will handle turning around
+                        front_min = 0.2  # Trigger backup
+
+                    # Keep moving while steering gently around obstacle
+                    # Slow down based on how close we are
+                    speed_factor = (front_min - self.backup_threshold) / (self.danger_threshold - self.backup_threshold)
+                    speed_factor = max(0.2, min(1.0, speed_factor))  # 20-100% speed
+                    safe_v = self.linear_speed * speed_factor
+
+                    # Gentle steering - just enough to go around
+                    safe_w = 0.3 if self.committed_direction == "left" else -0.3
 
                 else:
                     self.state = State.FORWARD
 
                     if self.committed_direction:
                         if time.time() - self.commit_time > self.commit_duration:
-                            print(f"\n[CLEAR] Path clear")
+                            print(f"\n[CLEAR] Path clear, returning to original heading")
                             self.committed_direction = None
+
+                    # After avoidance: steer back toward original path
+                    if self.target_heading is not None and self.current_heading is not None:
+                        # Calculate angle difference to original heading
+                        angle_diff = self.target_heading - self.current_heading
+
+                        # Normalize to [-pi, pi]
+                        while angle_diff > math.pi:
+                            angle_diff -= 2 * math.pi
+                        while angle_diff < -math.pi:
+                            angle_diff += 2 * math.pi
+
+                        # If close enough to original heading, clear target
+                        if abs(angle_diff) < 0.15:  # ~8 degrees
+                            self.target_heading = None
+                        else:
+                            # Steer back toward original heading
+                            return_bias = max(-0.2, min(0.2, angle_diff * 0.5))
+                            safe_w += return_bias
 
                     # Waypoint navigation - steer toward furthest free distance
                     if self.current_pos and self.current_heading is not None:
@@ -197,11 +243,12 @@ class FSMAvoider:
                             self.current_pos[0], self.current_pos[1],
                             self.current_heading, sectors, NUM_SECTORS)
 
-                        # Get steering toward waypoint
-                        waypoint_bias, wp_dist = self.waypoint_nav.get_steering(
-                            self.current_pos[0], self.current_pos[1],
-                            self.current_heading)
-                        safe_w += waypoint_bias
+                        # Get steering toward waypoint (only if not returning to path)
+                        if self.target_heading is None:
+                            waypoint_bias, wp_dist = self.waypoint_nav.get_steering(
+                                self.current_pos[0], self.current_pos[1],
+                                self.current_heading)
+                            safe_w += waypoint_bias
 
                 # 4. ACT
                 send_velocity_cmd(safe_v, safe_w)
@@ -235,7 +282,9 @@ class FSMAvoider:
             send_velocity_cmd(0.0, turn_dir)
             time.sleep(0.1)
 
+        # Clear path memory - we've changed direction significantly
         self.committed_direction = None
+        self.target_heading = None
 
     def emergency_stop(self):
         """Stop the robot."""
