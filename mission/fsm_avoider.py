@@ -247,6 +247,36 @@ class FSMAvoider:
                             print(f"\n[CLEAR] Path clear")
                             self.committed_direction = None
 
+                    # RETURN TO PATH: Steer back to original heading after avoidance
+                    # (Stanley controller style - proportional heading correction)
+                    if self.target_heading is not None and self.current_heading is not None:
+                        # Calculate heading error
+                        heading_error = self.target_heading - self.current_heading
+
+                        # Normalize to [-pi, pi]
+                        while heading_error > math.pi:
+                            heading_error -= 2 * math.pi
+                        while heading_error < -math.pi:
+                            heading_error += 2 * math.pi
+
+                        # If close enough to original heading, clear target
+                        if abs(heading_error) < 0.1:  # ~6 degrees
+                            print(f"\n[PATH] Returned to original heading")
+                            self.target_heading = None
+                        else:
+                            # Proportional steering correction (Stanley style)
+                            # Kp = 0.5, limit to [-0.25, 0.25] rad/s
+                            correction = max(-0.25, min(0.25, heading_error * 0.5))
+                            safe_w += correction
+                            # Skip frontier exploration while returning to path
+                            send_velocity_cmd(safe_v, safe_w)
+                            # Status
+                            stats = self.explorer.get_stats()
+                            status = f"[{self.iteration:3d}] FWD front={front_min:.2f}m RETURNING err={math.degrees(heading_error):.0f}°"
+                            print(f"\r{status}", end="", flush=True)
+                            time.sleep(0.1)
+                            continue
+
                     # Frontier-based exploration (like explore_lite)
                     if self.current_pos and self.current_heading is not None:
                         # PROACTIVE dead-end detection - check BEFORE entering
@@ -346,9 +376,10 @@ class FSMAvoider:
             if obs:
                 print(f"[BACKUP] Virtual obstacle placed to block dead end")
 
-        # Clear path memory - we've changed direction significantly
+        # Clear committed direction (target_heading preserved for return-to-path)
         self.committed_direction = None
-        self.target_heading = None
+        # Note: target_heading is NOT cleared here - allows robot to return to original path
+        # Dead-end cases clear target_heading explicitly before calling _execute_backup
 
     def _calculate_escape_direction(self, sectors: List[float]) -> float:
         """
