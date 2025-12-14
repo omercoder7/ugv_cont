@@ -210,8 +210,10 @@ class FSMAvoider:
                         print(f"\n[DEAD END] Avoiding for {avoid_duration:.1f}s, turning around")
                         self.committed_direction = None
                         self.target_heading = None
-                        # Force backup will handle turning around
-                        front_min = 0.2  # Trigger backup
+                        # Execute backup immediately
+                        self._execute_backup(sectors)
+                        self.frontier.reset()
+                        continue
 
                     # Keep moving while steering gently around obstacle
                     # Slow down based on how close we are
@@ -219,8 +221,14 @@ class FSMAvoider:
                     speed_factor = max(0.2, min(1.0, speed_factor))  # 20-100% speed
                     safe_v = self.linear_speed * speed_factor
 
-                    # Gentle steering - just enough to go around
-                    safe_w = 0.3 if self.committed_direction == "left" else -0.3
+                    # Gentle steering - check committed_direction is set
+                    if self.committed_direction == "left":
+                        safe_w = 0.3
+                    elif self.committed_direction == "right":
+                        safe_w = -0.3
+                    else:
+                        # No direction committed - use sector data
+                        safe_w = 0.3 if sectors[11] > sectors[1] else -0.3
 
                 else:
                     self.state = State.FORWARD
