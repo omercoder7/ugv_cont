@@ -1,11 +1,14 @@
 """
-Simple obstacle avoidance with exploration efficiency.
+Frontier-based obstacle avoidance with exploration efficiency.
+
+Based on explore_lite and WFD (Wavefront Frontier Detector) algorithms.
+Avoids dead ends proactively by steering toward frontiers (unexplored areas).
 
 Features:
+- Frontier-based exploration (like explore_lite)
 - Direction commitment to prevent oscillation
 - Visited cell tracking to avoid revisiting
 - Virtual obstacles for invisible obstacles
-- Exploration bias toward unvisited areas
 """
 
 import math
@@ -19,7 +22,7 @@ from .avoider.lidar import compute_sector_distances
 from .constants import ROBOT_WIDTH, NUM_SECTORS, LIDAR_FRONT_OFFSET
 from .exploration import ExplorationTracker
 from .virtual_obstacles import VirtualObstacleManager
-from .waypoint import WaypointNavigator
+from .frontier import FrontierExplorer
 
 
 class State(Enum):
@@ -32,10 +35,11 @@ class State(Enum):
 
 class FSMAvoider:
     """
-    Obstacle avoidance with exploration efficiency.
+    Frontier-based obstacle avoidance with exploration efficiency.
 
     Uses:
-    - ExplorationTracker: visited cells, stuck detection, exploration bias
+    - FrontierExplorer: frontier detection, dead end avoidance (like explore_lite)
+    - ExplorationTracker: visited cells, stuck detection
     - VirtualObstacleManager: invisible obstacle tracking
     - ProObstacleAvoider: TTC and environment detection
     """
@@ -69,10 +73,16 @@ class FSMAvoider:
         self.avoid_start_time: float = 0
         self.max_avoid_duration: float = 5.0  # Dead end if avoiding longer than this
 
-        # Exploration and virtual obstacles (separate modules)
+        # Exploration modules (separate files for easier debugging)
         self.explorer = ExplorationTracker(grid_resolution=0.5)
         self.virtual_obstacles = VirtualObstacleManager(default_radius=0.3, default_ttl=120.0)
-        self.waypoint_nav = WaypointNavigator(reach_threshold=0.5, min_waypoint_dist=1.0)
+        self.frontier = FrontierExplorer(
+            num_sectors=NUM_SECTORS,
+            min_frontier_distance=0.8,
+            distance_weight=1.0,
+            novelty_weight=2.0,  # Prefer unexplored areas
+            turn_weight=0.3
+        )
 
         # State tracking
         self.state = State.STOPPED
@@ -87,7 +97,8 @@ class FSMAvoider:
     def run(self):
         """Main sense-compute-act loop."""
         print("=" * 55)
-        print("OBSTACLE AVOIDANCE WITH EXPLORATION")
+        print("FRONTIER-BASED EXPLORATION")
+        print("(like explore_lite)")
         print("=" * 55)
         print(f"Speed: {self.linear_speed} m/s")
         print(f"Danger threshold: {self.danger_threshold:.2f}m (LiDAR)")
@@ -214,52 +225,44 @@ class FSMAvoider:
 
                     if self.committed_direction:
                         if time.time() - self.commit_time > self.commit_duration:
-                            print(f"\n[CLEAR] Path clear, returning to original heading")
+                            print(f"\n[CLEAR] Path clear")
                             self.committed_direction = None
 
-                    # After avoidance: steer back toward original path
-                    if self.target_heading is not None and self.current_heading is not None:
-                        # Calculate angle difference to original heading
-                        angle_diff = self.target_heading - self.current_heading
-
-                        # Normalize to [-pi, pi]
-                        while angle_diff > math.pi:
-                            angle_diff -= 2 * math.pi
-                        while angle_diff < -math.pi:
-                            angle_diff += 2 * math.pi
-
-                        # If close enough to original heading, clear target
-                        if abs(angle_diff) < 0.15:  # ~8 degrees
-                            self.target_heading = None
-                        else:
-                            # Steer back toward original heading
-                            return_bias = max(-0.2, min(0.2, angle_diff * 0.5))
-                            safe_w += return_bias
-
-                    # Waypoint navigation - steer toward furthest free distance
+                    # Frontier-based exploration (like explore_lite)
                     if self.current_pos and self.current_heading is not None:
-                        # Update/create waypoint
-                        self.waypoint_nav.update_waypoint(
-                            self.current_pos[0], self.current_pos[1],
-                            self.current_heading, sectors, NUM_SECTORS)
+                        # Find best frontier to explore
+                        best_sector, is_dead_end = self.frontier.select_best_frontier(
+                            sectors=sectors,
+                            visited_cells=self.explorer.visited,
+                            robot_x=self.current_pos[0],
+                            robot_y=self.current_pos[1],
+                            robot_heading=self.current_heading,
+                            grid_resolution=self.explorer.grid_res
+                        )
 
-                        # Get steering toward waypoint (only if not returning to path)
-                        if self.target_heading is None:
-                            waypoint_bias, wp_dist = self.waypoint_nav.get_steering(
-                                self.current_pos[0], self.current_pos[1],
-                                self.current_heading)
-                            safe_w += waypoint_bias
+                        if is_dead_end:
+                            # No good frontiers - turn around proactively
+                            print(f"\n[DEAD END] No frontiers, turning around")
+                            self._execute_backup(sectors)
+                            self.frontier.reset()
+                            continue
+
+                        if best_sector is not None:
+                            # Steer toward best frontier
+                            frontier_steer = self.frontier.get_steering_toward_frontier(
+                                best_sector, sectors)
+                            safe_w += frontier_steer
 
                 # 4. ACT
                 send_velocity_cmd(safe_v, safe_w)
 
                 # Status display
                 stats = self.explorer.get_stats()
-                wp_stats = self.waypoint_nav.get_stats()
+                frontier_stats = self.frontier.get_stats()
                 state_abbr = self.state.name[:3]
-                wp_str = f"wp={wp_stats['waypoints_reached']}" if wp_stats['has_waypoint'] else "wp=--"
+                dead_ends = frontier_stats['consecutive_dead_ends']
                 status = (f"[{self.iteration:3d}] {state_abbr} front={front_min:.2f}m "
-                         f"cells={stats['unique_cells']} {wp_str} "
+                         f"cells={stats['unique_cells']} revisit={stats['revisit_pct']:.0f}% "
                          f"virt={self.virtual_obstacles.count()}")
                 print(f"\r{status}", end="", flush=True)
 
@@ -296,15 +299,13 @@ class FSMAvoider:
         """Print final statistics."""
         elapsed = time.time() - self.start_time
         stats = self.explorer.get_stats()
-        wp_stats = self.waypoint_nav.get_stats()
         print(f"\n{'=' * 55}")
-        print(f"EXPLORATION COMPLETE")
+        print(f"FRONTIER EXPLORATION COMPLETE")
         print(f"{'=' * 55}")
         print(f"Duration: {elapsed:.1f}s")
         print(f"Iterations: {self.iteration}")
         print(f"Unique cells: {stats['unique_cells']}")
+        print(f"Total visits: {stats['total_visits']}")
         print(f"Revisit rate: {stats['revisit_pct']:.1f}%")
-        print(f"Waypoints reached: {wp_stats['waypoints_reached']}")
-        print(f"Waypoints skipped: {wp_stats['waypoints_skipped']}")
         print(f"Virtual obstacles: {self.virtual_obstacles.count()}")
         print(f"Obstacles avoided: {self.obstacles_avoided}")
