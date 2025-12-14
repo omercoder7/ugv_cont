@@ -89,6 +89,11 @@ class FSMAvoider:
         self.current_pos: Optional[Tuple[float, float]] = None
         self.current_heading: Optional[float] = None
 
+        # Entry tracking - remember where we came from for escape
+        self.entry_heading: Optional[float] = None  # Heading when entering new area
+        self.entry_pos: Optional[Tuple[float, float]] = None
+        self.last_open_heading: Optional[float] = None  # Last heading when path was clear
+
         # Statistics
         self.start_time = 0.0
         self.iteration = 0
@@ -220,6 +225,10 @@ class FSMAvoider:
                 else:
                     self.state = State.FORWARD
 
+                    # Track last open heading - used for escape direction
+                    if self.current_heading is not None and front_min > 0.8:
+                        self.last_open_heading = self.current_heading
+
                     if self.committed_direction:
                         if time.time() - self.commit_time > self.commit_duration:
                             print(f"\n[CLEAR] Path clear")
@@ -292,19 +301,117 @@ class FSMAvoider:
             self._print_stats()
 
     def _execute_backup(self, sectors: List[float]):
-        """Execute backup maneuver."""
+        """
+        Execute backup maneuver with smart direction selection.
+
+        Based on Nav2 recovery behaviors and Bug algorithm principles:
+        1. Backup first
+        2. Turn toward escape direction (where we came from / visited cells)
+        3. Use virtual obstacle to prevent going wrong way
+        """
+        # Step 1: Backup
+        print(f"\n[BACKUP] Reversing...")
         for _ in range(10):
             send_velocity_cmd(-0.05, 0.0)
             time.sleep(0.1)
 
-        turn_dir = -0.6 if sectors[1] < sectors[11] else 0.6
-        for _ in range(8):
+        # Step 2: Determine best escape direction
+        turn_dir = self._calculate_escape_direction(sectors)
+
+        # Step 3: Turn toward escape
+        turn_amount = 12 if abs(turn_dir) > 0.4 else 8  # More turn for bigger angle
+        print(f"[BACKUP] Turning {'left' if turn_dir > 0 else 'right'}")
+        for _ in range(turn_amount):
             send_velocity_cmd(0.0, turn_dir)
             time.sleep(0.1)
+
+        # Step 4: Place virtual obstacle to prevent returning to dead end
+        if self.current_pos and self.current_heading is not None:
+            # Place virtual obstacle in front (where we were stuck)
+            obs = self.virtual_obstacles.add_obstacle(
+                self.current_pos[0], self.current_pos[1], self.current_heading)
+            if obs:
+                print(f"[BACKUP] Virtual obstacle placed to block dead end")
 
         # Clear path memory - we've changed direction significantly
         self.committed_direction = None
         self.target_heading = None
+
+    def _calculate_escape_direction(self, sectors: List[float]) -> float:
+        """
+        Calculate best direction to escape dead end.
+
+        Priority:
+        1. Direction toward visited cells (where we came from)
+        2. Direction toward last open heading
+        3. Direction with more LiDAR space
+        """
+        # Method 1: Use visited cells to find way back
+        if self.current_pos and self.current_heading is not None:
+            best_sector = None
+            best_visit_score = -1
+
+            for sector_idx in range(NUM_SECTORS):
+                if sectors[sector_idx] < 0.4:  # Skip blocked directions
+                    continue
+
+                # Calculate world angle for this sector
+                sector_angle = sector_idx * 2 * math.pi / NUM_SECTORS
+                if sector_angle > math.pi:
+                    sector_angle -= 2 * math.pi
+                world_angle = self.current_heading + sector_angle
+
+                # Count visited cells in this direction (more = way back)
+                visit_score = 0
+                for dist in [0.3, 0.6, 0.9]:
+                    x = self.current_pos[0] + dist * math.cos(world_angle)
+                    y = self.current_pos[1] + dist * math.sin(world_angle)
+                    cell = (int(x / self.explorer.grid_res),
+                            int(y / self.explorer.grid_res))
+                    visit_score += self.explorer.visited.get(cell, 0)
+
+                if visit_score > best_visit_score:
+                    best_visit_score = visit_score
+                    best_sector = sector_idx
+
+            # If found visited cells, turn toward them
+            if best_sector is not None and best_visit_score > 0:
+                sector_angle = best_sector * 2 * math.pi / NUM_SECTORS
+                if sector_angle > math.pi:
+                    sector_angle -= 2 * math.pi
+                print(f"[ESCAPE] Turning toward visited cells (sector {best_sector})")
+                return 0.5 if sector_angle > 0 else -0.5
+
+        # Method 2: Turn toward last open heading (where we came from)
+        if self.last_open_heading is not None and self.current_heading is not None:
+            angle_diff = self.last_open_heading - self.current_heading
+            # Normalize to [-pi, pi]
+            while angle_diff > math.pi:
+                angle_diff -= 2 * math.pi
+            while angle_diff < -math.pi:
+                angle_diff += 2 * math.pi
+
+            if abs(angle_diff) > 0.3:  # Significant difference
+                print(f"[ESCAPE] Turning toward last open heading")
+                return 0.5 if angle_diff > 0 else -0.5
+
+        # Method 3: Fallback - turn toward more open space
+        # But prefer back directions (sectors 4-8) over front
+        back_left = sectors[8] if len(sectors) > 8 else sectors[7]
+        back_right = sectors[4] if len(sectors) > 4 else sectors[3]
+
+        if back_left > back_right and back_left > 0.4:
+            print(f"[ESCAPE] Turning left toward open back-left")
+            return 0.5
+        elif back_right > 0.4:
+            print(f"[ESCAPE] Turning right toward open back-right")
+            return -0.5
+
+        # Final fallback - use side sectors
+        if sectors[11] > sectors[1]:
+            return 0.6
+        else:
+            return -0.6
 
     def emergency_stop(self):
         """Stop the robot."""
