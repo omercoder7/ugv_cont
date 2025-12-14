@@ -198,9 +198,6 @@ class FSMAvoider:
                         print(f"\n[AVOID] Obstacle at {front_min:.2f}m, steering {self.committed_direction}")
                         self.obstacles_avoided += 1
 
-                        # Report obstacle to waypoint navigator - may skip waypoint
-                        self.waypoint_nav.report_obstacle()
-
                     # Dead end detection - if avoiding for too long, it's blocked
                     avoid_duration = time.time() - self.avoid_start_time
                     if avoid_duration > self.max_avoid_duration:
