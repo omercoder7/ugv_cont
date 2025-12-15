@@ -345,6 +345,56 @@ class FrontierExplorer:
         """
         return [(f.sector, math.degrees(f.angle), f.cost) for f in self.last_frontiers]
 
+    def calculate_side_potential(self, sectors: List[float], side_sectors: List[int],
+                                  visited_cells: Dict[Tuple[int, int], int],
+                                  robot_x: float, robot_y: float,
+                                  robot_heading: float, grid_res: float) -> float:
+        """
+        Calculate exploration potential for a set of sectors (e.g., left or right side).
+
+        Higher potential = more unexplored area in that direction.
+
+        Args:
+            sectors: All sector distances
+            side_sectors: List of sector indices to evaluate (e.g., [1,2,3] for left)
+            visited_cells: Grid of visited cell counts
+            robot_x, robot_y: Robot position
+            robot_heading: Robot heading in radians
+            grid_res: Grid resolution in meters
+
+        Returns:
+            Exploration potential score (higher = better to explore)
+        """
+        total_potential = 0.0
+
+        for sector_idx in side_sectors:
+            distance = sectors[sector_idx]
+
+            # Skip blocked sectors
+            if distance < self.min_frontier_distance:
+                continue
+
+            # Calculate info gain for this sector
+            info_gain = self.calculate_info_gain(
+                sectors, sector_idx, visited_cells,
+                robot_x, robot_y, robot_heading, grid_res
+            )
+
+            # Estimate frontier size
+            size = self.estimate_frontier_size(sectors, sector_idx)
+
+            # Potential = distance bonus + info gain + size
+            # (Similar to inverse of cost function, but for comparison)
+            sector_potential = (
+                min(distance / self.max_frontier_distance, 1.0) * 0.3 +  # Distance bonus
+                info_gain * 0.5 +  # Info gain is most important
+                min(size / 1.0, 1.0) * 0.2  # Size bonus
+            )
+
+            total_potential += sector_potential
+
+        return total_potential
+
     def mark_explored(self):
         """Mark current target as explored (reached)."""
         if self.current_target is not None:
