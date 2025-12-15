@@ -88,18 +88,27 @@ class FrontierExplorer:
         self.last_progress_time: float = 0
         self.last_progress_pos: Optional[Tuple[float, float]] = None
 
+        # Store all frontiers for telemetry
+        self.last_frontiers: List[Frontier] = []
+
         # Statistics
         self.frontiers_explored = 0
         self.frontiers_abandoned = 0
-        self.dead_ends_detected = 0
 
     def sector_to_angle(self, sector: int) -> float:
-        """Convert sector index to angle from front (radians, -pi to pi)."""
-        # Sector 0 = front, increases counterclockwise
-        angle = sector * 2 * math.pi / self.num_sectors
-        if angle > math.pi:
-            angle -= 2 * math.pi
-        return angle
+        """Convert sector index to angle from front (radians, -pi to pi).
+
+        Sectors: 0=front, 1-6=left (positive angles), 7-11=right (negative angles)
+        Convention: positive=left, negative=right
+        """
+        if sector == 0:
+            return 0.0
+        elif sector <= self.num_sectors // 2:
+            # Left side and back: positive angle
+            return sector * 2 * math.pi / self.num_sectors
+        else:
+            # Right side: negative angle
+            return -(self.num_sectors - sector) * 2 * math.pi / self.num_sectors
 
     def estimate_frontier_size(self, sectors: List[float], sector_idx: int) -> float:
         """
@@ -288,8 +297,10 @@ class FrontierExplorer:
             robot_x, robot_y, robot_heading, grid_res
         )
 
+        # Store all frontiers for telemetry
+        self.last_frontiers = frontiers
+
         if not frontiers:
-            self.dead_ends_detected += 1
             return None, True
 
         # Select best frontier
@@ -325,6 +336,15 @@ class FrontierExplorer:
 
         return angular
 
+    def get_all_frontier_costs(self) -> List[Tuple[int, float, float]]:
+        """
+        Get all frontier costs for telemetry.
+
+        Returns:
+            List of (sector, angle_degrees, cost) tuples sorted by cost
+        """
+        return [(f.sector, math.degrees(f.angle), f.cost) for f in self.last_frontiers]
+
     def mark_explored(self):
         """Mark current target as explored (reached)."""
         if self.current_target is not None:
@@ -337,140 +357,13 @@ class FrontierExplorer:
         self.current_target = None
         self.last_progress_pos = None
         self.last_progress_time = 0
-
-    def detect_dead_end_ahead(self, sectors: List[float],
-                               threshold: float = 0.6) -> Tuple[bool, str]:
-        """
-        Proactively detect if we're heading toward a dead end.
-
-        Patterns that indicate dead end ahead:
-        1. Corridor: Front open, both sides blocked
-        2. U-shape: Left and right blocked, only front open
-        3. Narrowing: Front getting narrower (converging walls)
-
-        Returns:
-            (is_dead_end, pattern_name)
-        """
-        # Get key sector distances
-        front = sectors[0]
-        front_left = sectors[11]
-        front_right = sectors[1]
-        left = sectors[10] if len(sectors) > 10 else sectors[9]
-        right = sectors[2]
-        back_left = sectors[8] if len(sectors) > 8 else sectors[7]
-        back_right = sectors[4] if len(sectors) > 4 else sectors[3]
-
-        # Pattern 1: Corridor (front open, sides blocked)
-        # This often leads to dead ends
-        if (front > threshold * 2 and
-            front_left < threshold and front_right < threshold and
-            left < threshold and right < threshold):
-            return True, "corridor"
-
-        # Pattern 2: U-shape trap (surrounded on 3 sides)
-        blocked_count = sum(1 for d in [front_left, left, back_left,
-                                        front_right, right, back_right]
-                           if d < threshold)
-        if blocked_count >= 5 and front > threshold:
-            return True, "u_shape"
-
-        # Pattern 3: Narrowing passage (walls converging)
-        if (front > threshold and
-            front_left < front * 0.5 and front_right < front * 0.5):
-            # Walls are closer on sides than front suggests
-            # This indicates a narrowing passage
-            return True, "narrowing"
-
-        # Pattern 4: Dead-end pocket (front blocked, only came from behind)
-        if (front < threshold and
-            front_left < threshold and front_right < threshold):
-            # Check if back is open (we came from there)
-            back = sectors[6] if len(sectors) > 6 else sectors[5]
-            if back > threshold:
-                return True, "pocket"
-
-        return False, ""
-
-    def should_avoid_direction(self, sectors: List[float],
-                               target_sector: int,
-                               visited_cells: Dict[Tuple[int, int], int],
-                               robot_x: float, robot_y: float,
-                               robot_heading: float,
-                               grid_res: float) -> bool:
-        """
-        Check if we should avoid going in target direction.
-
-        Returns True if:
-        - Direction leads to heavily visited area (likely already explored)
-        - Direction shows dead-end pattern
-        """
-        # Check if target direction is toward visited area
-        angle = self.sector_to_angle(target_sector)
-        world_angle = robot_heading + angle
-
-        # Sample cells in target direction
-        visit_count = 0
-        for dist in [0.5, 1.0, 1.5]:
-            x = robot_x + dist * math.cos(world_angle)
-            y = robot_y + dist * math.sin(world_angle)
-            cell = (int(x / grid_res), int(y / grid_res))
-            visit_count += visited_cells.get(cell, 0)
-
-        # If heavily visited, avoid this direction
-        if visit_count > 10:
-            return True
-
-        return False
-
-    def get_best_escape_direction(self, sectors: List[float],
-                                  visited_cells: Dict[Tuple[int, int], int],
-                                  robot_x: float, robot_y: float,
-                                  robot_heading: float,
-                                  grid_res: float) -> Optional[int]:
-        """
-        Find best direction to escape when in/near dead end.
-
-        Prefers:
-        1. Open directions (long LiDAR readings)
-        2. Unvisited areas
-        3. Away from where we came from
-        """
-        best_sector = None
-        best_score = -float('inf')
-
-        for sector_idx, distance in enumerate(sectors):
-            if distance < self.min_frontier_distance:
-                continue
-
-            # Calculate escape score
-            angle = self.sector_to_angle(sector_idx)
-            world_angle = robot_heading + angle
-
-            # Prefer back directions when escaping
-            # (we likely came from a good area)
-            back_bonus = 1.0 if abs(angle) > math.pi * 0.5 else 0.0
-
-            # Check visited cells
-            visit_penalty = 0
-            for dist in [0.5, 1.0]:
-                x = robot_x + dist * math.cos(world_angle)
-                y = robot_y + dist * math.sin(world_angle)
-                cell = (int(x / grid_res), int(y / grid_res))
-                visit_penalty += visited_cells.get(cell, 0) * 0.1
-
-            score = distance + back_bonus - visit_penalty
-
-            if score > best_score:
-                best_score = score
-                best_sector = sector_idx
-
-        return best_sector
+        self.last_frontiers = []
 
     def get_stats(self) -> dict:
         """Get exploration statistics."""
         return {
             'frontiers_explored': self.frontiers_explored,
             'frontiers_abandoned': self.frontiers_abandoned,
-            'dead_ends_detected': self.dead_ends_detected,
-            'has_target': self.current_target is not None
+            'has_target': self.current_target is not None,
+            'num_frontiers': len(self.last_frontiers)
         }

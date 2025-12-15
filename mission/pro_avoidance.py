@@ -40,6 +40,8 @@ class TTCResult:
     collision_sector: int  # Which sector has the collision
     is_critical: bool  # True if TTC < critical threshold
     recommended_speed: float  # Recommended speed based on TTC
+    sector_ttcs: Dict[int, float] = field(default_factory=dict)  # TTC per sector
+    critical_sectors: List[int] = field(default_factory=list)  # Sectors with TTC < critical
 
 
 @dataclass
@@ -97,7 +99,9 @@ class TimeToCollision:
                 collision_distance=float('inf'),
                 collision_sector=-1,
                 is_critical=False,
-                recommended_speed=1.0
+                recommended_speed=1.0,
+                sector_ttcs={},
+                critical_sectors=[]
             )
 
         num_sectors = len(sector_distances)
@@ -111,12 +115,15 @@ class TimeToCollision:
         min_ttc = float('inf')
         collision_sector = -1
         collision_distance = float('inf')
+        sector_ttcs = {}
+        critical_sectors = []
 
         for sector in sectors_to_check:
             dist = sector_distances[sector]
 
             # Skip blind spots and very far obstacles
             if dist <= 0.0 or dist > 5.0:
+                sector_ttcs[sector] = float('inf')
                 continue
 
             # Effective distance accounting for robot radius and safety margin
@@ -124,12 +131,16 @@ class TimeToCollision:
 
             if effective_dist <= 0:
                 # Already in collision zone!
+                sector_ttcs[sector] = 0.0
+                critical_sectors.append(sector)
                 return TTCResult(
                     ttc=0.0,
                     collision_distance=dist,
                     collision_sector=sector,
                     is_critical=True,
-                    recommended_speed=0.0
+                    recommended_speed=0.0,
+                    sector_ttcs={sector: 0.0},
+                    critical_sectors=[sector]
                 )
 
             # Calculate TTC for this sector
@@ -141,10 +152,15 @@ class TimeToCollision:
 
             if effective_speed > 0.01:
                 ttc = effective_dist / effective_speed
+                sector_ttcs[sector] = ttc
+                if ttc < self.critical_ttc:
+                    critical_sectors.append(sector)
                 if ttc < min_ttc:
                     min_ttc = ttc
                     collision_sector = sector
                     collision_distance = dist
+            else:
+                sector_ttcs[sector] = float('inf')
 
         # Determine criticality and recommended speed
         is_critical = min_ttc < self.critical_ttc
@@ -165,7 +181,9 @@ class TimeToCollision:
             collision_distance=collision_distance,
             collision_sector=collision_sector,
             is_critical=is_critical,
-            recommended_speed=recommended_speed
+            recommended_speed=recommended_speed,
+            sector_ttcs=sector_ttcs,
+            critical_sectors=critical_sectors
         )
 
     def _get_travel_arc_sectors(self, target_sector: int, angular_vel: float,
@@ -469,19 +487,21 @@ class RepulsiveField:
         self.influence_distance = influence_distance
         self.robot_radius = robot_radius
 
-    def calculate_repulsion(self, sector_distances: List[float]) -> Tuple[float, float]:
+    def calculate_repulsion(self, sector_distances: List[float]) -> Tuple[float, float, Dict[int, float]]:
         """
         Calculate net repulsive force from all obstacles.
 
         Returns:
-            (force_x, force_y) in robot frame (positive x = front)
+            (force_x, force_y, sector_magnitudes) in robot frame (positive x = front)
         """
         num_sectors = len(sector_distances)
         total_fx = 0.0
         total_fy = 0.0
+        sector_magnitudes = {}
 
         for sector, dist in enumerate(sector_distances):
             if dist <= 0 or dist > self.influence_distance:
+                sector_magnitudes[sector] = 0.0
                 continue
 
             # Angle of obstacle from robot
@@ -495,6 +515,7 @@ class RepulsiveField:
 
             # Cap magnitude to prevent extreme forces from very close obstacles
             magnitude = min(magnitude, 100.0)
+            sector_magnitudes[sector] = magnitude
 
             # Force points away from obstacle
             fx = -magnitude * math.cos(angle)
@@ -503,24 +524,24 @@ class RepulsiveField:
             total_fx += fx
             total_fy += fy
 
-        return total_fx, total_fy
+        return total_fx, total_fy, sector_magnitudes
 
     def get_velocity_adjustment(self, sector_distances: List[float],
                                 base_linear: float,
-                                base_angular: float) -> Tuple[float, float]:
+                                base_angular: float) -> Tuple[float, float, Dict[int, float]]:
         """
         Adjust velocity commands based on repulsive forces.
 
         Returns:
-            (adjusted_linear, adjusted_angular)
+            (adjusted_linear, adjusted_angular, sector_magnitudes)
         """
-        fx, fy = self.calculate_repulsion(sector_distances)
+        fx, fy, sector_magnitudes = self.calculate_repulsion(sector_distances)
 
         # Normalize force magnitude
         force_mag = math.sqrt(fx*fx + fy*fy)
 
         if force_mag < 0.1:
-            return base_linear, base_angular
+            return base_linear, base_angular, sector_magnitudes
 
         # Reduce forward speed based on forward repulsion
         # If fx is negative (obstacles in front), slow down
@@ -532,7 +553,7 @@ class RepulsiveField:
         angular_adjustment = -fy / force_mag * 0.3
         adjusted_angular = base_angular + angular_adjustment
 
-        return adjusted_linear, adjusted_angular
+        return adjusted_linear, adjusted_angular, sector_magnitudes
 
 
 class AdaptiveDWA:
@@ -912,6 +933,14 @@ class DirectionalMemory:
             if not self.successful_directions[sector]:
                 del self.successful_directions[sector]
 
+    def get_state(self) -> Dict:
+        """Get current memory state for telemetry."""
+        return {
+            "failed": {s: self.get_failure_score(s) for s in self.failed_directions},
+            "successful": {s: self.get_success_score(s) for s in self.successful_directions},
+            "current_attempt": self.current_attempt_sector
+        }
+
     def clear(self):
         """Clear all memory."""
         self.failed_directions.clear()
@@ -968,9 +997,12 @@ class ProObstacleAvoider:
         debug_info = {
             "ttc": None,
             "gaps": [],
-            "repulsion": (0, 0),
+            "gaps_full": [],  # Full GapInfo objects
+            "repulsion": (0, 0, {}),  # (fx, fy, sector_magnitudes)
             "environment": "unknown",
-            "mode": "normal"
+            "mode": "normal",
+            "dwa": {},
+            "memory": {}
         }
 
         # 1. Calculate time-to-collision
@@ -992,6 +1024,7 @@ class ProObstacleAvoider:
         # 3. Find navigable gaps
         gaps = self.gap_analyzer.find_gaps(sector_distances, min_distance)
         debug_info["gaps"] = [g.center_sector for g in gaps]
+        debug_info["gaps_full"] = gaps  # Full GapInfo objects for telemetry
 
         # 4. Find best gap
         best_gap = self.gap_analyzer.find_best_gap(
@@ -1026,11 +1059,14 @@ class ProObstacleAvoider:
         debug_info["dwa"] = dwa_breakdown
 
         # 7. Apply repulsive field adjustment
-        repel_linear, repel_angular = self.repulsive_field.get_velocity_adjustment(
+        repel_linear, repel_angular, sector_magnitudes = self.repulsive_field.get_velocity_adjustment(
             sector_distances, dwa_linear, dwa_angular
         )
-        fx, fy = self.repulsive_field.calculate_repulsion(sector_distances)
-        debug_info["repulsion"] = (fx, fy)
+        fx, fy, _ = self.repulsive_field.calculate_repulsion(sector_distances)
+        debug_info["repulsion"] = (fx, fy, sector_magnitudes)
+
+        # Add directional memory state
+        debug_info["memory"] = self.directional_memory.get_state()
 
         # 8. Apply TTC speed limiting
         safe_linear = min(repel_linear, base_linear * ttc_result.recommended_speed)
