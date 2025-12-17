@@ -260,7 +260,7 @@ rclpy.init()
 node = rclpy.create_node('goal_marker')
 pub = node.create_publisher(Marker, '/nav_goal', 10)
 m = Marker()
-m.header.frame_id = 'odom'
+m.header.frame_id = 'map'
 m.header.stamp = node.get_clock().now().to_msg()
 m.ns = 'goal'
 m.id = 0
