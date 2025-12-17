@@ -244,49 +244,22 @@ rclpy.shutdown()
 
 def publish_goal_marker(x: float, y: float, container: str = CONTAINER_NAME):
     """
-    Publish a goal point to /goal_pose topic.
+    Publish a goal point to /goal_pose topic (non-blocking).
     This is a standard ROS2 Nav2 topic that RViz displays by default.
 
     Args:
         x, y: World coordinates of the goal point
         container: Docker container name
     """
-    try:
-        subprocess.run(
-            ['docker', 'exec', container, 'bash', '-c',
-             f'''source /opt/ros/humble/setup.bash && python3 -c "
-import rclpy
-from geometry_msgs.msg import PoseStamped
-
-rclpy.init()
-node = rclpy.create_node('goal_pub')
-pub = node.create_publisher(PoseStamped, '/goal_pose', 10)
-
-# Wait for publisher setup
-import time
-time.sleep(0.1)
-
-pose = PoseStamped()
-pose.header.frame_id = 'odom'
-pose.header.stamp = node.get_clock().now().to_msg()
-pose.pose.position.x = {x}
-pose.pose.position.y = {y}
-pose.pose.position.z = 0.0
-pose.pose.orientation.w = 1.0
-
-# Publish a few times
-for _ in range(3):
-    pose.header.stamp = node.get_clock().now().to_msg()
-    pub.publish(pose)
-    rclpy.spin_once(node, timeout_sec=0.05)
-
-node.destroy_node()
-rclpy.shutdown()
-"'''],
-            capture_output=True, text=True, timeout=3
-        )
-    except:
-        pass
+    # Run in background to avoid blocking the main loop
+    subprocess.Popen(
+        ['docker', 'exec', container, 'bash', '-c',
+         f'source /opt/ros/humble/setup.bash && '
+         f'ros2 topic pub --once /goal_pose geometry_msgs/msg/PoseStamped '
+         f'"{{header: {{frame_id: odom}}, pose: {{position: {{x: {x}, y: {y}, z: 0.0}}, orientation: {{w: 1.0}}}}}}"'],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL
+    )
 
 
 def get_map_data(container: str = CONTAINER_NAME) -> Optional[dict]:

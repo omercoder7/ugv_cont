@@ -217,8 +217,11 @@ class NBVNavigator:
         best_score = -999
         best_sector = None
 
-        # Evaluate candidate points in each sector at various distances
-        for sector_idx in range(NUM_SECTORS):
+        # Evaluate candidate points in FRONT hemisphere only (±90° from front)
+        # Front sectors: 0, 1, 2, 3 (left-front) and 9, 10, 11 (right-front)
+        front_sectors = [0, 1, 2, 3, 9, 10, 11]
+
+        for sector_idx in front_sectors:
             sector_dist = sectors[sector_idx]
 
             if sector_dist < self.min_goal_dist + 0.2:
