@@ -16,11 +16,13 @@ No step-by-step reevaluation - commits to goals.
 
 import math
 import time
+import threading
+import subprocess
 from typing import Optional, List, Tuple, Dict, Set
 
 from .ros_interface import get_lidar_scan, send_velocity_cmd, get_odometry, publish_goal_marker
 from .avoider.lidar import compute_sector_distances
-from .constants import NUM_SECTORS
+from .constants import NUM_SECTORS, CONTAINER_NAME
 
 
 class NBVNavigator:
@@ -32,10 +34,13 @@ class NBVNavigator:
     """
 
     def __init__(self, linear_speed: float = 0.08, duration: float = 60.0,
-                 backup_threshold: float = 0.25, blocked_margin: float = 0.15):
+                 backup_threshold: float = 0.25, blocked_margin: float = 0.15,
+                 debug_marker: bool = False):
         self.linear_speed = linear_speed
         self.duration = duration
         self.running = False
+        self.debug_marker = debug_marker
+        self._marker_thread = None
 
         # Thresholds
         self.backup_threshold = backup_threshold
@@ -72,6 +77,52 @@ class NBVNavigator:
         self.goals_reached = 0
         self.backups = 0
 
+    def _start_marker_thread(self):
+        """Start background thread that continuously publishes goal marker."""
+        def publish_loop():
+            while self.running and self.debug_marker:
+                if self.goal_point:
+                    x, y = self.goal_point
+                    cmd = f'''source /opt/ros/humble/setup.bash && python3 -c "
+import rclpy
+from visualization_msgs.msg import Marker
+rclpy.init()
+node = rclpy.create_node('goal_marker')
+pub = node.create_publisher(Marker, '/nav_goal', 10)
+m = Marker()
+m.header.frame_id = 'odom'
+m.header.stamp = node.get_clock().now().to_msg()
+m.ns = 'goal'
+m.id = 0
+m.type = Marker.SPHERE
+m.action = Marker.ADD
+m.pose.position.x = {x}
+m.pose.position.y = {y}
+m.pose.position.z = 0.1
+m.pose.orientation.w = 1.0
+m.scale.x = 0.2
+m.scale.y = 0.2
+m.scale.z = 0.2
+m.color.r = 0.0
+m.color.g = 1.0
+m.color.b = 0.0
+m.color.a = 1.0
+m.lifetime.sec = 2
+for _ in range(3):
+    pub.publish(m)
+    rclpy.spin_once(node, timeout_sec=0.02)
+node.destroy_node()
+rclpy.shutdown()
+"'''
+                    subprocess.run(
+                        ['docker', 'exec', CONTAINER_NAME, 'bash', '-c', cmd],
+                        capture_output=True, timeout=3
+                    )
+                time.sleep(0.5)  # Publish every 0.5s
+
+        self._marker_thread = threading.Thread(target=publish_loop, daemon=True)
+        self._marker_thread.start()
+
     def run(self):
         """Main loop: select goal -> drive to goal -> repeat."""
         print("=" * 55)
@@ -83,6 +134,11 @@ class NBVNavigator:
 
         self.running = True
         self.start_time = time.time()
+
+        # Start marker publishing thread if debug mode
+        if self.debug_marker:
+            print("[DEBUG] Marker publishing enabled - check /nav_goal in RViz")
+            self._start_marker_thread()
 
         send_velocity_cmd(0.0, 0.0)
         time.sleep(0.2)
@@ -576,10 +632,12 @@ class NBVNavigator:
 
 
 def run_simple_nav(speed: float = 0.08, duration: float = 60.0,
-                   backup_threshold: float = 0.25, blocked_margin: float = 0.15):
+                   backup_threshold: float = 0.25, blocked_margin: float = 0.15,
+                   debug_marker: bool = False):
     """Entry point for NBV navigation."""
     nav = NBVNavigator(linear_speed=speed, duration=duration,
-                       backup_threshold=backup_threshold, blocked_margin=blocked_margin)
+                       backup_threshold=backup_threshold, blocked_margin=blocked_margin,
+                       debug_marker=debug_marker)
     nav.run()
 
 
@@ -592,7 +650,9 @@ if __name__ == "__main__":
     parser.add_argument("--duration", type=float, default=60.0, help="Duration (seconds, 0=unlimited)")
     parser.add_argument("--backup-threshold", type=float, default=0.25, help="Backup if closer than this (m)")
     parser.add_argument("--blocked-margin", type=float, default=0.15, help="Margin for goal blocked detection (m)")
+    parser.add_argument("--debug-marker", action="store_true", help="Continuously publish goal marker to RViz")
     args = parser.parse_args()
 
     run_simple_nav(speed=args.speed, duration=args.duration,
-                   backup_threshold=args.backup_threshold, blocked_margin=args.blocked_margin)
+                   backup_threshold=args.backup_threshold, blocked_margin=args.blocked_margin,
+                   debug_marker=args.debug_marker)
