@@ -80,45 +80,70 @@ class NBVNavigator:
     def _start_marker_thread(self):
         """Start background thread that continuously publishes goal marker."""
         def publish_loop():
-            while self.running and self.debug_marker:
-                if self.goal_point:
-                    x, y = self.goal_point
-                    cmd = f'''source /opt/ros/humble/setup.bash && python3 -c "
+            # Start a persistent marker publisher inside Docker
+            proc = subprocess.Popen(
+                ['docker', 'exec', '-i', CONTAINER_NAME, 'bash', '-c',
+                 '''source /opt/ros/humble/setup.bash && python3 -c "
 import rclpy
 from visualization_msgs.msg import Marker
+import sys
+
 rclpy.init()
-node = rclpy.create_node('goal_marker')
+node = rclpy.create_node('goal_marker_persistent')
 pub = node.create_publisher(Marker, '/nav_goal', 10)
-m = Marker()
-m.header.frame_id = 'odom'
-m.header.stamp = node.get_clock().now().to_msg()
-m.ns = 'goal'
-m.id = 0
-m.type = Marker.SPHERE
-m.action = Marker.ADD
-m.pose.position.x = {x}
-m.pose.position.y = {y}
-m.pose.position.z = 0.1
-m.pose.orientation.w = 1.0
-m.scale.x = 0.2
-m.scale.y = 0.2
-m.scale.z = 0.2
-m.color.r = 0.0
-m.color.g = 1.0
-m.color.b = 0.0
-m.color.a = 1.0
-m.lifetime.sec = 2
-for _ in range(3):
-    pub.publish(m)
-    rclpy.spin_once(node, timeout_sec=0.02)
+
+while True:
+    line = sys.stdin.readline().strip()
+    if not line:
+        break
+    try:
+        x, y = map(float, line.split(','))
+        m = Marker()
+        m.header.frame_id = 'odom'
+        m.header.stamp = node.get_clock().now().to_msg()
+        m.ns = 'goal'
+        m.id = 0
+        m.type = Marker.SPHERE
+        m.action = Marker.ADD
+        m.pose.position.x = x
+        m.pose.position.y = y
+        m.pose.position.z = 0.15
+        m.pose.orientation.w = 1.0
+        m.scale.x = 0.25
+        m.scale.y = 0.25
+        m.scale.z = 0.25
+        m.color.r = 0.0
+        m.color.g = 1.0
+        m.color.b = 0.0
+        m.color.a = 1.0
+        m.lifetime.sec = 5
+        for _ in range(3):
+            pub.publish(m)
+            rclpy.spin_once(node, timeout_sec=0.01)
+    except:
+        pass
+
 node.destroy_node()
 rclpy.shutdown()
-"'''
-                    subprocess.run(
-                        ['docker', 'exec', CONTAINER_NAME, 'bash', '-c', cmd],
-                        capture_output=True, timeout=3
-                    )
-                time.sleep(0.5)  # Publish every 0.5s
+"'''],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL
+            )
+
+            last_goal = None
+            while self.running and self.debug_marker:
+                if self.goal_point and self.goal_point != last_goal:
+                    x, y = self.goal_point
+                    try:
+                        proc.stdin.write(f"{x},{y}\n".encode())
+                        proc.stdin.flush()
+                        last_goal = self.goal_point
+                    except:
+                        pass
+                time.sleep(0.1)  # Check for updates every 0.1s
+
+            proc.terminate()
 
         self._marker_thread = threading.Thread(target=publish_loop, daemon=True)
         self._marker_thread.start()
