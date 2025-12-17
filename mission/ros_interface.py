@@ -244,8 +244,8 @@ rclpy.shutdown()
 
 def publish_goal_marker(x: float, y: float, container: str = CONTAINER_NAME):
     """
-    Publish a goal point marker at the given position.
-    Visible in RViz as a green sphere - shows where the robot is driving to.
+    Publish a goal point to /goal_pose topic.
+    This is a standard ROS2 Nav2 topic that RViz displays by default.
 
     Args:
         x, y: World coordinates of the goal point
@@ -256,52 +256,34 @@ def publish_goal_marker(x: float, y: float, container: str = CONTAINER_NAME):
             ['docker', 'exec', container, 'bash', '-c',
              f'''source /opt/ros/humble/setup.bash && python3 -c "
 import rclpy
-from rclpy.qos import QoSProfile, DurabilityPolicy
-from visualization_msgs.msg import Marker
-import time
+from geometry_msgs.msg import PoseStamped
 
 rclpy.init()
-node = rclpy.create_node('goal_marker_pub')
+node = rclpy.create_node('goal_pub')
+pub = node.create_publisher(PoseStamped, '/goal_pose', 10)
 
-# Use transient_local QoS so marker persists for late subscribers
-qos = QoSProfile(depth=10)
-qos.durability = DurabilityPolicy.TRANSIENT_LOCAL
-marker_pub = node.create_publisher(Marker, '/nav_goal_marker', qos)
+# Wait for publisher setup
+import time
+time.sleep(0.1)
 
-# Wait for publisher to be ready
-time.sleep(0.2)
+pose = PoseStamped()
+pose.header.frame_id = 'odom'
+pose.header.stamp = node.get_clock().now().to_msg()
+pose.pose.position.x = {x}
+pose.pose.position.y = {y}
+pose.pose.position.z = 0.0
+pose.pose.orientation.w = 1.0
 
-marker = Marker()
-marker.header.frame_id = 'odom'
-marker.header.stamp = node.get_clock().now().to_msg()
-marker.ns = 'navigation_goal'
-marker.id = 0
-marker.type = Marker.SPHERE
-marker.action = Marker.ADD
-marker.pose.position.x = {x}
-marker.pose.position.y = {y}
-marker.pose.position.z = 0.15
-marker.pose.orientation.w = 1.0
-marker.scale.x = 0.25
-marker.scale.y = 0.25
-marker.scale.z = 0.25
-marker.color.r = 0.0
-marker.color.g = 1.0
-marker.color.b = 0.0
-marker.color.a = 1.0
-marker.lifetime.sec = 120
-
-# Publish multiple times with delays
-for _ in range(5):
-    marker.header.stamp = node.get_clock().now().to_msg()
-    marker_pub.publish(marker)
-    rclpy.spin_once(node, timeout_sec=0.1)
-    time.sleep(0.1)
+# Publish a few times
+for _ in range(3):
+    pose.header.stamp = node.get_clock().now().to_msg()
+    pub.publish(pose)
+    rclpy.spin_once(node, timeout_sec=0.05)
 
 node.destroy_node()
 rclpy.shutdown()
 "'''],
-            capture_output=True, text=True, timeout=5
+            capture_output=True, text=True, timeout=3
         )
     except:
         pass
