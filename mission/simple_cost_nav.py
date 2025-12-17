@@ -349,16 +349,25 @@ rclpy.shutdown()
                 neighbor = (point_cell[0] + dx, point_cell[1] + dy)
                 score -= self.scan_ends.get(neighbor, 0) * 0.3
 
-        # === Factor 4: Prefer unvisited areas ===
+        # === Factor 4: Prefer unvisited areas (DOMINANT FACTOR) ===
         visit_count = self.visited.get(point_cell, 0)
         if visit_count == 0:
-            score += 2.0  # Big bonus for unexplored
+            score += 10.0  # Very strong bonus for unexplored
         else:
-            score -= visit_count * 0.5  # Penalty for revisiting
+            score -= visit_count * 2.0  # Strong penalty for revisiting
+
+        # Also check neighboring cells for unvisited areas
+        unvisited_neighbors = 0
+        for dx in [-1, 0, 1]:
+            for dy in [-1, 0, 1]:
+                neighbor = (point_cell[0] + dx, point_cell[1] + dy)
+                if self.visited.get(neighbor, 0) == 0:
+                    unvisited_neighbors += 1
+        score += unvisited_neighbors * 1.0  # Bonus for being near unexplored
 
         # === Factor 5: Distance efficiency ===
         # Prefer further goals (more efficient exploration)
-        score += dist * 0.3
+        score += dist * 0.5
 
         return score
 
