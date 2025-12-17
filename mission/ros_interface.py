@@ -22,8 +22,8 @@ def send_velocity_cmd(linear_x: float, angular_z: float, container: str = CONTAI
     """
     # Apply velocity calibration
     calibrated_linear = linear_x / LINEAR_VEL_RATIO
-    x_val = max(-1.0, min(1.0, -calibrated_linear / 0.3))  # INVERTED + Scale
-    z_val = max(-1.0, min(1.0, -angular_z / 1.0))  # INVERTED + Scale
+    x_val = max(-1.0, min(1.0, calibrated_linear / 0.3))  # Scale to [-1, 1]
+    z_val = max(-1.0, min(1.0, -angular_z / 1.0))  # INVERTED for rotation
 
     serial_cmd = f'{{"T":"13","X":{x_val:.2f},"Z":{z_val:.2f}}}'
     try:
