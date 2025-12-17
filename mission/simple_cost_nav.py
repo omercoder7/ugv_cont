@@ -18,7 +18,7 @@ import math
 import time
 from typing import Optional, List, Tuple, Dict, Set
 
-from .ros_interface import get_lidar_scan, send_velocity_cmd, get_odometry
+from .ros_interface import get_lidar_scan, send_velocity_cmd, get_odometry, publish_goal_marker
 from .avoider.lidar import compute_sector_distances
 from .constants import NUM_SECTORS
 
@@ -32,13 +32,14 @@ class NBVNavigator:
     """
 
     def __init__(self, linear_speed: float = 0.08, duration: float = 60.0,
-                 backup_threshold: float = 0.25):
+                 backup_threshold: float = 0.25, blocked_margin: float = 0.15):
         self.linear_speed = linear_speed
         self.duration = duration
         self.running = False
 
         # Thresholds
         self.backup_threshold = backup_threshold
+        self.blocked_margin = blocked_margin  # Margin for considering goal blocked
         self.goal_reached_dist = 0.20  # Consider goal reached if within 20cm
         self.min_goal_dist = 0.4       # Don't set goals closer than this
         self.max_goal_dist = 1.5       # Don't set goals further than this
@@ -47,6 +48,11 @@ class NBVNavigator:
         self.goal_point: Optional[Tuple[float, float]] = None
         self.goal_set_time: float = 0
         self.goal_timeout: float = 30.0  # Much larger timeout - rotation takes time
+
+        # Heading lock for drift correction
+        # When aligned and driving straight, lock heading and continuously correct
+        self.locked_heading: Optional[float] = None
+        self.heading_lock_gain = 1.5  # Stronger correction for drift
 
         # Visited cells (for avoiding revisits)
         self.visited: Dict[Tuple[int, int], int] = {}
@@ -141,8 +147,13 @@ class NBVNavigator:
                     if new_goal:
                         self.goal_point = new_goal
                         self.goal_set_time = time.time()
+                        self.locked_heading = None  # Clear heading lock for new goal
                         dist = math.sqrt((new_goal[0] - self.current_pos[0])**2 +
                                         (new_goal[1] - self.current_pos[1])**2)
+
+                        # Publish goal marker to RViz (green sphere)
+                        publish_goal_marker(new_goal[0], new_goal[1])
+
                         # Print polar map with goal direction
                         print(f"\n{'='*40}")
                         print(f"[GOAL] New goal: ({new_goal[0]:.2f}, {new_goal[1]:.2f})")
@@ -342,13 +353,20 @@ class NBVNavigator:
 
         # Check if that sector is blocked before the goal
         sector_dist = sectors[goal_sector]
-        if sector_dist < goal_dist - 0.1:
+        if sector_dist < goal_dist - self.blocked_margin:
             return True  # Obstacle between us and goal
 
         return False
 
     def _compute_velocity_to_goal(self, front_min: float) -> Tuple[float, float]:
-        """Compute velocity commands to drive toward goal."""
+        """
+        Compute velocity commands to drive toward goal.
+
+        Uses heading lock for drift correction:
+        - When aligned, lock in the target heading
+        - Continuously correct any drift from locked heading
+        - Stronger correction gain prevents sway
+        """
         if not self.goal_point or not self.current_pos or self.current_heading is None:
             return 0.0, 0.0
 
@@ -357,28 +375,43 @@ class NBVNavigator:
         dy = self.goal_point[1] - self.current_pos[1]
         goal_world_angle = math.atan2(dy, dx)
 
-        # Angle error (how much we need to turn)
+        # Angle error (how much we need to turn to face goal)
         angle_error = self._normalize_angle(goal_world_angle - self.current_heading)
 
-        # Proportional control
-        # If large angle error, rotate in place (stop-rotate-go)
-        # Use faster rotation speed (0.7 rad/s instead of 0.5)
-        if abs(angle_error) > 0.4:  # ~23 degrees
+        # Proportional control with HEADING LOCK for drift correction
+        if abs(angle_error) > 0.4:  # ~23 degrees - need to rotate
+            # Clear heading lock - we're rotating
+            self.locked_heading = None
             # Rotate in place - faster rotation
             v = 0.0
             w = 0.7 if angle_error > 0 else -0.7
-        elif abs(angle_error) > 0.15:  # ~9 degrees
-            # Slow down and turn
+
+        elif abs(angle_error) > 0.15:  # ~9-23 degrees - slow turn
+            # Clear heading lock - still turning
+            self.locked_heading = None
             v = self.linear_speed * 0.5
-            w = angle_error * 1.2  # Proportional, slightly faster
+            w = angle_error * 1.2  # Proportional
+
         else:
-            # Aligned - go straight
+            # Aligned (<9°) - LOCK HEADING and drive straight with drift correction
+            if self.locked_heading is None:
+                # Lock current goal heading (not current robot heading!)
+                self.locked_heading = goal_world_angle
+
+            # Calculate drift from locked heading
+            drift_error = self._normalize_angle(self.locked_heading - self.current_heading)
+
+            # Strong proportional correction to maintain locked heading
+            # This prevents sway/drift by continuously correcting
             v = self.linear_speed
-            w = angle_error * 0.5  # Small correction
+            w = drift_error * self.heading_lock_gain  # Stronger gain for drift
+
+            # Limit correction to prevent oscillation
+            w = max(-0.4, min(0.4, w))
 
         # Slow down if obstacle nearby
         if front_min < 0.5:
-            speed_factor = (front_min - 0.3) / 0.2
+            speed_factor = (front_min - self.backup_threshold) / (0.5 - self.backup_threshold)
             speed_factor = max(0.3, min(1.0, speed_factor))
             v *= speed_factor
 
@@ -405,6 +438,9 @@ class NBVNavigator:
             time.sleep(0.1)
 
         send_velocity_cmd(0.0, 0.0)
+
+        # Clear heading lock after backup
+        self.locked_heading = None
 
     def _draw_polar_map(self, sectors: List[float], goal_sector: Optional[int] = None) -> str:
         """
@@ -536,9 +572,11 @@ class NBVNavigator:
             print(f"Revisit rate: {revisit_pct:.1f}%")
 
 
-def run_simple_nav(speed: float = 0.08, duration: float = 60.0, backup_threshold: float = 0.25):
+def run_simple_nav(speed: float = 0.08, duration: float = 60.0,
+                   backup_threshold: float = 0.25, blocked_margin: float = 0.15):
     """Entry point for NBV navigation."""
-    nav = NBVNavigator(linear_speed=speed, duration=duration, backup_threshold=backup_threshold)
+    nav = NBVNavigator(linear_speed=speed, duration=duration,
+                       backup_threshold=backup_threshold, blocked_margin=blocked_margin)
     nav.run()
 
 
@@ -550,6 +588,8 @@ if __name__ == "__main__":
     parser.add_argument("--speed", type=float, default=0.08, help="Linear speed (m/s)")
     parser.add_argument("--duration", type=float, default=60.0, help="Duration (seconds, 0=unlimited)")
     parser.add_argument("--backup-threshold", type=float, default=0.25, help="Backup if closer than this (m)")
+    parser.add_argument("--blocked-margin", type=float, default=0.15, help="Margin for goal blocked detection (m)")
     args = parser.parse_args()
 
-    run_simple_nav(speed=args.speed, duration=args.duration, backup_threshold=args.backup_threshold)
+    run_simple_nav(speed=args.speed, duration=args.duration,
+                   backup_threshold=args.backup_threshold, blocked_margin=args.blocked_margin)
