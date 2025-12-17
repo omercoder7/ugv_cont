@@ -80,68 +80,46 @@ class NBVNavigator:
     def _start_marker_thread(self):
         """Start background thread that continuously publishes goal marker."""
         def publish_loop():
-            # Start a persistent marker publisher inside Docker
-            proc = subprocess.Popen(
-                ['docker', 'exec', '-i', CONTAINER_NAME, 'bash', '-c',
-                 '''source /opt/ros/humble/setup.bash && python3 -c "
-import rclpy
-from visualization_msgs.msg import Marker
-import sys
-
-rclpy.init()
-node = rclpy.create_node('goal_marker_persistent')
-pub = node.create_publisher(Marker, '/nav_goal', 10)
-
-while True:
-    line = sys.stdin.readline().strip()
-    if not line:
-        break
-    try:
-        x, y = map(float, line.split(','))
-        m = Marker()
-        m.header.frame_id = 'odom'
-        m.header.stamp = node.get_clock().now().to_msg()
-        m.ns = 'goal'
-        m.id = 0
-        m.type = Marker.SPHERE
-        m.action = Marker.ADD
-        m.pose.position.x = x
-        m.pose.position.y = y
-        m.pose.position.z = 0.15
-        m.pose.orientation.w = 1.0
-        m.scale.x = 0.25
-        m.scale.y = 0.25
-        m.scale.z = 0.25
-        m.color.r = 0.0
-        m.color.g = 1.0
-        m.color.b = 0.0
-        m.color.a = 1.0
-        m.lifetime.sec = 5
-        for _ in range(3):
-            pub.publish(m)
-            rclpy.spin_once(node, timeout_sec=0.01)
-    except:
-        pass
-
-node.destroy_node()
-rclpy.shutdown()
-"'''],
-                stdin=subprocess.PIPE,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL
-            )
-
             while self.running and self.debug_marker:
                 if self.goal_point:
                     x, y = self.goal_point
-                    try:
-                        proc.stdin.write(f"{x},{y}\n".encode())
-                        proc.stdin.flush()
-                    except:
-                        pass
-                time.sleep(0.3)  # Publish every 0.3s
-
-            proc.terminate()
+                    # Publish marker using Python - no caching issues
+                    cmd = f'''source /opt/ros/humble/setup.bash && python3 << 'PYEOF'
+import rclpy
+from visualization_msgs.msg import Marker
+rclpy.init()
+node = rclpy.create_node('gm')
+pub = node.create_publisher(Marker, '/nav_goal', 10)
+import time
+time.sleep(0.05)
+m = Marker()
+m.header.frame_id = 'odom'
+m.header.stamp = node.get_clock().now().to_msg()
+m.ns = 'goal'
+m.id = 0
+m.type = 2
+m.action = 0
+m.pose.position.x = {x}
+m.pose.position.y = {y}
+m.pose.position.z = 0.15
+m.pose.orientation.w = 1.0
+m.scale.x = 0.25
+m.scale.y = 0.25
+m.scale.z = 0.25
+m.color.g = 1.0
+m.color.a = 1.0
+m.lifetime.sec = 1
+pub.publish(m)
+rclpy.spin_once(node, timeout_sec=0.05)
+node.destroy_node()
+rclpy.shutdown()
+PYEOF'''
+                    subprocess.Popen(
+                        ['docker', 'exec', CONTAINER_NAME, 'bash', '-c', cmd],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL
+                    )
+                time.sleep(0.5)
 
         self._marker_thread = threading.Thread(target=publish_loop, daemon=True)
         self._marker_thread.start()
