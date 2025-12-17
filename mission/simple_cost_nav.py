@@ -131,17 +131,15 @@ rclpy.shutdown()
                 stderr=subprocess.DEVNULL
             )
 
-            last_goal = None
             while self.running and self.debug_marker:
-                if self.goal_point and self.goal_point != last_goal:
+                if self.goal_point:
                     x, y = self.goal_point
                     try:
                         proc.stdin.write(f"{x},{y}\n".encode())
                         proc.stdin.flush()
-                        last_goal = self.goal_point
                     except:
                         pass
-                time.sleep(0.1)  # Check for updates every 0.1s
+                time.sleep(0.3)  # Publish every 0.3s
 
             proc.terminate()
 
