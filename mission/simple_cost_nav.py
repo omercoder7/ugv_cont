@@ -78,49 +78,80 @@ class NBVNavigator:
         self.backups = 0
 
     def _start_marker_thread(self):
-        """Start background thread that continuously publishes goal marker."""
-        def publish_loop():
+        """Start persistent marker publisher that keeps the topic alive."""
+        # Start persistent publisher in Docker that reads from stdin
+        self._marker_proc = subprocess.Popen(
+            ['docker', 'exec', '-i', CONTAINER_NAME, 'bash', '-c',
+             '''source /opt/ros/humble/setup.bash && python3 -u -c "
+import rclpy
+from visualization_msgs.msg import Marker
+import sys
+import select
+import time
+
+rclpy.init()
+node = rclpy.create_node('nav_goal_marker')
+pub = node.create_publisher(Marker, '/nav_goal', 10)
+
+x, y = 0.0, 0.0
+
+while rclpy.ok():
+    # Non-blocking read from stdin
+    if select.select([sys.stdin], [], [], 0.01)[0]:
+        try:
+            line = sys.stdin.readline().strip()
+            if line:
+                parts = line.split(',')
+                if len(parts) == 2:
+                    x, y = float(parts[0]), float(parts[1])
+        except:
+            pass
+
+    # Always publish current marker
+    m = Marker()
+    m.header.frame_id = 'odom'
+    m.header.stamp = node.get_clock().now().to_msg()
+    m.ns = 'goal'
+    m.id = 0
+    m.type = 2
+    m.action = 0
+    m.pose.position.x = x
+    m.pose.position.y = y
+    m.pose.position.z = 0.15
+    m.pose.orientation.w = 1.0
+    m.scale.x = 0.25
+    m.scale.y = 0.25
+    m.scale.z = 0.25
+    m.color.g = 1.0
+    m.color.a = 1.0
+    m.lifetime.sec = 1
+    pub.publish(m)
+    rclpy.spin_once(node, timeout_sec=0.05)
+    time.sleep(0.15)
+
+node.destroy_node()
+rclpy.shutdown()
+"'''],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE
+        )
+        print("[MARKER] Persistent marker publisher started - add /nav_goal in RViz")
+        time.sleep(0.5)  # Give it time to start
+
+        # Thread to send coordinates via stdin when goal changes
+        def update_loop():
             while self.running and self.debug_marker:
                 if self.goal_point:
                     x, y = self.goal_point
-                    # Synchronous publish - wait for completion to avoid overlap
-                    subprocess.run(
-                        ['docker', 'exec', CONTAINER_NAME, 'bash', '-c',
-                         f'''source /opt/ros/humble/setup.bash && python3 -c "
-import rclpy
-from visualization_msgs.msg import Marker
-rclpy.init()
-n = rclpy.create_node('gm')
-p = n.create_publisher(Marker, '/nav_goal', 10)
-import time; time.sleep(0.05)
-m = Marker()
-m.header.frame_id = 'odom'
-m.header.stamp = n.get_clock().now().to_msg()
-m.ns = 'goal'
-m.id = 0
-m.type = 2
-m.action = 0
-m.pose.position.x = {x}
-m.pose.position.y = {y}
-m.pose.position.z = 0.15
-m.pose.orientation.w = 1.0
-m.scale.x = 0.25
-m.scale.y = 0.25
-m.scale.z = 0.25
-m.color.g = 1.0
-m.color.a = 1.0
-m.lifetime.sec = 2
-p.publish(m)
-rclpy.spin_once(n, timeout_sec=0.05)
-n.destroy_node()
-rclpy.shutdown()
-"'''],
-                        capture_output=True,
-                        timeout=2
-                    )
-                time.sleep(0.3)
+                    try:
+                        self._marker_proc.stdin.write(f'{x},{y}\n'.encode())
+                        self._marker_proc.stdin.flush()
+                    except:
+                        pass
+                time.sleep(0.2)
 
-        self._marker_thread = threading.Thread(target=publish_loop, daemon=True)
+        self._marker_thread = threading.Thread(target=update_loop, daemon=True)
         self._marker_thread.start()
 
     def run(self):
