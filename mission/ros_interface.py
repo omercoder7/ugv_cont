@@ -244,19 +244,48 @@ rclpy.shutdown()
 
 def publish_goal_marker(x: float, y: float, container: str = CONTAINER_NAME):
     """
-    Publish a goal point to /goal_pose topic (non-blocking).
-    This is a standard ROS2 Nav2 topic that RViz displays by default.
+    Publish a goal point marker (non-blocking).
+    Uses a Marker on /nav_goal topic for reliable visualization in RViz.
 
     Args:
         x, y: World coordinates of the goal point
         container: Docker container name
     """
     # Run in background to avoid blocking the main loop
+    # Use Python script for reliable immediate publishing
+    cmd = f'''source /opt/ros/humble/setup.bash && python3 -c "
+import rclpy
+from visualization_msgs.msg import Marker
+rclpy.init()
+node = rclpy.create_node('goal_marker')
+pub = node.create_publisher(Marker, '/nav_goal', 10)
+m = Marker()
+m.header.frame_id = 'odom'
+m.header.stamp = node.get_clock().now().to_msg()
+m.ns = 'goal'
+m.id = 0
+m.type = Marker.SPHERE
+m.action = Marker.ADD
+m.pose.position.x = {x}
+m.pose.position.y = {y}
+m.pose.position.z = 0.1
+m.pose.orientation.w = 1.0
+m.scale.x = 0.2
+m.scale.y = 0.2
+m.scale.z = 0.2
+m.color.r = 0.0
+m.color.g = 1.0
+m.color.b = 0.0
+m.color.a = 1.0
+m.lifetime.sec = 60
+for _ in range(3):
+    pub.publish(m)
+    rclpy.spin_once(node, timeout_sec=0.02)
+node.destroy_node()
+rclpy.shutdown()
+"'''
     subprocess.Popen(
-        ['docker', 'exec', container, 'bash', '-c',
-         f'source /opt/ros/humble/setup.bash && '
-         f'ros2 topic pub --once /goal_pose geometry_msgs/msg/PoseStamped '
-         f'"{{header: {{frame_id: odom}}, pose: {{position: {{x: {x}, y: {y}, z: 0.0}}, orientation: {{w: 1.0}}}}}}"'],
+        ['docker', 'exec', container, 'bash', '-c', cmd],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL
     )
