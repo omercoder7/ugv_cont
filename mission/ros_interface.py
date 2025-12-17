@@ -22,7 +22,7 @@ def send_velocity_cmd(linear_x: float, angular_z: float, container: str = CONTAI
     """
     # Apply velocity calibration
     calibrated_linear = linear_x / LINEAR_VEL_RATIO
-    x_val = max(-1.0, min(1.0, calibrated_linear / 0.3))  # Scale to [-1, 1]
+    x_val = max(-1.0, min(1.0, -calibrated_linear / 0.3))  # INVERTED + Scale
     z_val = max(-1.0, min(1.0, -angular_z / 1.0))  # INVERTED for rotation
 
     serial_cmd = f'{{"T":"13","X":{x_val:.2f},"Z":{z_val:.2f}}}'
@@ -66,6 +66,9 @@ if msg:
     siny_cosp = 2 * (q.w * q.z + q.x * q.y)
     cosy_cosp = 1 - 2 * (q.y * q.y + q.z * q.z)
     yaw = math.atan2(siny_cosp, cosy_cosp)
+    # Correct for 180 degree offset between odometry frame and robot physical front
+    yaw = yaw + math.pi
+    if yaw > math.pi: yaw -= 2*math.pi
     print(f'{x:.4f},{y:.4f},{yaw:.4f}')
 node.destroy_node()
 rclpy.shutdown()
