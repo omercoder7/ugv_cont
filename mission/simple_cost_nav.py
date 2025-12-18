@@ -442,20 +442,46 @@ rclpy.shutdown()
         breakdown['open'] = openness_score * 1.5
 
         # === Factor 2: UNSCANNED AREA ===
+        # Look BEYOND the candidate point - what new areas would we see from there?
+        # Check cells in the direction we'd be facing (away from current position)
+        # This rewards points that open up new exploration frontiers
         unscanned_count = 0
-        scan_age_bonus = 0.0
+
+        # Direction from robot to candidate point
+        dir_x = px - self.current_pos[0]
+        dir_y = py - self.current_pos[1]
+        dir_len = math.sqrt(dir_x*dir_x + dir_y*dir_y)
+        if dir_len > 0.01:
+            dir_x /= dir_len
+            dir_y /= dir_len
+
+        # Check cells BEYOND the candidate point (1-3m further in same direction)
+        # These are cells we can't currently see but would see from the candidate
+        for look_dist in [1.0, 1.5, 2.0, 2.5, 3.0]:
+            look_x = px + dir_x * look_dist
+            look_y = py + dir_y * look_dist
+            look_cell = self._pos_to_cell(look_x, look_y)
+
+            # Check if this cell is unscanned
+            if self.scanned.get(look_cell, 0) == 0:
+                unscanned_count += 1
+
+            # Also check cells to the sides (fan out)
+            for side_offset in [-0.5, 0.5]:
+                side_x = look_x + (-dir_y) * side_offset  # Perpendicular
+                side_y = look_y + dir_x * side_offset
+                side_cell = self._pos_to_cell(side_x, side_y)
+                if self.scanned.get(side_cell, 0) == 0:
+                    unscanned_count += 0.5
+
+        # Also give bonus for cells immediately around candidate that are unscanned
         for dx in [-1, 0, 1]:
             for dy in [-1, 0, 1]:
                 neighbor = (point_cell[0] + dx, point_cell[1] + dy)
-                last_scan_time = self.scanned.get(neighbor, 0)
-                if last_scan_time == 0:
-                    unscanned_count += 1
-                else:
-                    age = now - last_scan_time
-                    if age > 30:
-                        scan_age_bonus += min(age / 60.0, 1.0)
+                if self.scanned.get(neighbor, 0) == 0:
+                    unscanned_count += 0.3
 
-        breakdown['unscan'] = unscanned_count * 2.0 + scan_age_bonus * 0.5
+        breakdown['unscan'] = unscanned_count * 1.5
 
         # === Factor 3: RECENT GOAL PENALTY ===
         recent_penalty = 0.0
