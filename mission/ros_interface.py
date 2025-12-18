@@ -3,12 +3,212 @@ ROS2 interface functions for communication with the robot.
 
 All communication happens via docker exec to the ROS container.
 These functions are standalone and can be called from any module.
+
+Includes PersistentROSBridge for efficient repeated queries using a single node.
 """
 
 import subprocess
+import threading
+import time
+import math
 from typing import Optional, Tuple, List
 
 from .constants import CONTAINER_NAME, LINEAR_VEL_RATIO
+
+
+class PersistentROSBridge:
+    """
+    A persistent ROS2 bridge that maintains a single node for all readings.
+    Avoids creating/destroying nodes on each call, reducing overhead and
+    preventing node accumulation issues.
+    """
+    _instance = None
+    _lock = threading.Lock()
+
+    def __new__(cls):
+        if cls._instance is None:
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+                    cls._instance._initialized = False
+        return cls._instance
+
+    def __init__(self):
+        if self._initialized:
+            return
+        self._initialized = True
+        self._proc = None
+        self._proc_lock = threading.Lock()
+        self._last_scan = None
+        self._last_odom = None
+        self._scan_time = 0
+        self._odom_time = 0
+        self._cache_timeout = 0.15  # Cache readings for 150ms
+
+    def _ensure_bridge(self):
+        """Ensure the bridge process is running."""
+        with self._proc_lock:
+            if self._proc is not None and self._proc.poll() is None:
+                return True  # Already running
+
+            # Start the persistent bridge process
+            bridge_script = '''
+import rclpy
+from rclpy.node import Node
+from sensor_msgs.msg import LaserScan
+from nav_msgs.msg import Odometry
+import sys
+import select
+import math
+import json
+
+class BridgeNode(Node):
+    def __init__(self):
+        super().__init__('persistent_ros_bridge')
+        self.scan_data = None
+        self.odom_data = None
+        self.create_subscription(LaserScan, '/scan', self.scan_cb, 1)
+        self.create_subscription(Odometry, '/odom', self.odom_cb, 1)
+
+    def scan_cb(self, msg):
+        self.scan_data = [round(r, 3) for r in msg.ranges]
+
+    def odom_cb(self, msg):
+        x = msg.pose.pose.position.x
+        y = msg.pose.pose.position.y
+        q = msg.pose.pose.orientation
+        siny_cosp = 2 * (q.w * q.z + q.x * q.y)
+        cosy_cosp = 1 - 2 * (q.y * q.y + q.z * q.z)
+        yaw = math.atan2(siny_cosp, cosy_cosp)
+        # 180 degree offset correction
+        yaw = yaw + math.pi
+        if yaw > math.pi: yaw -= 2*math.pi
+        self.odom_data = (round(x, 4), round(y, 4), round(yaw, 4))
+
+rclpy.init()
+node = BridgeNode()
+
+while rclpy.ok():
+    # Process ROS callbacks
+    rclpy.spin_once(node, timeout_sec=0.02)
+
+    # Check for commands from stdin (non-blocking)
+    if select.select([sys.stdin], [], [], 0.01)[0]:
+        try:
+            line = sys.stdin.readline().strip()
+            if not line:
+                break
+            if line == 'SCAN':
+                if node.scan_data:
+                    print('SCAN:' + ','.join(map(str, node.scan_data)), flush=True)
+                else:
+                    print('SCAN:NONE', flush=True)
+            elif line == 'ODOM':
+                if node.odom_data:
+                    print(f'ODOM:{node.odom_data[0]},{node.odom_data[1]},{node.odom_data[2]}', flush=True)
+                else:
+                    print('ODOM:NONE', flush=True)
+        except:
+            pass
+
+node.destroy_node()
+rclpy.shutdown()
+'''
+            try:
+                self._proc = subprocess.Popen(
+                    ['docker', 'exec', '-i', CONTAINER_NAME, 'bash', '-c',
+                     f'source /opt/ros/humble/setup.bash && python3 -u -c "{bridge_script}"'],
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL,
+                    bufsize=1,
+                    universal_newlines=True
+                )
+                time.sleep(0.3)  # Give it time to start
+                return True
+            except:
+                self._proc = None
+                return False
+
+    def _query(self, cmd: str, timeout: float = 1.0) -> Optional[str]:
+        """Send a command and get response."""
+        if not self._ensure_bridge():
+            return None
+
+        with self._proc_lock:
+            try:
+                self._proc.stdin.write(cmd + '\n')
+                self._proc.stdin.flush()
+
+                # Read response with timeout
+                import select as sel
+                ready, _, _ = sel.select([self._proc.stdout], [], [], timeout)
+                if ready:
+                    response = self._proc.stdout.readline().strip()
+                    return response
+            except:
+                # Bridge died, mark for restart
+                self._proc = None
+        return None
+
+    def get_scan(self) -> Optional[List[float]]:
+        """Get LiDAR scan with caching."""
+        now = time.time()
+        if self._last_scan and (now - self._scan_time) < self._cache_timeout:
+            return self._last_scan
+
+        response = self._query('SCAN')
+        if response and response.startswith('SCAN:') and response != 'SCAN:NONE':
+            try:
+                data = response[5:]  # Remove 'SCAN:' prefix
+                self._last_scan = [float(x) for x in data.split(',')]
+                self._scan_time = now
+                return self._last_scan
+            except:
+                pass
+        return None
+
+    def get_odom(self) -> Optional[Tuple[float, float, float]]:
+        """Get odometry with caching."""
+        now = time.time()
+        if self._last_odom and (now - self._odom_time) < self._cache_timeout:
+            return self._last_odom
+
+        response = self._query('ODOM')
+        if response and response.startswith('ODOM:') and response != 'ODOM:NONE':
+            try:
+                data = response[5:]  # Remove 'ODOM:' prefix
+                parts = data.split(',')
+                self._last_odom = (float(parts[0]), float(parts[1]), float(parts[2]))
+                self._odom_time = now
+                return self._last_odom
+            except:
+                pass
+        return None
+
+    def shutdown(self):
+        """Shutdown the bridge."""
+        with self._proc_lock:
+            if self._proc:
+                try:
+                    self._proc.terminate()
+                    self._proc.wait(timeout=1)
+                except:
+                    pass
+                self._proc = None
+
+
+# Global bridge instance (lazy-initialized)
+_ros_bridge: Optional[PersistentROSBridge] = None
+_use_persistent_bridge = True  # Set to False to use legacy per-call nodes
+
+
+def _get_bridge() -> Optional[PersistentROSBridge]:
+    """Get or create the global bridge instance."""
+    global _ros_bridge
+    if _ros_bridge is None:
+        _ros_bridge = PersistentROSBridge()
+    return _ros_bridge
 
 
 def send_velocity_cmd(linear_x: float, angular_z: float, container: str = CONTAINER_NAME):
@@ -44,6 +244,16 @@ def get_odometry(container: str = CONTAINER_NAME) -> Optional[Tuple[float, float
     Returns:
         (x, y, yaw) tuple or None if unavailable
     """
+    # Try persistent bridge first (avoids node accumulation)
+    if _use_persistent_bridge:
+        bridge = _get_bridge()
+        if bridge:
+            result = bridge.get_odom()
+            if result:
+                return result
+            # Bridge failed, fall through to legacy method
+
+    # Legacy per-call method (creates/destroys node each call)
     try:
         result = subprocess.run(
             ['docker', 'exec', container, 'bash', '-c',
@@ -164,6 +374,16 @@ def get_lidar_scan(container: str = CONTAINER_NAME) -> Optional[List[float]]:
     Returns:
         List of range values or None if unavailable
     """
+    # Try persistent bridge first (avoids node accumulation)
+    if _use_persistent_bridge:
+        bridge = _get_bridge()
+        if bridge:
+            result = bridge.get_scan()
+            if result:
+                return result
+            # Bridge failed, fall through to legacy method
+
+    # Legacy per-call method (creates/destroys node each call)
     try:
         result = subprocess.run(
             ['docker', 'exec', container, 'bash', '-c',
@@ -409,3 +629,16 @@ def ensure_slam_running(container: str = CONTAINER_NAME) -> bool:
         except Exception as e:
             print(f"SLAM check failed: {e}")
             return False
+
+
+def shutdown_ros_bridge():
+    """Shutdown the persistent ROS bridge if running."""
+    global _ros_bridge
+    if _ros_bridge is not None:
+        _ros_bridge.shutdown()
+        _ros_bridge = None
+
+
+# Register cleanup on exit
+import atexit
+atexit.register(shutdown_ros_bridge)

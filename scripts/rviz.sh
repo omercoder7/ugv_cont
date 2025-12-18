@@ -115,6 +115,14 @@ cleanup_duplicate_nodes() {
         sleep 1
     fi
 
+    # Check for duplicate EKF processes
+    EKF_PROCS=$(docker exec ${CONTAINER_NAME} pgrep -c -f "ekf_node" 2>/dev/null || echo "0")
+    if [ "${EKF_PROCS}" -gt 1 ]; then
+        echo "  Found ${EKF_PROCS} EKF processes - killing all..."
+        docker exec ${CONTAINER_NAME} pkill -f ekf_node 2>/dev/null
+        sleep 1
+    fi
+
     # Check for zombie processes
     ZOMBIES=$(docker exec ${CONTAINER_NAME} ps aux 2>/dev/null | grep -c "<defunct>" || echo "0")
     if [ "${ZOMBIES}" -gt 0 ]; then
@@ -254,20 +262,26 @@ case "${MODE}" in
             exit 1
         fi
 
-        # Start EKF for IMU fusion (fuses /odom_rf2o + /imu/data -> /odom)
-        echo "Starting EKF node..."
-        echo "  Input:  /odom_rf2o (laser odometry) + /imu/data (IMU)"
-        echo "  Output: /odom (fused odometry)"
-        docker exec -d ${CONTAINER_NAME} /bin/bash -c "
-        source /opt/ros/humble/setup.bash && \
-        source /root/ugv_ws/install/setup.bash && \
-        ros2 run robot_localization ekf_node --ros-args \
-          --params-file /tmp/ekf_lidar_imu.yaml \
-          -r /odometry/filtered:=/odom
-        " 2>/dev/null
-        sleep 2
+        # Check if EKF is already running to avoid duplicates
+        if docker exec ${CONTAINER_NAME} pgrep -f "ekf_node" > /dev/null 2>&1; then
+            echo "EKF node already running, skipping..."
+        else
+            # Start EKF for IMU fusion (fuses /odom_rf2o + /imu/data -> /odom)
+            echo "Starting EKF node..."
+            echo "  Input:  /odom_rf2o (laser odometry) + /imu/data (IMU)"
+            echo "  Output: /odom (fused odometry)"
+            docker exec -d ${CONTAINER_NAME} /bin/bash -c "
+            source /opt/ros/humble/setup.bash && \
+            source /root/ugv_ws/install/setup.bash && \
+            ros2 run robot_localization ekf_node --ros-args \
+              --params-file /tmp/ekf_lidar_imu.yaml \
+              -r /odometry/filtered:=/odom
+            " 2>/dev/null
+            sleep 2
+            echo "EKF node started."
+        fi
 
-        echo "EKF node started. Launching RViz..."
+        echo "Launching RViz..."
         launch_rviz "${RVIZ_BRINGUP}"
         ;;
     slam)
@@ -493,6 +507,9 @@ case "${MODE}" in
 
         SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
         REPO_DIR="$(dirname "${SCRIPT_DIR}")"
+
+        # Always check for duplicates first
+        cleanup_duplicate_nodes
 
         # Copy configs
         docker cp "${REPO_DIR}/config/view_slam_2d.rviz" ${CONTAINER_NAME}:/tmp/view_slam_2d.rviz 2>/dev/null
