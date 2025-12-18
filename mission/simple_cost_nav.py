@@ -59,13 +59,22 @@ class NBVNavigator:
         self.locked_heading: Optional[float] = None
         self.heading_lock_gain = 1.5  # Stronger correction for drift
 
-        # Visited cells (for avoiding revisits)
+        # Visited cells (for avoiding revisits) - tracks robot position history
         self.visited: Dict[Tuple[int, int], int] = {}
         self.grid_res = 0.3
+
+        # Scanned cells - tracks what areas the LiDAR has observed
+        # Key: cell, Value: timestamp of last scan
+        self.scanned: Dict[Tuple[int, int], float] = {}
 
         # Scan boundaries - track where we've seen walls
         # Key: cell, Value: number of times we saw a wall there
         self.scan_ends: Dict[Tuple[int, int], int] = {}
+
+        # Recent goals - to prevent circular patterns
+        # Stores (cell, timestamp) of recent goal selections
+        self.recent_goals: List[Tuple[Tuple[int, int], float]] = []
+        self.recent_goal_memory = 60.0  # Remember goals for 60 seconds
 
         # Current state
         self.current_pos: Optional[Tuple[float, float]] = None
@@ -205,7 +214,7 @@ rclpy.shutdown()
                 self.visited[cell] = self.visited.get(cell, 0) + 1
 
                 # Record scan ends (where LiDAR hits walls)
-                self._record_scan_ends(sectors)
+                self._record_scan_coverage(sectors)
 
                 # Front distance
                 front_min = min(sectors[11], sectors[0], sectors[1])
@@ -241,14 +250,9 @@ rclpy.shutdown()
                         # Publish goal marker to RViz (green sphere)
                         publish_goal_marker(new_goal[0], new_goal[1])
 
-                        # Print polar map with goal direction
-                        print(f"\n{'='*40}")
-                        print(f"[GOAL] New goal: ({new_goal[0]:.2f}, {new_goal[1]:.2f})")
-                        print(f"       dist={dist:.2f}m, sector={goal_sector}, reason={reason}")
-                        print(f"       yaw={math.degrees(self.current_heading):.0f}°")
-                        print(f"{'='*40}")
-                        print(self._draw_polar_map(sectors, goal_sector))
-                        print(f"{'='*40}")
+                        # Print goal info (debug scoring is printed in _select_goal_point)
+                        print(f"[GOAL] Selected: ({new_goal[0]:.2f}, {new_goal[1]:.2f}) "
+                              f"dist={dist:.2f}m sector={goal_sector} reason={reason}")
                     else:
                         # No valid goal found - backup
                         print(f"\n[NO GOAL] No valid viewpoint found, backing up")
@@ -293,22 +297,32 @@ rclpy.shutdown()
         1. Must be in line-of-sight (LiDAR can see it)
         2. Should NOT be at a "scan end" (wall boundary)
         3. Area around it should be open (good visibility from there)
-        4. Prefer unexplored areas
+        4. Prefer unscanned areas
 
         Returns: (goal_point, goal_sector) or (None, None)
         """
         if not self.current_pos or self.current_heading is None:
             return None, None
 
+        # Clean up old goals from recent_goals list
+        now = time.time()
+        self.recent_goals = [(cell, t) for (cell, t) in self.recent_goals
+                            if now - t < self.recent_goal_memory]
+
         best_point = None
         best_score = -999
         best_sector = None
+        best_scores = {}  # For debug output
 
-        # Evaluate candidate points in FRONT hemisphere only (±90° from front)
-        # Front sectors: 0, 1, 2, 3 (left-front) and 9, 10, 11 (right-front)
-        front_sectors = [0, 1, 2, 3, 9, 10, 11]
+        # Collect all candidates with scores for debug
+        candidates = []
 
-        for sector_idx in front_sectors:
+        # Evaluate candidate points in full 360° EXCEPT back blind spot
+        # Exclude sectors 5, 6, 7 (back: +150° to -150°)
+        # Include: 0 (front), 1-4 (left side), 8-11 (right side)
+        candidate_sectors = [0, 1, 2, 3, 4, 8, 9, 10, 11]
+
+        for sector_idx in candidate_sectors:
             sector_dist = sectors[sector_idx]
 
             if sector_dist < self.min_goal_dist + 0.2:
@@ -329,100 +343,138 @@ rclpy.shutdown()
                 px = self.current_pos[0] + dist * math.cos(world_angle)
                 py = self.current_pos[1] + dist * math.sin(world_angle)
 
-                # Score this viewpoint
-                score = self._score_viewpoint(px, py, sector_idx, dist, sectors)
+                # Score this viewpoint with detailed breakdown
+                score, breakdown = self._score_viewpoint_debug(px, py, sector_idx, dist, sectors)
+                candidates.append((score, sector_idx, dist, px, py, breakdown))
 
                 if score > best_score:
                     best_score = score
                     best_point = (px, py)
                     best_sector = sector_idx
+                    best_scores = breakdown
+
+        # Debug output: show top candidates
+        if candidates:
+            candidates.sort(key=lambda x: x[0], reverse=True)
+            print(f"\n[GOAL SELECT] Top candidates (scanned={len(self.scanned)} cells, recent_goals={len(self.recent_goals)}):")
+            for i, (score, sec, d, px, py, brk) in enumerate(candidates[:5]):
+                marker = " <-- BEST" if i == 0 else ""
+                print(f"  #{i+1} sec={sec:2d} d={d:.1f}m pos=({px:.2f},{py:.2f}) "
+                      f"score={score:+.1f} [open={brk['open']:+.1f} unscan={brk['unscan']:+.1f} "
+                      f"recent={brk['recent']:+.1f} wall={brk['wall']:+.1f}]{marker}")
+
+        # Record this goal to prevent cycling back
+        if best_point:
+            goal_cell = self._pos_to_cell(best_point[0], best_point[1])
+            self.recent_goals.append((goal_cell, now))
 
         return best_point, best_sector
 
-    def _score_viewpoint(self, px: float, py: float, sector_idx: int,
-                         dist: float, sectors: List[float]) -> float:
-        """
-        Score a potential viewpoint.
+    def _score_viewpoint_debug(self, px: float, py: float, sector_idx: int,
+                               dist: float, sectors: List[float]) -> Tuple[float, dict]:
+        """Score viewpoint and return breakdown for debugging."""
+        point_cell = self._pos_to_cell(px, py)
+        now = time.time()
+        breakdown = {'open': 0.0, 'unscan': 0.0, 'recent': 0.0, 'wall': 0.0, 'dist': 0.0}
 
-        Higher score = better viewpoint (more new area visible from there)
-        """
-        score = 0.0
-
-        # === Factor 1: Margin to wall (NOT at a scan end) ===
-        # If close to wall, it's a poor viewpoint
+        # === Factor 1: OPENNESS (DOMINANT) ===
+        openness_score = 0.0
         margin_to_wall = sectors[sector_idx] - dist
         if margin_to_wall < 0.2:
-            score -= 3.0  # Heavy penalty for being at a wall
-        elif margin_to_wall < 0.4:
-            score -= 1.0
+            openness_score -= 5.0
         else:
-            score += margin_to_wall * 0.5  # Bonus for open space ahead
+            openness_score += margin_to_wall * 2.0
 
-        # === Factor 2: Adjacent sectors open (not a corner/corridor end) ===
-        # A good viewpoint has open space in multiple directions
-        openness = 0
-        for adj in [-2, -1, 1, 2]:
+        for adj in [-3, -2, -1, 1, 2, 3]:
             adj_sector = (sector_idx + adj) % NUM_SECTORS
             adj_dist = sectors[adj_sector]
-            if adj_dist > 0.5:
-                openness += min(adj_dist, 1.5)
-        score += openness * 0.3
+            if adj_dist > 0.8:
+                openness_score += min(adj_dist, 2.0)
+            elif adj_dist < 0.4:
+                openness_score -= 0.5
 
-        # === Factor 3: NOT a known scan end (previous wall boundary) ===
-        point_cell = self._pos_to_cell(px, py)
+        breakdown['open'] = openness_score * 1.5
+
+        # === Factor 2: UNSCANNED AREA ===
+        unscanned_count = 0
+        scan_age_bonus = 0.0
+        for dx in [-1, 0, 1]:
+            for dy in [-1, 0, 1]:
+                neighbor = (point_cell[0] + dx, point_cell[1] + dy)
+                last_scan_time = self.scanned.get(neighbor, 0)
+                if last_scan_time == 0:
+                    unscanned_count += 1
+                else:
+                    age = now - last_scan_time
+                    if age > 30:
+                        scan_age_bonus += min(age / 60.0, 1.0)
+
+        breakdown['unscan'] = unscanned_count * 2.0 + scan_age_bonus * 0.5
+
+        # === Factor 3: RECENT GOAL PENALTY ===
+        recent_penalty = 0.0
+        for (goal_cell, goal_time) in self.recent_goals:
+            cell_dist = abs(point_cell[0] - goal_cell[0]) + abs(point_cell[1] - goal_cell[1])
+            if cell_dist <= 2:
+                recency = (self.recent_goal_memory - (now - goal_time)) / self.recent_goal_memory
+                if recency > 0:
+                    recent_penalty += recency * (3 - cell_dist) * 5.0
+        breakdown['recent'] = -recent_penalty
+
+        # === Factor 4: WALL AVOIDANCE ===
+        wall_penalty = 0.0
         scan_end_count = self.scan_ends.get(point_cell, 0)
         if scan_end_count > 0:
-            score -= scan_end_count * 1.0  # Penalize known boundaries
+            wall_penalty += scan_end_count * 2.0
 
-        # Check neighboring cells for scan ends too
         for dx in [-1, 0, 1]:
             for dy in [-1, 0, 1]:
+                if dx == 0 and dy == 0:
+                    continue
                 neighbor = (point_cell[0] + dx, point_cell[1] + dy)
-                score -= self.scan_ends.get(neighbor, 0) * 0.3
+                wall_penalty += self.scan_ends.get(neighbor, 0) * 0.5
+        breakdown['wall'] = -wall_penalty
 
-        # === Factor 4: Prefer unvisited areas (DOMINANT FACTOR) ===
-        visit_count = self.visited.get(point_cell, 0)
-        if visit_count == 0:
-            score += 10.0  # Very strong bonus for unexplored
-        else:
-            score -= visit_count * 2.0  # Strong penalty for revisiting
+        # === Factor 5: DISTANCE EFFICIENCY ===
+        breakdown['dist'] = dist * 0.3
 
-        # Also check neighboring cells for unvisited areas
-        unvisited_neighbors = 0
-        for dx in [-1, 0, 1]:
-            for dy in [-1, 0, 1]:
-                neighbor = (point_cell[0] + dx, point_cell[1] + dy)
-                if self.visited.get(neighbor, 0) == 0:
-                    unvisited_neighbors += 1
-        score += unvisited_neighbors * 1.0  # Bonus for being near unexplored
+        total = sum(breakdown.values())
+        return total, breakdown
 
-        # === Factor 5: Distance efficiency ===
-        # Prefer further goals (more efficient exploration)
-        score += dist * 0.5
-
-        return score
-
-    def _record_scan_ends(self, sectors: List[float]):
-        """Record where LiDAR hits walls (scan boundaries)."""
+    def _record_scan_coverage(self, sectors: List[float]):
+        """Record LiDAR scan coverage - both scanned areas and wall boundaries."""
         if not self.current_pos or self.current_heading is None:
             return
+
+        now = time.time()
 
         for sector_idx in range(NUM_SECTORS):
             dist = sectors[sector_idx]
 
-            # Only record actual walls (not max range)
-            if dist < 0.1 or dist > 3.0:
-                continue
+            if dist < 0.1:
+                continue  # Invalid reading
 
-            # Calculate wall position
+            # Calculate direction
             angle = self._sector_to_angle(sector_idx)
             world_angle = self.current_heading + angle
-            wall_x = self.current_pos[0] + dist * math.cos(world_angle)
-            wall_y = self.current_pos[1] + dist * math.sin(world_angle)
 
-            # Record as scan end
-            cell = self._pos_to_cell(wall_x, wall_y)
-            self.scan_ends[cell] = self.scan_ends.get(cell, 0) + 1
+            # Record all cells along the scan ray as "scanned"
+            # Sample points from robot to the scan endpoint
+            scan_dist = min(dist, 3.0)  # Cap at 3m
+            for d in [0.3, 0.6, 0.9, 1.2, 1.5, 1.8, 2.1, 2.4, 2.7, 3.0]:
+                if d > scan_dist:
+                    break
+                px = self.current_pos[0] + d * math.cos(world_angle)
+                py = self.current_pos[1] + d * math.sin(world_angle)
+                cell = self._pos_to_cell(px, py)
+                self.scanned[cell] = now
+
+            # Record wall position (scan end) if not max range
+            if dist < 3.0:
+                wall_x = self.current_pos[0] + dist * math.cos(world_angle)
+                wall_y = self.current_pos[1] + dist * math.sin(world_angle)
+                wall_cell = self._pos_to_cell(wall_x, wall_y)
+                self.scan_ends[wall_cell] = self.scan_ends.get(wall_cell, 0) + 1
 
     def _goal_reached(self) -> bool:
         """Check if current goal is reached."""
@@ -541,90 +593,6 @@ rclpy.shutdown()
         # Clear heading lock after backup
         self.locked_heading = None
 
-    def _draw_polar_map(self, sectors: List[float], goal_sector: Optional[int] = None) -> str:
-        """
-        Draw a unicode polar map showing LiDAR readings and robot heading.
-
-        Returns a string visualization of the robot's surroundings.
-        """
-        # Sector layout (12 sectors, 30° each):
-        #          0 (front)
-        #      11      1
-        #    10          2
-        #    9            3
-        #      8      4
-        #          6 (back)
-        #        7   5
-
-        lines = []
-
-        # Convert distances to simple indicators
-        def dist_char(d: float, is_goal: bool = False) -> str:
-            if is_goal:
-                return "◎"  # Goal direction
-            if d < 0.3:
-                return "█"  # Very close (wall)
-            elif d < 0.5:
-                return "▓"  # Close
-            elif d < 0.8:
-                return "▒"  # Medium
-            elif d < 1.2:
-                return "░"  # Far
-            else:
-                return "·"  # Very far / open
-
-        def dist_str(d: float) -> str:
-            if d > 9.9:
-                return "9.9"
-            return f"{d:.1f}"
-
-        # Build the map
-        s = sectors
-        g = goal_sector
-
-        # Row 1: Front
-        c0 = dist_char(s[0], g == 0)
-        lines.append(f"        {c0} {dist_str(s[0])}m")
-        lines.append(f"       [0]")
-
-        # Row 2: Front-left and front-right
-        c11 = dist_char(s[11], g == 11)
-        c1 = dist_char(s[1], g == 1)
-        lines.append(f"    {c11}         {c1}")
-        lines.append(f"   [11]{dist_str(s[11])}   {dist_str(s[1])}[1]")
-
-        # Row 3: Left and right
-        c10 = dist_char(s[10], g == 10)
-        c2 = dist_char(s[2], g == 2)
-        lines.append(f"  {c10}      ↑      {c2}")
-        lines.append(f" [10]{dist_str(s[10])}   │   {dist_str(s[2])}[2]")
-
-        # Row 4: Side
-        c9 = dist_char(s[9], g == 9)
-        c3 = dist_char(s[3], g == 3)
-        lines.append(f"  {c9}      ●      {c3}")
-        lines.append(f" [9] {dist_str(s[9])}       {dist_str(s[3])}[3]")
-
-        # Row 5: Back-side
-        c8 = dist_char(s[8], g == 8)
-        c4 = dist_char(s[4], g == 4)
-        lines.append(f"  {c8}             {c4}")
-        lines.append(f" [8] {dist_str(s[8])}       {dist_str(s[4])}[4]")
-
-        # Row 6: Back
-        c7 = dist_char(s[7], g == 7)
-        c5 = dist_char(s[5], g == 5)
-        c6 = dist_char(s[6], g == 6)
-        lines.append(f"    {c7}    {c6}    {c5}")
-        lines.append(f"   [7]  [6]  [5]")
-        lines.append(f"   {dist_str(s[7])} {dist_str(s[6])} {dist_str(s[5])}")
-
-        # Legend
-        lines.append(f"")
-        lines.append(f"Legend: █<0.3m ▓<0.5m ▒<0.8m ░<1.2m ·>1.2m ◎=goal")
-
-        return "\n".join(lines)
-
     def _sector_to_angle(self, sector: int) -> float:
         """Convert sector index to angle in robot frame."""
         angle = sector * (2 * math.pi / NUM_SECTORS)
@@ -663,7 +631,8 @@ rclpy.shutdown()
         print(f"Goals reached: {self.goals_reached}")
         print(f"Backups: {self.backups}")
         print(f"Unique cells visited: {len(self.visited)}")
-        print(f"Scan ends recorded: {len(self.scan_ends)}")
+        print(f"Cells scanned by LiDAR: {len(self.scanned)}")
+        print(f"Walls detected: {len(self.scan_ends)}")
 
         total = sum(self.visited.values())
         if total > 0:
