@@ -341,12 +341,12 @@ rclpy.shutdown()
         # Collect all candidates with scores for debug
         candidates = []
 
-        # Evaluate ~50 candidate points distributed across 300° arc (excluding back 60°)
-        # 13 angles × 4 distances = 52 potential points
+        # Evaluate candidate points distributed across 300° arc (excluding back 60°)
+        # 25 angles × 4 distances = 100 potential points
+        # 25 angles over 300° = 12.5° per step (finer resolution to catch corridors)
         #
         # Angular range: -150° to +150° (300° total, excluding back blind spot)
-        # That's sectors 0-4 (front to left-back) and 8-11 (right-back to front-right)
-        num_angles = 13
+        num_angles = 25
         num_distances = 4
 
         # Generate equally spaced angles from -150° to +150° (in radians)
