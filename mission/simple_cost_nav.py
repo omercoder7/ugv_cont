@@ -34,17 +34,21 @@ class NBVNavigator:
     """
 
     def __init__(self, linear_speed: float = 0.08, duration: float = 60.0,
-                 backup_threshold: float = 0.25, blocked_margin: float = 0.15,
+                 backup_threshold: float = 0.25, blocked_margin: float = 0.05,
                  debug_marker: bool = False):
         self.linear_speed = linear_speed
         self.duration = duration
         self.running = False
         self.debug_marker = debug_marker
         self._marker_thread = None
+        self._marker_proc = None
+
+        # Thread lock for goal_point access (marker thread reads, main thread writes)
+        self._goal_lock = threading.Lock()
 
         # Thresholds
         self.backup_threshold = backup_threshold
-        self.blocked_margin = blocked_margin  # Margin for considering goal blocked
+        self.blocked_margin = blocked_margin  # Margin for considering goal blocked (tighter = safer)
         self.goal_reached_dist = 0.20  # Consider goal reached if within 20cm
         self.min_goal_dist = 0.4       # Don't set goals closer than this
         self.max_goal_dist = 1.5       # Don't set goals further than this
@@ -68,8 +72,8 @@ class NBVNavigator:
         self.scanned: Dict[Tuple[int, int], float] = {}
 
         # Scan boundaries - track where we've seen walls
-        # Key: cell, Value: number of times we saw a wall there
-        self.scan_ends: Dict[Tuple[int, int], int] = {}
+        # Key: cell, Value: timestamp of when wall was last seen
+        self.scan_ends: Dict[Tuple[int, int], float] = {}
 
         # Recent goals - to prevent circular patterns
         # Stores (cell, timestamp) of recent goal selections
@@ -151,8 +155,10 @@ rclpy.shutdown()
         # Thread to send coordinates via stdin when goal changes
         def update_loop():
             while self.running and self.debug_marker:
-                if self.goal_point:
-                    x, y = self.goal_point
+                with self._goal_lock:
+                    goal = self.goal_point
+                if goal:
+                    x, y = goal
                     try:
                         self._marker_proc.stdin.write(f'{x},{y}\n'.encode())
                         self._marker_proc.stdin.flush()
@@ -162,6 +168,20 @@ rclpy.shutdown()
 
         self._marker_thread = threading.Thread(target=update_loop, daemon=True)
         self._marker_thread.start()
+
+    def _stop_marker_thread(self):
+        """Stop the marker publisher subprocess."""
+        if self._marker_proc:
+            try:
+                self._marker_proc.terminate()
+                self._marker_proc.wait(timeout=2)
+                print("[MARKER] Publisher stopped")
+            except Exception:
+                try:
+                    self._marker_proc.kill()
+                except Exception:
+                    pass
+            self._marker_proc = None
 
     def run(self):
         """Main loop: select goal -> drive to goal -> repeat."""
@@ -219,7 +239,7 @@ rclpy.shutdown()
                 # Front distance
                 front_min = min(sectors[11], sectors[0], sectors[1])
                 if front_min < 0.05:
-                    front_min = 1.0  # Blind spot, assume clear
+                    front_min = 0.05  # Blind spot - treat as very close, trigger backup
 
                 # === 2. CHECK IF NEED NEW GOAL ===
                 need_new_goal = False
@@ -241,7 +261,8 @@ rclpy.shutdown()
                 if need_new_goal:
                     new_goal, goal_sector = self._select_goal_point(sectors)
                     if new_goal:
-                        self.goal_point = new_goal
+                        with self._goal_lock:
+                            self.goal_point = new_goal
                         self.goal_set_time = time.time()
                         self.locked_heading = None  # Clear heading lock for new goal
                         dist = math.sqrt((new_goal[0] - self.current_pos[0])**2 +
@@ -252,7 +273,7 @@ rclpy.shutdown()
 
                         # Print goal info (debug scoring is printed in _select_goal_point)
                         print(f"[GOAL] Selected: ({new_goal[0]:.2f}, {new_goal[1]:.2f}) "
-                              f"dist={dist:.2f}m sector={goal_sector} reason={reason}")
+                              f"dist={dist:.2f}m angle={goal_sector}° reason={reason}")
                     else:
                         # No valid goal found - backup
                         print(f"\n[NO GOAL] No valid viewpoint found, backing up")
@@ -265,7 +286,8 @@ rclpy.shutdown()
                     print(f"\n[BACKUP] front={front_min:.2f}m")
                     self._backup(sectors)
                     self.backups += 1
-                    self.goal_point = None  # Force replan
+                    with self._goal_lock:
+                        self.goal_point = None  # Force replan
                     continue
 
                 # === 4. DRIVE TO GOAL ===
@@ -286,7 +308,9 @@ rclpy.shutdown()
         except KeyboardInterrupt:
             print("\n\nStopping (Ctrl+C)...")
         finally:
+            self.running = False
             send_velocity_cmd(0.0, 0.0)
+            self._stop_marker_thread()
             self._print_stats()
 
     def _select_goal_point(self, sectors: List[float]) -> Tuple[Optional[Tuple[float, float]], Optional[int]]:
@@ -317,51 +341,82 @@ rclpy.shutdown()
         # Collect all candidates with scores for debug
         candidates = []
 
-        # Evaluate candidate points in full 360° EXCEPT back blind spot
-        # Exclude sectors 5, 6, 7 (back: +150° to -150°)
-        # Include: 0 (front), 1-4 (left side), 8-11 (right side)
-        candidate_sectors = [0, 1, 2, 3, 4, 8, 9, 10, 11]
+        # Evaluate ~50 candidate points distributed across 300° arc (excluding back 60°)
+        # 13 angles × 4 distances = 52 potential points
+        #
+        # Angular range: -150° to +150° (300° total, excluding back blind spot)
+        # That's sectors 0-4 (front to left-back) and 8-11 (right-back to front-right)
+        num_angles = 13
+        num_distances = 4
 
-        for sector_idx in candidate_sectors:
+        # Generate equally spaced angles from -150° to +150° (in radians)
+        angle_start = -150.0 * math.pi / 180.0  # -150° = right-back
+        angle_end = 150.0 * math.pi / 180.0     # +150° = left-back
+        angle_step = (angle_end - angle_start) / (num_angles - 1)
+
+        # Generate equally spaced distances from min to max goal distance
+        dist_step = (self.max_goal_dist - self.min_goal_dist) / (num_distances - 1)
+        candidate_distances = [self.min_goal_dist + i * dist_step for i in range(num_distances)]
+
+        for angle_idx in range(num_angles):
+            # Robot-frame angle for this candidate direction
+            robot_angle = angle_start + angle_idx * angle_step
+            world_angle = self.current_heading + robot_angle
+
+            # Find which sector this angle falls into for obstacle checking
+            sector_idx = self._angle_to_sector(robot_angle)
             sector_dist = sectors[sector_idx]
 
-            if sector_dist < self.min_goal_dist + 0.2:
-                # Sector too blocked
+            if sector_dist < self.min_goal_dist + 0.1:
+                # Direction too blocked
                 continue
 
             # Don't place goal at the wall - leave margin
             max_dist = min(sector_dist - 0.3, self.max_goal_dist)
 
-            # Try points at different distances
-            for dist in [0.5, 0.8, 1.0, 1.2, 1.5]:
-                if dist < self.min_goal_dist or dist > max_dist:
+            for dist in candidate_distances:
+                if dist > max_dist:
                     continue
 
                 # Calculate world position of candidate point
-                angle = self._sector_to_angle(sector_idx)
-                world_angle = self.current_heading + angle
                 px = self.current_pos[0] + dist * math.cos(world_angle)
                 py = self.current_pos[1] + dist * math.sin(world_angle)
 
+                # FILTER: Skip points too close to known walls
+                point_cell = self._pos_to_cell(px, py)
+                near_wall = False
+                for dx in [-1, 0, 1]:
+                    for dy in [-1, 0, 1]:
+                        neighbor = (point_cell[0] + dx, point_cell[1] + dy)
+                        if self.scan_ends.get(neighbor, 0) > 0:
+                            near_wall = True
+                            break
+                    if near_wall:
+                        break
+                if near_wall:
+                    continue  # Discard this candidate entirely
+
                 # Score this viewpoint with detailed breakdown
                 score, breakdown = self._score_viewpoint_debug(px, py, sector_idx, dist, sectors)
-                candidates.append((score, sector_idx, dist, px, py, breakdown))
+                angle_deg = int(robot_angle * 180 / math.pi)
+                candidates.append((score, angle_deg, dist, px, py, breakdown))
 
                 if score > best_score:
                     best_score = score
                     best_point = (px, py)
-                    best_sector = sector_idx
+                    best_sector = angle_deg  # Store angle in degrees for display
                     best_scores = breakdown
 
         # Debug output: show top candidates
         if candidates:
             candidates.sort(key=lambda x: x[0], reverse=True)
-            print(f"\n[GOAL SELECT] Top candidates (scanned={len(self.scanned)} cells, recent_goals={len(self.recent_goals)}):")
-            for i, (score, sec, d, px, py, brk) in enumerate(candidates[:5]):
+            print(f"\n[GOAL SELECT] Top {min(5, len(candidates))}/{len(candidates)} candidates "
+                  f"(scanned={len(self.scanned)} walls={len(self.scan_ends)}):")
+            for i, (score, ang, d, px, py, brk) in enumerate(candidates[:5]):
                 marker = " <-- BEST" if i == 0 else ""
-                print(f"  #{i+1} sec={sec:2d} d={d:.1f}m pos=({px:.2f},{py:.2f}) "
+                print(f"  #{i+1} ang={ang:+4d}° d={d:.2f}m pos=({px:.2f},{py:.2f}) "
                       f"score={score:+.1f} [open={brk['open']:+.1f} unscan={brk['unscan']:+.1f} "
-                      f"recent={brk['recent']:+.1f} wall={brk['wall']:+.1f}]{marker}")
+                      f"visit={brk['visited']:+.1f} wall={brk['wall']:+.1f}]{marker}")
 
         # Record this goal to prevent cycling back
         if best_point:
@@ -375,7 +430,7 @@ rclpy.shutdown()
         """Score viewpoint and return breakdown for debugging."""
         point_cell = self._pos_to_cell(px, py)
         now = time.time()
-        breakdown = {'open': 0.0, 'unscan': 0.0, 'recent': 0.0, 'wall': 0.0, 'dist': 0.0}
+        breakdown = {'open': 0.0, 'unscan': 0.0, 'recent': 0.0, 'wall': 0.0, 'visited': 0.0, 'dist': 0.0}
 
         # === Factor 1: OPENNESS (DOMINANT) ===
         openness_score = 0.0
@@ -422,20 +477,29 @@ rclpy.shutdown()
         breakdown['recent'] = -recent_penalty
 
         # === Factor 4: WALL AVOIDANCE ===
+        # Note: Most near-wall points are already filtered out in _select_goal_point
+        # This is a safety net for walls detected after initial filtering
         wall_penalty = 0.0
-        scan_end_count = self.scan_ends.get(point_cell, 0)
-        if scan_end_count > 0:
-            wall_penalty += scan_end_count * 2.0
-
-        for dx in [-1, 0, 1]:
-            for dy in [-1, 0, 1]:
-                if dx == 0 and dy == 0:
-                    continue
-                neighbor = (point_cell[0] + dx, point_cell[1] + dy)
-                wall_penalty += self.scan_ends.get(neighbor, 0) * 0.5
+        if self.scan_ends.get(point_cell, 0) > 0:
+            wall_penalty = 10.0  # Strong penalty if somehow a wall cell got through
         breakdown['wall'] = -wall_penalty
 
-        # === Factor 5: DISTANCE EFFICIENCY ===
+        # === Factor 5: VISITED PENALTY ===
+        # Strongly penalize going back to places we've already been
+        visited_penalty = 0.0
+        for dx in [-1, 0, 1]:
+            for dy in [-1, 0, 1]:
+                neighbor = (point_cell[0] + dx, point_cell[1] + dy)
+                visit_count = self.visited.get(neighbor, 0)
+                if visit_count > 0:
+                    # Strong penalty for revisiting - scales with visit count
+                    if dx == 0 and dy == 0:
+                        visited_penalty += visit_count * 3.0  # Exact cell - strongest
+                    else:
+                        visited_penalty += visit_count * 1.0  # Adjacent cells
+        breakdown['visited'] = -visited_penalty
+
+        # === Factor 6: DISTANCE EFFICIENCY ===
         breakdown['dist'] = dist * 0.3
 
         total = sum(breakdown.values())
@@ -470,11 +534,12 @@ rclpy.shutdown()
                 self.scanned[cell] = now
 
             # Record wall position (scan end) if not max range
+            # Use timestamp instead of count to avoid runaway accumulation
             if dist < 3.0:
                 wall_x = self.current_pos[0] + dist * math.cos(world_angle)
                 wall_y = self.current_pos[1] + dist * math.sin(world_angle)
                 wall_cell = self._pos_to_cell(wall_x, wall_y)
-                self.scan_ends[wall_cell] = self.scan_ends.get(wall_cell, 0) + 1
+                self.scan_ends[wall_cell] = now  # Store timestamp, not count
 
     def _goal_reached(self) -> bool:
         """Check if current goal is reached."""
@@ -577,12 +642,12 @@ rclpy.shutdown()
             send_velocity_cmd(-0.05, 0.0)
             time.sleep(0.1)
 
-        # Turn toward more open side
-        back_left = min(sectors[3], sectors[4], sectors[5])
-        back_right = min(sectors[7], sectors[8], sectors[9])
+        # Turn toward more open side (check front-left vs front-right after backup)
+        front_left = min(sectors[1], sectors[2], sectors[3])
+        front_right = min(sectors[9], sectors[10], sectors[11])
 
-        turn_w = 0.5 if back_left > back_right else -0.5
-        print(f"[BACKUP] Turning {'left' if turn_w > 0 else 'right'}")
+        turn_w = 0.5 if front_left > front_right else -0.5
+        print(f"[BACKUP] Turning {'left' if turn_w > 0 else 'right'} (L={front_left:.2f} R={front_right:.2f})")
 
         for _ in range(10):
             send_velocity_cmd(0.0, turn_w)
@@ -619,6 +684,15 @@ rclpy.shutdown()
     def _pos_to_cell(self, x: float, y: float) -> Tuple[int, int]:
         """Convert position to grid cell."""
         return (int(x / self.grid_res), int(y / self.grid_res))
+
+    def __del__(self):
+        """Cleanup subprocess on destruction."""
+        if hasattr(self, '_marker_proc') and self._marker_proc:
+            try:
+                self._marker_proc.terminate()
+                self._marker_proc.wait(timeout=1)
+            except:
+                pass
 
     def _print_stats(self):
         """Print final statistics."""
