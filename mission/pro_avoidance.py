@@ -622,8 +622,11 @@ class AdaptiveDWA:
                            min_distance: float) -> str:
         """Auto-detect environment type from sensor data."""
         front = sector_distances[0]
-        left = sector_distances[3]
-        right = sector_distances[9]
+        # Left (90°) and Right (-90°) sectors - computed from num_sectors
+        left_sector = self.num_sectors // 4       # 90° = 1/4 of full circle
+        right_sector = 3 * self.num_sectors // 4  # -90° = 3/4 of full circle
+        left = sector_distances[left_sector]
+        right = sector_distances[right_sector]
 
         num_close = sum(1 for d in sector_distances if 0 < d < min_distance + 0.1)
         avg_dist = sum(d for d in sector_distances if d > 0) / max(1, sum(1 for d in sector_distances if d > 0))

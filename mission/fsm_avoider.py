@@ -20,7 +20,7 @@ from .pro_avoidance import ProObstacleAvoider
 from .ros_interface import get_lidar_scan, send_velocity_cmd, get_odometry
 from .avoider.lidar import compute_sector_distances
 from .constants import (
-    ROBOT_WIDTH, NUM_SECTORS,
+    ROBOT_WIDTH, NUM_SECTORS, SECTOR_BACK,
     SECTORS_FRONT_ARC, SECTORS_LEFT, SECTORS_RIGHT,
     SECTORS_BACK, SECTORS_BACK_LEFT, SECTORS_BACK_RIGHT
 )
@@ -333,9 +333,9 @@ class FSMAvoider:
         right_side_clear = min(sectors[s] for s in SECTORS_BACK_RIGHT)
 
         # Find best BACK sector (avoid front entirely)
-        # Uses SECTORS_BACK from constants
-        best_back_sector = 6  # Default: straight back
-        best_back_dist = sectors[6]
+        # Uses SECTORS_BACK from constants, SECTOR_BACK = straight back (180°)
+        best_back_sector = SECTOR_BACK  # Default: straight back
+        best_back_dist = sectors[SECTOR_BACK]
 
         for sector_idx in SECTORS_BACK:  # Only consider back sectors
             if sectors[sector_idx] > best_back_dist:
@@ -343,18 +343,18 @@ class FSMAvoider:
                 best_back_sector = sector_idx
 
         # Determine turn direction based on best back sector
-        # Sectors 4, 5, 6 = back-left → turn left (positive)
-        # Sectors 6, 7, 8 = back-right → turn right (negative)
-        if best_back_sector <= 5:
+        # Sectors < SECTOR_BACK (30) = back-left → turn left (positive)
+        # Sectors > SECTOR_BACK (30) = back-right → turn right (negative)
+        if best_back_sector < SECTOR_BACK:
             # Back-left is more open
             turn_dir = 0.5
             print(f"[ESCAPE] Turning left toward back-sector {best_back_sector} ({sectors[best_back_sector]:.2f}m)")
-        elif best_back_sector >= 7:
+        elif best_back_sector > SECTOR_BACK:
             # Back-right is more open
             turn_dir = -0.5
             print(f"[ESCAPE] Turning right toward back-sector {best_back_sector} ({sectors[best_back_sector]:.2f}m)")
         else:
-            # Sector 6 = straight back, use side clearance to decide
+            # Sector = straight back, use side clearance to decide
             if left_side_clear > right_side_clear:
                 turn_dir = 0.5
                 print(f"[ESCAPE] Back open, turning left (L={left_side_clear:.2f}m > R={right_side_clear:.2f}m)")

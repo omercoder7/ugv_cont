@@ -45,8 +45,9 @@ DEFAULT_SCAN_RATE = 5.0   # Hz - subsample from ~10Hz LiDAR
 DEFAULT_ODOM_RATE = 10.0  # Hz
 DEFAULT_IMU_RATE = 10.0   # Hz
 
-# LiDAR rotation offset (from auto_scan.py)
-LIDAR_ROTATION_SECTORS = 3
+# LiDAR rotation offset (from constants.py)
+# With 60 sectors (6° each): 15 sectors = 90° rotation
+LIDAR_ROTATION_SECTORS = 15
 
 
 @dataclass

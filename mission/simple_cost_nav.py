@@ -22,7 +22,7 @@ from typing import Optional, List, Tuple, Dict, Set
 
 from .ros_interface import get_lidar_scan, send_velocity_cmd, get_odometry, publish_goal_marker
 from .avoider.lidar import compute_sector_distances
-from .constants import NUM_SECTORS, CONTAINER_NAME
+from .constants import NUM_SECTORS, CONTAINER_NAME, SECTORS_FRONT_ARC, SECTORS_LEFT, SECTORS_RIGHT
 
 
 class NBVNavigator:
@@ -236,8 +236,8 @@ rclpy.shutdown()
                 # Record scan ends (where LiDAR hits walls)
                 self._record_scan_coverage(sectors)
 
-                # Front distance
-                front_min = min(sectors[11], sectors[0], sectors[1])
+                # Front distance (use SECTORS_FRONT_ARC from constants)
+                front_min = min(sectors[s] for s in SECTORS_FRONT_ARC)
                 if front_min < 0.05:
                     front_min = 0.05  # Blind spot - treat as very close, trigger backup
 
@@ -669,9 +669,9 @@ rclpy.shutdown()
             send_velocity_cmd(-0.05, 0.0)
             time.sleep(0.1)
 
-        # Turn toward more open side (check front-left vs front-right after backup)
-        front_left = min(sectors[1], sectors[2], sectors[3])
-        front_right = min(sectors[9], sectors[10], sectors[11])
+        # Turn toward more open side (use SECTORS_LEFT/RIGHT from constants)
+        front_left = min(sectors[s] for s in SECTORS_LEFT)
+        front_right = min(sectors[s] for s in SECTORS_RIGHT)
 
         turn_w = 0.5 if front_left > front_right else -0.5
         print(f"[BACKUP] Turning {'left' if turn_w > 0 else 'right'} (L={front_left:.2f} R={front_right:.2f})")

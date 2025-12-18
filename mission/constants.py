@@ -8,41 +8,34 @@ CONTAINER_NAME = "ugv_rpi_ros_humble"
 # =============================================================================
 # SECTOR DEFINITIONS (Robot Frame)
 # =============================================================================
-# 12 sectors, 30° each, numbered 0-11
-#
-#                    FRONT
-#                      0 (0°)
-#               11 (-30°)  1 (+30°)
-#           10 (-60°)          2 (+60°)
-#         9 (-90°)                3 (+90°)
-#           8 (-120°)          4 (+120°)
-#               7 (-150°)  5 (+150°)
-#                      6 (±180°)
-#                     BACK
+# 60 sectors, 6° each, numbered 0-59
 #
 # Convention:
 #   - Sector 0 = FRONT (0°)
-#   - Sectors 1-6 = LEFT side (positive angles: +30° to +180°)
-#   - Sectors 7-11 = RIGHT side (negative angles: -150° to -30°)
+#   - Sectors 1-30 = LEFT side (positive angles: +6° to +180°)
+#   - Sectors 31-59 = RIGHT side (negative angles: -174° to -6°)
 #   - Positive angular velocity = turn LEFT
 #   - Negative angular velocity = turn RIGHT
 # =============================================================================
 
-NUM_SECTORS = 12  # 360 / 12 = 30° per sector
+NUM_SECTORS = 60  # 360 / 60 = 6° per sector
 
 # Sector groups for obstacle detection
+# With 60 sectors, each sector = 6°
 SECTOR_FRONT = 0
-SECTORS_FRONT_ARC = (11, 0, 1)       # Front ±30° (right-front, front, left-front)
-SECTORS_LEFT = (1, 2, 3)             # Left side: +30° to +90°
-SECTORS_RIGHT = (9, 10, 11)          # Right side: -90° to -30°
-SECTORS_BACK = (4, 5, 6, 7, 8)       # Back: +120° to -120°
-SECTORS_BACK_LEFT = (3, 4, 5)        # Back-left: +90° to +150°
-SECTORS_BACK_RIGHT = (7, 8, 9)       # Back-right: -150° to -90°
+SECTOR_BACK = 30                               # Straight back (180°)
+SECTORS_FRONT_ARC = tuple(range(55, 60)) + tuple(range(0, 6))  # Front ±30° (10 sectors)
+SECTORS_LEFT = tuple(range(1, 16))              # Left side: +6° to +90° (15 sectors)
+SECTORS_RIGHT = tuple(range(46, 60))            # Right side: -84° to -6° (14 sectors)
+SECTORS_BACK = tuple(range(16, 46))             # Back: +96° to -90° (30 sectors)
+SECTORS_BACK_LEFT = tuple(range(16, 26))        # Back-left: +96° to +150° (10 sectors)
+SECTORS_BACK_RIGHT = tuple(range(36, 46))       # Back-right: -144° to -90° (10 sectors)
 
 # LiDAR orientation calibration:
 # Physical mounting: LiDAR 0 is offset from robot chassis front by ~270°
-# Robot FRONT = LiDAR sector 9 (270-300°)
-LIDAR_ROTATION_SECTORS = 3  # Calibrated: LiDAR 270° = Robot FRONT
+# Robot FRONT = LiDAR ~270° region
+# With 60 sectors (6° each): 15 sectors = 90° rotation
+LIDAR_ROTATION_SECTORS = 15  # Calibrated: LiDAR 270° = Robot FRONT
 
 # LiDAR position offset calibration:
 # The LiDAR is mounted ~37cm behind the robot's front edge.
