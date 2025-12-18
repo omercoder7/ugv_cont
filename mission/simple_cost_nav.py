@@ -482,18 +482,21 @@ rclpy.shutdown()
         breakdown['wall'] = -wall_penalty
 
         # === Factor 5: VISITED PENALTY ===
-        # Strongly penalize going back to places we've already been
+        # Penalize revisiting, but with diminishing returns (log scale)
+        # This prevents the penalty from growing unbounded
         visited_penalty = 0.0
         for dx in [-1, 0, 1]:
             for dy in [-1, 0, 1]:
                 neighbor = (point_cell[0] + dx, point_cell[1] + dy)
                 visit_count = self.visited.get(neighbor, 0)
                 if visit_count > 0:
-                    # Strong penalty for revisiting - scales with visit count
+                    # Use log scale: penalty grows slowly after first few visits
+                    # log(1)=0, log(2)=0.7, log(10)=2.3, log(100)=4.6
+                    log_penalty = math.log(1 + visit_count)
                     if dx == 0 and dy == 0:
-                        visited_penalty += visit_count * 3.0  # Exact cell - strongest
+                        visited_penalty += log_penalty * 2.0  # Exact cell
                     else:
-                        visited_penalty += visit_count * 1.0  # Adjacent cells
+                        visited_penalty += log_penalty * 0.5  # Adjacent cells
         breakdown['visited'] = -visited_penalty
 
         # === Factor 6: DISTANCE EFFICIENCY ===
