@@ -523,11 +523,12 @@ rclpy.shutdown()
             world_angle = self.current_heading + angle
 
             # Record all cells along the scan ray as "scanned"
-            # Sample points from robot to the scan endpoint
+            # Use adaptive step size based on grid resolution
             scan_dist = min(dist, 3.0)  # Cap at 3m
-            for d in [0.3, 0.6, 0.9, 1.2, 1.5, 1.8, 2.1, 2.4, 2.7, 3.0]:
-                if d > scan_dist:
-                    break
+            step = self.grid_res * 0.8  # Slight overlap to avoid gaps
+            num_steps = int(scan_dist / step)
+            for i in range(1, num_steps + 1):
+                d = i * step
                 px = self.current_pos[0] + d * math.cos(world_angle)
                 py = self.current_pos[1] + d * math.sin(world_angle)
                 cell = self._pos_to_cell(px, py)
