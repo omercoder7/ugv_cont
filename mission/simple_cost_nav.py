@@ -382,19 +382,10 @@ rclpy.shutdown()
                 px = self.current_pos[0] + dist * math.cos(world_angle)
                 py = self.current_pos[1] + dist * math.sin(world_angle)
 
-                # FILTER: Skip points too close to known walls
+                # FILTER: Skip points that are directly ON a known wall cell
                 point_cell = self._pos_to_cell(px, py)
-                near_wall = False
-                for dx in [-1, 0, 1]:
-                    for dy in [-1, 0, 1]:
-                        neighbor = (point_cell[0] + dx, point_cell[1] + dy)
-                        if self.scan_ends.get(neighbor, 0) > 0:
-                            near_wall = True
-                            break
-                    if near_wall:
-                        break
-                if near_wall:
-                    continue  # Discard this candidate entirely
+                if self.scan_ends.get(point_cell, 0) > 0:
+                    continue  # Discard - this is a wall cell
 
                 # Score this viewpoint with detailed breakdown
                 score, breakdown = self._score_viewpoint_debug(px, py, sector_idx, dist, sectors)
@@ -477,11 +468,17 @@ rclpy.shutdown()
         breakdown['recent'] = -recent_penalty
 
         # === Factor 4: WALL AVOIDANCE ===
-        # Note: Most near-wall points are already filtered out in _select_goal_point
-        # This is a safety net for walls detected after initial filtering
+        # Points directly on walls are filtered in _select_goal_point
+        # Here we penalize being adjacent to walls
         wall_penalty = 0.0
-        if self.scan_ends.get(point_cell, 0) > 0:
-            wall_penalty = 10.0  # Strong penalty if somehow a wall cell got through
+        for dx in [-1, 0, 1]:
+            for dy in [-1, 0, 1]:
+                neighbor = (point_cell[0] + dx, point_cell[1] + dy)
+                if self.scan_ends.get(neighbor, 0) > 0:
+                    if dx == 0 and dy == 0:
+                        wall_penalty += 10.0  # On wall (shouldn't happen, filtered)
+                    else:
+                        wall_penalty += 2.0   # Adjacent to wall
         breakdown['wall'] = -wall_penalty
 
         # === Factor 5: VISITED PENALTY ===
