@@ -1150,12 +1150,52 @@ rclpy.shutdown()
                         # Track time spent in TURN mode - if too long, force backup
                         if not self.was_in_turn_mode:
                             self.turn_mode_start_time = time.time()
+                            self.turn_mode_positions = []  # Track positions during TURN mode
                             self.was_in_turn_mode = True
+                            # Debug: Print why we're entering TURN mode
+                            elapsed_total = time.time() - self.start_time
+                            print(f"\n[{elapsed_total:5.1f}s] [TURN ENTER] Entering TURN mode")
+                            self._goal_blocked(sectors, debug=True)
+                            self._compute_blocked_turn(sectors, debug=True)
                         else:
+                            # Track position during TURN mode
+                            if hasattr(self, 'turn_mode_positions'):
+                                self.turn_mode_positions.append((
+                                    self.current_pos[0], self.current_pos[1],
+                                    math.degrees(self.current_heading) if self.current_heading else 0
+                                ))
+
                             turn_duration = time.time() - self.turn_mode_start_time
                             if turn_duration > self.turn_mode_timeout:
                                 elapsed_total = time.time() - self.start_time
                                 print(f"\n[{elapsed_total:5.1f}s] [TURN STUCK] In TURN mode for {turn_duration:.1f}s, backing up")
+
+                                # Debug: Show position history during TURN mode
+                                if hasattr(self, 'turn_mode_positions') and self.turn_mode_positions:
+                                    positions = self.turn_mode_positions
+                                    print(f"[TURN STUCK] Position history ({len(positions)} samples):")
+                                    # Show first, middle, and last positions
+                                    if len(positions) >= 3:
+                                        first = positions[0]
+                                        mid = positions[len(positions)//2]
+                                        last = positions[-1]
+                                        print(f"  First: ({first[0]:.2f}, {first[1]:.2f}) heading={first[2]:.1f}°")
+                                        print(f"  Mid:   ({mid[0]:.2f}, {mid[1]:.2f}) heading={mid[2]:.1f}°")
+                                        print(f"  Last:  ({last[0]:.2f}, {last[1]:.2f}) heading={last[2]:.1f}°")
+                                        # Calculate movement
+                                        pos_change = math.sqrt((last[0]-first[0])**2 + (last[1]-first[1])**2)
+                                        heading_change = abs(last[2] - first[2])
+                                        print(f"  Movement: {pos_change:.3f}m, heading change: {heading_change:.1f}°")
+                                    else:
+                                        for i, pos in enumerate(positions):
+                                            print(f"  [{i}]: ({pos[0]:.2f}, {pos[1]:.2f}) heading={pos[2]:.1f}°")
+
+                                # Debug: Show current sector readings
+                                print(f"[TURN STUCK] Current front sectors: ", end="")
+                                for s in SECTORS_FRONT_ARC:
+                                    print(f"s{s}={sectors[s]:.2f} ", end="")
+                                print()
+
                                 self._backup_toward_clear_side(sectors)
                                 self.backups += 1
                                 self.was_in_turn_mode = False
@@ -1634,7 +1674,7 @@ rclpy.shutdown()
                         (self.goal_point[1] - self.current_pos[1])**2)
         return dist < self.goal_reached_dist
 
-    def _goal_blocked(self, sectors: List[float]) -> bool:
+    def _goal_blocked(self, sectors: List[float], debug: bool = False) -> bool:
         """Check if path to goal is blocked.
 
         Only considers the goal blocked if:
@@ -1645,6 +1685,8 @@ rclpy.shutdown()
         needs to turn first, which is handled by normal velocity control.
         """
         if not self.goal_point or not self.current_pos or self.current_heading is None:
+            if debug:
+                print(f"\n[BLOCKED DEBUG] No goal/pos/heading - returning True")
             return True
 
         # Calculate angle to goal
@@ -1659,18 +1701,33 @@ rclpy.shutdown()
         # Only check for blocked if goal is in front arc (±45°)
         # If goal is to the side or behind, robot needs to turn first - not blocked
         if abs(goal_robot_angle) > 0.8:  # ~45 degrees
+            if debug:
+                print(f"\n[BLOCKED DEBUG] Goal angle {math.degrees(goal_robot_angle):.1f}° > 45° - returning False (need to turn first)")
             return False  # Goal not in front - let normal control handle turning
 
         # Check front sectors for obstacles
         # Filter out blind spots
         front_vals = [sectors[s] for s in SECTORS_FRONT_ARC if sectors[s] > 0.01]
         if not front_vals:
+            if debug:
+                print(f"\n[BLOCKED DEBUG] All front sectors blind - returning False")
             return False  # All blind spots - assume clear
 
         front_min = min(front_vals)
 
         # Blocked if obstacle in front is closer than goal
-        if front_min < goal_dist - self.blocked_margin:
+        blocked = front_min < goal_dist - self.blocked_margin
+
+        if debug:
+            # Show front sector readings
+            front_readings = {s: sectors[s] for s in SECTORS_FRONT_ARC}
+            print(f"\n[BLOCKED DEBUG] Goal angle: {math.degrees(goal_robot_angle):.1f}°, "
+                  f"goal_dist: {goal_dist:.2f}m, front_min: {front_min:.2f}m, "
+                  f"margin: {self.blocked_margin:.2f}m")
+            print(f"[BLOCKED DEBUG] Check: {front_min:.2f} < {goal_dist:.2f} - {self.blocked_margin:.2f} = {goal_dist - self.blocked_margin:.2f}? {blocked}")
+            print(f"[BLOCKED DEBUG] Front sectors (55-59,0-5): {front_readings}")
+
+        if blocked:
             return True
 
         return False
@@ -1762,7 +1819,7 @@ rclpy.shutdown()
 
         return v, w
 
-    def _compute_blocked_turn(self, sectors: List[float]) -> Tuple[float, float]:
+    def _compute_blocked_turn(self, sectors: List[float], debug: bool = False) -> Tuple[float, float]:
         """
         When goal is blocked, turn toward the goal direction while avoiding obstacles.
 
@@ -1804,6 +1861,9 @@ rclpy.shutdown()
             # Always maintain minimum angular velocity to avoid getting stuck
             if abs(w) < 0.15:
                 w = 0.15 if w >= 0 else -0.15
+            if debug:
+                print(f"\n[BLOCKED TURN] No open sector found (need >{min_clearance:.1f}m), "
+                      f"turning toward goal. goal_angle={math.degrees(goal_robot_angle):.1f}°, w={w:.2f}")
             return 0.0, w
 
         # Turn toward the best open sector - smooth proportional control
@@ -1826,6 +1886,11 @@ rclpy.shutdown()
             # If not moving forward, ensure we're at least turning
             if abs(w) < 0.15:
                 w = 0.15 if angle_error >= 0 else -0.15
+
+        if debug:
+            print(f"\n[BLOCKED TURN] goal_sector={goal_sector}, best_sector={best_sector} "
+                  f"(dist={best_dist:.2f}m), target_angle={math.degrees(target_angle):.1f}°, "
+                  f"angle_error={math.degrees(angle_error):.1f}°, v={v:.2f}, w={w:.2f}")
 
         return v, w
 
