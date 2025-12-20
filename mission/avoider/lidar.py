@@ -48,17 +48,14 @@ def compute_sector_distances(scan_ranges: List[float],
         if valid:
             lidar_distances[lidar_sector] = min(valid)
         else:
-            # Check for very close obstacles
+            # Check for any readings at all
             any_reading = [r for r in sector_ranges if 0.02 < r < 10.0]
             if any_reading:
-                min_reading = min(any_reading)
-                if min_reading < robot_radius:
-                    lidar_distances[lidar_sector] = min_reading
-                else:
-                    lidar_distances[lidar_sector] = 0.0
+                # Use the minimum reading, even if it's close to robot
+                lidar_distances[lidar_sector] = min(any_reading)
             else:
-                # No readings - BLIND SPOT
-                lidar_distances[lidar_sector] = 0.0
+                # No valid readings - true blind spot, assume far
+                lidar_distances[lidar_sector] = 5.0
 
     # Convert to robot frame (rotate by calibrated offset)
     sector_distances = [5.0] * NUM_SECTORS

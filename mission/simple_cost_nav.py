@@ -66,6 +66,12 @@ class NBVNavigator:
         self.locked_heading: Optional[float] = None
         self.heading_lock_gain = 1.5  # Stronger correction for drift
 
+        # Velocity smoothing - track previous commands for ramping
+        self.last_v = 0.0
+        self.last_w = 0.0
+        self.max_linear_accel = 0.03   # Max linear velocity change per 0.1s cycle
+        self.max_angular_accel = 0.25  # Max angular velocity change per 0.1s cycle
+
         # Visited cells (for avoiding revisits) - tracks robot position history
         # Key: cell, Value: timestamp of last visit (for time-decay penalty)
         self.visited: Dict[Tuple[int, int], float] = {}
@@ -247,9 +253,13 @@ rclpy.shutdown()
                 self._record_scan_coverage(scan)
 
                 # Front distance (use SECTORS_FRONT_ARC from constants)
-                front_min = min(sectors[s] for s in SECTORS_FRONT_ARC)
-                if front_min < 0.05:
-                    front_min = 0.05  # Blind spot - treat as very close, trigger backup
+                # Filter out blind spots (0.0) - these are sensor gaps, not obstacles
+                front_sector_vals = [sectors[s] for s in SECTORS_FRONT_ARC if sectors[s] > 0.01]
+                if front_sector_vals:
+                    front_min = min(front_sector_vals)
+                else:
+                    # All sectors are blind - assume clear (will recheck next cycle)
+                    front_min = 1.0
 
                 # === 2. CHECK IF NEED NEW GOAL ===
                 need_new_goal = False
@@ -287,7 +297,7 @@ rclpy.shutdown()
                             reason = "timeout"
 
                 if need_new_goal:
-                    new_goal, goal_sector = self._select_goal_point(sectors)
+                    new_goal, goal_sector = self._select_goal_point(sectors, scan)
                     if new_goal:
                         with self._goal_lock:
                             self.goal_point = new_goal
@@ -312,15 +322,16 @@ rclpy.shutdown()
                         # No valid goal found - backup
                         elapsed_total = time.time() - self.start_time
                         print(f"\n[{elapsed_total:5.1f}s] [NO GOAL] No valid viewpoint found, backing up")
-                        self._backup(sectors)
+                        self._backup(sectors, scan)
                         self.backups += 1
                         continue
 
                 # === 3. BACKUP if too close ===
-                if front_min < self.backup_threshold:
+                # Skip backup check for first 5 iterations to let sensors stabilize
+                if front_min < self.backup_threshold and self.iteration > 5:
                     elapsed_total = time.time() - self.start_time
                     print(f"\n[{elapsed_total:5.1f}s] [BACKUP] front={front_min:.2f}m")
-                    self._backup(sectors)
+                    self._backup(sectors, scan)
                     self.backups += 1
                     with self._goal_lock:
                         self.goal_point = None  # Force replan
@@ -335,6 +346,9 @@ rclpy.shutdown()
                     else:
                         v, w = self._compute_velocity_to_goal(front_min)
                         status_mode = "DRIVE"
+
+                    # Apply velocity ramping for smooth acceleration (Fix 1)
+                    v, w = self._ramp_velocity(v, w)
                     send_velocity_cmd(v, w)
 
                     # Status
@@ -355,7 +369,7 @@ rclpy.shutdown()
             self._stop_marker_thread()
             self._print_stats()
 
-    def _select_goal_point(self, sectors: List[float]) -> Tuple[Optional[Tuple[float, float]], Optional[int]]:
+    def _select_goal_point(self, sectors: List[float], raw_scan: List[float] = None) -> Tuple[Optional[Tuple[float, float]], Optional[int]]:
         """
         Select goal point that maximizes expected visibility gain.
 
@@ -436,6 +450,11 @@ rclpy.shutdown()
                     point_cell = self._pos_to_cell(px, py)
                     if self.scan_ends.get(point_cell, 0) > 0:
                         continue  # Discard - this is a wall cell
+
+                    # FILTER: Check angular opening (not just single ray)
+                    # Require 10° opening on each side to filter narrow slits and noise
+                    if raw_scan and not self._check_angular_opening(raw_scan, robot_angle, dist + 0.2, min_opening_deg=10.0):
+                        continue  # Discard - narrow slit or noise, robot can't fit
 
                     # Score this viewpoint with detailed breakdown
                     score, breakdown = self._score_viewpoint_debug(px, py, sector_idx, dist, sectors)
@@ -722,6 +741,69 @@ rclpy.shutdown()
                 wall_cell = self._pos_to_cell(wall_x, wall_y)
                 self.scan_ends[wall_cell] = now
 
+    def _check_angular_opening(self, raw_scan: List[float], robot_angle: float,
+                                required_dist: float, min_opening_deg: float = 10.0,
+                                min_pass_ratio: float = 0.7) -> bool:
+        """
+        Check if there's sufficient angular opening around a direction.
+
+        Verifies that not just the target direction is clear, but also adjacent
+        rays within min_opening_deg on each side can reach at least required_dist.
+        This filters out narrow slits and noise that the robot can't actually traverse.
+
+        Args:
+            raw_scan: Raw LiDAR scan data (~500 points)
+            robot_angle: Target direction in robot frame (radians)
+            required_dist: Minimum distance all rays must reach
+            min_opening_deg: Required opening on each side (degrees)
+            min_pass_ratio: Minimum fraction of rays that must pass (0.7 = 70%)
+
+        Returns:
+            True if opening is wide enough, False otherwise
+        """
+        if not raw_scan:
+            return False
+
+        n_points = len(raw_scan)
+        angle_per_point = 2 * math.pi / n_points
+
+        # LiDAR rotation offset (same as in _record_scan_coverage)
+        lidar_rotation_rad = 3 * (2 * math.pi / 12)  # 90° offset
+
+        # Convert robot_angle to LiDAR frame
+        lidar_angle = robot_angle - lidar_rotation_rad
+        # Normalize to [0, 2π)
+        while lidar_angle < 0:
+            lidar_angle += 2 * math.pi
+        while lidar_angle >= 2 * math.pi:
+            lidar_angle -= 2 * math.pi
+
+        # Find the LiDAR point index for this angle
+        center_idx = int(lidar_angle / angle_per_point) % n_points
+
+        # Calculate how many points correspond to min_opening_deg
+        opening_rad = min_opening_deg * math.pi / 180.0
+        points_per_side = max(1, int(opening_rad / angle_per_point))
+
+        # Count how many rays pass the distance check
+        total_rays = 0
+        passing_rays = 0
+
+        for offset in range(-points_per_side, points_per_side + 1):
+            idx = (center_idx + offset) % n_points
+            ray_dist = raw_scan[idx]
+            total_rays += 1
+
+            # Valid reading that reaches far enough
+            if 0.1 < ray_dist < 10.0 and ray_dist >= required_dist:
+                passing_rays += 1
+
+        # Require min_pass_ratio of rays to pass (robust to noise)
+        if total_rays == 0:
+            return False
+
+        return (passing_rays / total_rays) >= min_pass_ratio
+
     def _goal_reached(self) -> bool:
         """Check if current goal is reached."""
         if not self.goal_point or not self.current_pos:
@@ -759,10 +841,8 @@ rclpy.shutdown()
         """
         Compute velocity commands to drive toward goal.
 
-        Uses heading lock for drift correction:
-        - When aligned, lock in the target heading
-        - Continuously correct any drift from locked heading
-        - Stronger correction gain prevents sway
+        Uses smooth proportional control throughout (no bang-bang jumps).
+        Heading lock for drift correction when well-aligned.
         """
         if not self.goal_point or not self.current_pos or self.current_heading is None:
             return 0.0, 0.0
@@ -775,36 +855,32 @@ rclpy.shutdown()
         # Angle error (how much we need to turn to face goal)
         angle_error = self._normalize_angle(goal_world_angle - self.current_heading)
 
-        # Proportional control with HEADING LOCK for drift correction
-        if abs(angle_error) > 0.4:  # ~23 degrees - need to rotate
-            # Clear heading lock - we're rotating
+        # Smooth proportional angular velocity (Fix 3: no discrete jumps)
+        # Use proportional control throughout, clamped to max
+        max_w = 0.6  # Maximum angular velocity
+        w = angle_error * 1.5  # Proportional gain
+        w = max(-max_w, min(max_w, w))
+
+        # Linear velocity based on alignment (smooth transitions)
+        if abs(angle_error) > 0.4:  # ~23 degrees - rotate in place
             self.locked_heading = None
-            # Rotate in place - faster rotation
             v = 0.0
-            w = 0.7 if angle_error > 0 else -0.7
-
-        elif abs(angle_error) > 0.15:  # ~9-23 degrees - slow turn
-            # Clear heading lock - still turning
+        elif abs(angle_error) > 0.15:  # ~9-23 degrees - slow forward while turning
             self.locked_heading = None
-            v = self.linear_speed * 0.5
-            w = angle_error * 1.2  # Proportional
-
+            # Smooth speed reduction based on angle error
+            alignment_factor = 1.0 - (abs(angle_error) - 0.15) / 0.25
+            v = self.linear_speed * (0.3 + 0.2 * alignment_factor)
         else:
             # Aligned (<9°) - LOCK HEADING and drive straight with drift correction
             if self.locked_heading is None:
-                # Lock current goal heading (not current robot heading!)
                 self.locked_heading = goal_world_angle
 
-            # Calculate drift from locked heading
+            # Use locked heading for drift correction
             drift_error = self._normalize_angle(self.locked_heading - self.current_heading)
-
-            # Strong proportional correction to maintain locked heading
-            # This prevents sway/drift by continuously correcting
-            v = self.linear_speed
-            w = drift_error * self.heading_lock_gain  # Stronger gain for drift
-
-            # Limit correction to prevent oscillation
+            w = drift_error * self.heading_lock_gain
             w = max(-0.4, min(0.4, w))
+
+            v = self.linear_speed
 
         # Slow down if obstacle nearby
         if front_min < 0.5:
@@ -849,29 +925,59 @@ rclpy.shutdown()
                 break
 
         if best_sector is None:
-            # No open sector found, just rotate toward goal
-            w = 0.5 if goal_robot_angle > 0 else -0.5
+            # No open sector found - smooth proportional turn toward goal
+            max_w = 0.5
+            w = goal_robot_angle * 1.2
+            w = max(-max_w, min(max_w, w))
             return 0.0, w
 
-        # Turn toward the best open sector
+        # Turn toward the best open sector - smooth proportional control
         target_angle = self._sector_to_angle(best_sector)
         angle_error = self._normalize_angle(target_angle)
 
-        # Proportional turn with no forward motion
-        if abs(angle_error) > 0.1:
-            w = 0.6 if angle_error > 0 else -0.6
-        else:
-            # Aligned with open sector, creep forward slowly
-            w = angle_error * 1.0
+        # Smooth proportional turn (no bang-bang)
+        max_w = 0.5
+        w = angle_error * 1.5
+        w = max(-max_w, min(max_w, w))
 
-        # Small forward motion if we have some clearance ahead
-        front_min = min(sectors[11], sectors[0], sectors[1])
-        v = 0.03 if front_min > 0.3 else 0.0
+        # Small forward motion if aligned and have clearance ahead
+        front_min = min(sectors[s] for s in SECTORS_FRONT_ARC)
+        if abs(angle_error) < 0.15 and front_min > 0.3:
+            v = 0.03
+        else:
+            v = 0.0
 
         return v, w
 
-    def _backup(self, sectors: List[float]):
-        """Backup maneuver."""
+    def _ramp_velocity(self, target_v: float, target_w: float) -> Tuple[float, float]:
+        """
+        Apply acceleration limiting for smooth velocity transitions.
+
+        Limits how fast v and w can change per control cycle to prevent
+        jerky motion from sudden velocity jumps.
+        """
+        # Limit linear velocity change
+        v_diff = target_v - self.last_v
+        if abs(v_diff) > self.max_linear_accel:
+            v = self.last_v + self.max_linear_accel * (1.0 if v_diff > 0 else -1.0)
+        else:
+            v = target_v
+
+        # Limit angular velocity change
+        w_diff = target_w - self.last_w
+        if abs(w_diff) > self.max_angular_accel:
+            w = self.last_w + self.max_angular_accel * (1.0 if w_diff > 0 else -1.0)
+        else:
+            w = target_w
+
+        # Update state for next cycle
+        self.last_v = v
+        self.last_w = w
+
+        return v, w
+
+    def _backup(self, sectors: List[float], raw_scan: List[float] = None):
+        """Backup maneuver with smart turn direction."""
         print(f"\n[BACKUP] Reversing...")
 
         # Reverse
@@ -879,12 +985,34 @@ rclpy.shutdown()
             send_velocity_cmd(-0.05, 0.0)
             time.sleep(0.1)
 
-        # Turn toward more open side (use SECTORS_LEFT/RIGHT from constants)
-        front_left = min(sectors[s] for s in SECTORS_LEFT)
-        front_right = min(sectors[s] for s in SECTORS_RIGHT)
+        # Decide turn direction: prefer direction with valid angular openings
+        # Check left side (-90° to -30°) and right side (+30° to +90°) for traversable openings
+        left_openings = 0
+        right_openings = 0
 
-        turn_w = 0.5 if front_left > front_right else -0.5
-        print(f"[BACKUP] Turning {'left' if turn_w > 0 else 'right'} (L={front_left:.2f} R={front_right:.2f})")
+        if raw_scan:
+            # Check angles on left side (negative angles in robot frame)
+            for angle_deg in range(-90, -20, 10):
+                angle_rad = angle_deg * math.pi / 180.0
+                if self._check_angular_opening(raw_scan, angle_rad, 0.6, min_opening_deg=10.0):
+                    left_openings += 1
+
+            # Check angles on right side (positive angles in robot frame)
+            for angle_deg in range(30, 100, 10):
+                angle_rad = angle_deg * math.pi / 180.0
+                if self._check_angular_opening(raw_scan, angle_rad, 0.6, min_opening_deg=10.0):
+                    right_openings += 1
+
+        # Fallback to sector-based decision if no valid openings found
+        if left_openings == 0 and right_openings == 0:
+            front_left = min(sectors[s] for s in SECTORS_LEFT)
+            front_right = min(sectors[s] for s in SECTORS_RIGHT)
+            turn_w = 0.5 if front_left > front_right else -0.5
+            print(f"[BACKUP] Turning {'left' if turn_w > 0 else 'right'} (L={front_left:.2f} R={front_right:.2f}) [sector fallback]")
+        else:
+            # Turn toward side with more valid openings
+            turn_w = 0.5 if left_openings > right_openings else -0.5
+            print(f"[BACKUP] Turning {'left' if turn_w > 0 else 'right'} (L_openings={left_openings} R_openings={right_openings})")
 
         for _ in range(10):
             send_velocity_cmd(0.0, turn_w)
@@ -892,8 +1020,10 @@ rclpy.shutdown()
 
         send_velocity_cmd(0.0, 0.0)
 
-        # Clear heading lock after backup
+        # Clear heading lock and reset velocity state after backup
         self.locked_heading = None
+        self.last_v = 0.0
+        self.last_w = 0.0
 
     def _sector_to_angle(self, sector: int) -> float:
         """Convert sector index to angle in robot frame."""
