@@ -142,6 +142,12 @@ class NBVNavigator:
         self.turn_mode_timeout: float = 5.0  # Max time in TURN mode before forcing backup
         self.was_in_turn_mode: bool = False  # Track if we were in TURN mode last iteration
 
+        # Blocked direction tracking - penalize directions that repeatedly fail
+        # Key: sector (0-59), Value: (block_count, last_block_time)
+        self.blocked_directions: Dict[int, Tuple[int, float]] = {}
+        self.blocked_direction_memory: float = 30.0  # Forget after 30 seconds
+        self.blocked_direction_threshold: int = 3  # After 3 blocks, heavily penalize
+
     def _start_marker_thread(self):
         """Start persistent marker publisher that keeps the topic alive."""
         # Start persistent publisher in Docker that reads from stdin
@@ -1065,6 +1071,8 @@ rclpy.shutdown()
                     need_new_goal = True
                     reason = "reached"
                     self.goals_reached += 1
+                    # Clear blocked directions on success - we made it through
+                    self.blocked_directions.clear()
                 elif self._goal_blocked(sectors):
                     # Don't select new goal - keep current goal and try to navigate around
                     goal_blocked = True
@@ -1147,16 +1155,46 @@ rclpy.shutdown()
                         v, w = self._compute_blocked_turn(sectors)
                         status_mode = "TURN"
 
+                        # Record blocked direction for goal selection penalty
+                        dx = self.goal_point[0] - self.current_pos[0]
+                        dy = self.goal_point[1] - self.current_pos[1]
+                        goal_world_angle = math.atan2(dy, dx)
+                        goal_robot_angle = self._normalize_angle(goal_world_angle - self.current_heading)
+                        blocked_sector = self._angle_to_sector(goal_robot_angle)
+
                         # Track time spent in TURN mode - if too long, force backup
                         if not self.was_in_turn_mode:
                             self.turn_mode_start_time = time.time()
                             self.turn_mode_positions = []  # Track positions during TURN mode
                             self.was_in_turn_mode = True
+
+                            # Record this blocked direction
+                            now = time.time()
+                            if blocked_sector in self.blocked_directions:
+                                count, last_time = self.blocked_directions[blocked_sector]
+                                if now - last_time < self.blocked_direction_memory:
+                                    self.blocked_directions[blocked_sector] = (count + 1, now)
+                                else:
+                                    self.blocked_directions[blocked_sector] = (1, now)
+                            else:
+                                self.blocked_directions[blocked_sector] = (1, now)
+
                             # Debug: Print why we're entering TURN mode
                             elapsed_total = time.time() - self.start_time
-                            print(f"\n[{elapsed_total:5.1f}s] [TURN ENTER] Entering TURN mode")
+                            block_count = self.blocked_directions[blocked_sector][0]
+                            print(f"\n[{elapsed_total:5.1f}s] [TURN ENTER] Entering TURN mode (sector {blocked_sector} blocked {block_count}x)")
                             self._goal_blocked(sectors, debug=True)
                             self._compute_blocked_turn(sectors, debug=True)
+
+                            # If this direction has been blocked too many times, abandon goal
+                            if block_count >= self.blocked_direction_threshold:
+                                print(f"[BLOCKED DIR] Sector {blocked_sector} blocked {block_count}x - abandoning goal, backing up")
+                                self._backup_toward_clear_side(sectors)
+                                self.backups += 1
+                                self.was_in_turn_mode = False
+                                with self._goal_lock:
+                                    self.goal_point = None
+                                continue
                         else:
                             # Track position during TURN mode
                             if hasattr(self, 'turn_mode_positions'):
@@ -1347,9 +1385,10 @@ rclpy.shutdown()
                   f"(scanned={len(self.scanned)} walls={len(self.scan_ends)} visited={len(self.visited)}):")
             for i, (score, ang, d, px, py, brk) in enumerate(candidates[:8]):
                 marker = " <-- BEST" if i == 0 else ""
+                blk_str = f" B={brk['blocked']:+.1f}" if brk.get('blocked', 0) != 0 else ""
                 print(f"  #{i+1} ang={ang:+4d}° d={d:.2f}m pos=({px:.2f},{py:.2f}) "
                       f"score={score:+.1f} [O={brk['open']:+.1f} U={brk['unscan']:+.1f} "
-                      f"V={brk['visited']:+.1f} W={brk['wall']:+.1f} R={brk['recent']:+.1f} F={brk['fwd']:+.1f}]{marker}")
+                      f"V={brk['visited']:+.1f} W={brk['wall']:+.1f} R={brk['recent']:+.1f} F={brk['fwd']:+.1f}{blk_str}]{marker}")
 
         # Record this goal to prevent cycling back
         if best_point:
@@ -1529,6 +1568,27 @@ rclpy.shutdown()
                     fwd_bonus = dot * 5.0
 
         breakdown['fwd'] = fwd_bonus
+
+        # === Factor 8: BLOCKED DIRECTION PENALTY ===
+        # Heavily penalize directions that have been repeatedly blocked recently
+        blocked_penalty = 0.0
+        now = time.time()
+        # Clean up old blocked directions
+        for sector in list(self.blocked_directions.keys()):
+            count, last_time = self.blocked_directions[sector]
+            if now - last_time > self.blocked_direction_memory:
+                del self.blocked_directions[sector]
+
+        # Check if this direction has been blocked
+        # Check candidate sector and neighbors (±1 sector = ±6°)
+        for offset in range(-1, 2):
+            check_sector = (sector_idx + offset) % NUM_SECTORS
+            if check_sector in self.blocked_directions:
+                count, last_time = self.blocked_directions[check_sector]
+                # Exponential penalty based on block count
+                # 1 block = -5, 2 blocks = -15, 3+ blocks = -30
+                blocked_penalty += min(30.0, 5.0 * count * count)
+        breakdown['blocked'] = -blocked_penalty
 
         total = sum(breakdown.values())
         return total, breakdown
