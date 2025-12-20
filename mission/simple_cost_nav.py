@@ -1710,16 +1710,26 @@ rclpy.shutdown()
             return False  # Goal not in front - let normal control handle turning
 
         # Determine which sectors are in the direction of the goal
-        # With 60 sectors (6° each), check ±1 sectors around goal direction (±6°)
         goal_sector = self._angle_to_sector(goal_robot_angle)
 
-        # Check sectors within ±1 of goal sector (covers ±6° = 12° total cone)
-        # This is much narrower than the full front arc (±30°) to reduce false positives
-        # The robot is 18cm wide, at 1m distance that's ~10° angular width
-        check_sectors = []
-        for offset in range(-1, 2):  # -1, 0, +1
-            s = (goal_sector + offset) % NUM_SECTORS
-            check_sectors.append(s)
+        # Calculate how many sectors to check based on robot width and goal distance
+        # Robot is 18cm wide. Angular width = 2 * atan(0.09 / goal_dist)
+        # At 0.5m: ~20° = 3 sectors; At 1m: ~10° = 2 sectors; At 2m: ~5° = 1 sector
+        robot_half_width = 0.09  # 9cm = half of 18cm robot width
+        angular_width_rad = 2.0 * math.atan(robot_half_width / max(goal_dist, 0.3))
+        angular_width_deg = math.degrees(angular_width_rad)
+        sector_width_deg = 6.0  # 6° per sector
+
+        # Number of extra sectors on each side (0 = just goal sector, 1 = ±1, etc.)
+        # Only add extra sectors if angular width exceeds current coverage
+        extra_sectors = int((angular_width_deg - sector_width_deg) / (2 * sector_width_deg))
+        extra_sectors = max(0, min(extra_sectors, 2))  # 0 to 2 extra sectors per side
+
+        # Build check sectors list: always include goal sector, optionally add neighbors
+        check_sectors = [goal_sector]
+        for offset in range(1, extra_sectors + 1):
+            check_sectors.append((goal_sector + offset) % NUM_SECTORS)
+            check_sectors.append((goal_sector - offset) % NUM_SECTORS)
 
         # Filter out blind spots
         goal_direction_vals = [sectors[s] for s in check_sectors if sectors[s] > 0.01]
@@ -1741,7 +1751,7 @@ rclpy.shutdown()
             print(f"\n[BLOCKED DEBUG] Goal angle: {math.degrees(goal_robot_angle):.1f}° (sector {goal_sector}), "
                   f"goal_dist: {goal_dist:.2f}m, goal_dir_min: {goal_dir_min:.2f}m, "
                   f"margin: {self.blocked_margin:.2f}m")
-            print(f"[BLOCKED DEBUG] Checking sectors {check_sectors}: {goal_dir_readings}")
+            print(f"[BLOCKED DEBUG] Checking {len(check_sectors)} sectors (robot angular width at {goal_dist:.1f}m = {angular_width_deg:.1f}°): {goal_dir_readings}")
             print(f"[BLOCKED DEBUG] Check: {goal_dir_min:.2f} < {goal_dist:.2f} - {self.blocked_margin:.2f} = {goal_dist - self.blocked_margin:.2f}? {blocked}")
             print(f"[BLOCKED DEBUG] (Full front arc for reference: {front_readings})")
 
