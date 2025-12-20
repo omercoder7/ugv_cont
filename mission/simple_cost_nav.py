@@ -451,9 +451,13 @@ rclpy.shutdown()
 
     def _simplify_path(self, path: List[Tuple[float, float]]) -> List[Tuple[float, float]]:
         """
-        Simplify path by removing collinear intermediate waypoints.
+        Simplify path by removing intermediate waypoints where possible.
 
-        Keeps waypoints where direction changes significantly.
+        Only removes a waypoint if:
+        1. Direction change is small (< 11 degrees)
+        2. There's clear line-of-sight between the previous and next waypoint
+
+        This ensures the simplified path doesn't cut through walls.
         Also ensures the penultimate waypoint is in verified open space
         for a clear final approach to the goal.
         """
@@ -473,16 +477,122 @@ rclpy.shutdown()
             angle2 = math.atan2(next_pt[1] - curr[1], next_pt[0] - curr[0])
             angle_diff = abs(self._normalize_angle(angle2 - angle1))
 
-            # Keep this waypoint if direction changes significantly
+            # Keep this waypoint if:
+            # 1. Direction changes significantly, OR
+            # 2. No clear line-of-sight from prev to next (would cut through walls)
             if angle_diff > angle_threshold:
+                simplified.append(curr)
+            elif not self._has_line_of_sight_with_margin(prev[0], prev[1], next_pt[0], next_pt[1]):
+                # Can't skip this waypoint - path would go through walls
                 simplified.append(curr)
 
         simplified.append(path[-1])
+
+        # Validate all waypoint connections have line-of-sight
+        simplified = self._validate_path_connectivity(simplified, path)
 
         # Ensure penultimate waypoint is in open space for clear final approach
         simplified = self._ensure_penultimate_in_open_space(simplified, path)
 
         return simplified
+
+    def _has_line_of_sight_with_margin(self, x1: float, y1: float, x2: float, y2: float,
+                                        margin_cells: int = 1) -> bool:
+        """
+        Check line-of-sight with a safety margin around walls.
+
+        Unlike _has_line_of_sight, this also checks adjacent cells to ensure
+        the robot (not just a point) can pass through.
+        """
+        dx = x2 - x1
+        dy = y2 - y1
+        dist = math.sqrt(dx*dx + dy*dy)
+
+        if dist < 0.01:
+            return True
+
+        # Normalize direction
+        dx /= dist
+        dy /= dist
+
+        # Perpendicular direction for margin checks
+        perp_x = -dy
+        perp_y = dx
+
+        # March along the line, checking for walls
+        step = self.grid_res * 0.5
+        num_steps = int(dist / step) + 1
+
+        for i in range(num_steps):
+            d = i * step
+            px = x1 + dx * d
+            py = y1 + dy * d
+
+            # Check center and margins
+            for m in range(-margin_cells, margin_cells + 1):
+                check_x = px + perp_x * m * self.grid_res * 0.5
+                check_y = py + perp_y * m * self.grid_res * 0.5
+                cell = self._pos_to_cell(check_x, check_y)
+
+                if cell in self.scan_ends:
+                    return False  # Wall blocking path
+
+        return True
+
+    def _validate_path_connectivity(self, simplified: List[Tuple[float, float]],
+                                     original_path: List[Tuple[float, float]]) -> List[Tuple[float, float]]:
+        """
+        Validate that all consecutive waypoints have clear line-of-sight.
+
+        If any connection is blocked, insert intermediate waypoints from
+        the original A* path to ensure connectivity.
+        """
+        if len(simplified) <= 1:
+            return simplified
+
+        validated = [simplified[0]]
+
+        for i in range(1, len(simplified)):
+            prev = validated[-1]
+            curr = simplified[i]
+
+            # Check if direct path is clear
+            if self._has_line_of_sight_with_margin(prev[0], prev[1], curr[0], curr[1]):
+                validated.append(curr)
+            else:
+                # Path blocked - find intermediate waypoints from original path
+                print(f"[A* DEBUG] Path blocked between ({prev[0]:.2f},{prev[1]:.2f}) and ({curr[0]:.2f},{curr[1]:.2f})")
+
+                # Find the segment in original path that corresponds to this gap
+                prev_idx = self._find_closest_path_index(original_path, prev)
+                curr_idx = self._find_closest_path_index(original_path, curr)
+
+                if prev_idx < curr_idx:
+                    # Add intermediate waypoints from original path
+                    for j in range(prev_idx + 1, curr_idx):
+                        intermediate = original_path[j]
+                        # Only add if it helps (has LOS to previous)
+                        if self._has_line_of_sight_with_margin(validated[-1][0], validated[-1][1],
+                                                               intermediate[0], intermediate[1]):
+                            validated.append(intermediate)
+
+                validated.append(curr)
+
+        return validated
+
+    def _find_closest_path_index(self, path: List[Tuple[float, float]],
+                                  point: Tuple[float, float]) -> int:
+        """Find the index of the closest point in path to the given point."""
+        best_idx = 0
+        best_dist = float('inf')
+
+        for i, p in enumerate(path):
+            dist = math.sqrt((p[0] - point[0])**2 + (p[1] - point[1])**2)
+            if dist < best_dist:
+                best_dist = dist
+                best_idx = i
+
+        return best_idx
 
     def _ensure_penultimate_in_open_space(self, simplified: List[Tuple[float, float]],
                                           original_path: List[Tuple[float, float]]) -> List[Tuple[float, float]]:
