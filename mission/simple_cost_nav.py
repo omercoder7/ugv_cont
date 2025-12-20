@@ -814,7 +814,15 @@ rclpy.shutdown()
         return dist < self.goal_reached_dist
 
     def _goal_blocked(self, sectors: List[float]) -> bool:
-        """Check if path to goal is blocked."""
+        """Check if path to goal is blocked.
+
+        Only considers the goal blocked if:
+        1. Robot is roughly facing the goal (within ±45°)
+        2. There's an obstacle in the front arc blocking the path
+
+        If the goal is to the side or behind, return False - the robot
+        needs to turn first, which is handled by normal velocity control.
+        """
         if not self.goal_point or not self.current_pos or self.current_heading is None:
             return True
 
@@ -827,13 +835,22 @@ rclpy.shutdown()
         # Convert to robot frame
         goal_robot_angle = self._normalize_angle(goal_world_angle - self.current_heading)
 
-        # Find which sector the goal is in
-        goal_sector = self._angle_to_sector(goal_robot_angle)
+        # Only check for blocked if goal is in front arc (±45°)
+        # If goal is to the side or behind, robot needs to turn first - not blocked
+        if abs(goal_robot_angle) > 0.8:  # ~45 degrees
+            return False  # Goal not in front - let normal control handle turning
 
-        # Check if that sector is blocked before the goal
-        sector_dist = sectors[goal_sector]
-        if sector_dist < goal_dist - self.blocked_margin:
-            return True  # Obstacle between us and goal
+        # Check front sectors for obstacles
+        # Filter out blind spots
+        front_vals = [sectors[s] for s in SECTORS_FRONT_ARC if sectors[s] > 0.01]
+        if not front_vals:
+            return False  # All blind spots - assume clear
+
+        front_min = min(front_vals)
+
+        # Blocked if obstacle in front is closer than goal
+        if front_min < goal_dist - self.blocked_margin:
+            return True
 
         return False
 
@@ -941,7 +958,9 @@ rclpy.shutdown()
         w = max(-max_w, min(max_w, w))
 
         # Small forward motion if aligned and have clearance ahead
-        front_min = min(sectors[s] for s in SECTORS_FRONT_ARC)
+        # Filter out blind spots (same as main loop)
+        front_vals = [sectors[s] for s in SECTORS_FRONT_ARC if sectors[s] > 0.01]
+        front_min = min(front_vals) if front_vals else 1.0
         if abs(angle_error) < 0.15 and front_min > 0.3:
             v = 0.03
         else:

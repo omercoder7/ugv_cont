@@ -43,7 +43,7 @@ class PersistentROSBridge:
         self._last_odom = None
         self._scan_time = 0
         self._odom_time = 0
-        self._cache_timeout = 0.15  # Cache readings for 150ms
+        self._cache_timeout = 0.08  # Cache readings for 80ms (matches 10Hz loop better)
 
     def _ensure_bridge(self):
         """Ensure the bridge process is running."""
