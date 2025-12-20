@@ -1679,7 +1679,11 @@ rclpy.shutdown()
 
         Only considers the goal blocked if:
         1. Robot is roughly facing the goal (within ±45°)
-        2. There's an obstacle in the front arc blocking the path
+        2. There's an obstacle IN THE DIRECTION OF THE GOAL blocking the path
+
+        Key fix: Only check sectors within ±15° of goal direction, not entire front arc.
+        This prevents false positives when obstacles are to the side but not blocking
+        the actual path to the goal.
 
         If the goal is to the side or behind, return False - the robot
         needs to turn first, which is handled by normal velocity control.
@@ -1705,27 +1709,41 @@ rclpy.shutdown()
                 print(f"\n[BLOCKED DEBUG] Goal angle {math.degrees(goal_robot_angle):.1f}° > 45° - returning False (need to turn first)")
             return False  # Goal not in front - let normal control handle turning
 
-        # Check front sectors for obstacles
+        # Determine which sectors are in the direction of the goal
+        # With 60 sectors (6° each), check ±1 sectors around goal direction (±6°)
+        goal_sector = self._angle_to_sector(goal_robot_angle)
+
+        # Check sectors within ±1 of goal sector (covers ±6° = 12° total cone)
+        # This is much narrower than the full front arc (±30°) to reduce false positives
+        # The robot is 18cm wide, at 1m distance that's ~10° angular width
+        check_sectors = []
+        for offset in range(-1, 2):  # -1, 0, +1
+            s = (goal_sector + offset) % NUM_SECTORS
+            check_sectors.append(s)
+
         # Filter out blind spots
-        front_vals = [sectors[s] for s in SECTORS_FRONT_ARC if sectors[s] > 0.01]
-        if not front_vals:
+        goal_direction_vals = [sectors[s] for s in check_sectors if sectors[s] > 0.01]
+        if not goal_direction_vals:
             if debug:
-                print(f"\n[BLOCKED DEBUG] All front sectors blind - returning False")
+                print(f"\n[BLOCKED DEBUG] All goal-direction sectors blind - returning False")
             return False  # All blind spots - assume clear
 
-        front_min = min(front_vals)
+        # Use minimum distance in goal direction
+        goal_dir_min = min(goal_direction_vals)
 
-        # Blocked if obstacle in front is closer than goal
-        blocked = front_min < goal_dist - self.blocked_margin
+        # Blocked if obstacle in goal direction is closer than goal
+        blocked = goal_dir_min < goal_dist - self.blocked_margin
 
         if debug:
-            # Show front sector readings
+            # Show readings for sectors we're checking
+            goal_dir_readings = {s: sectors[s] for s in check_sectors}
             front_readings = {s: sectors[s] for s in SECTORS_FRONT_ARC}
-            print(f"\n[BLOCKED DEBUG] Goal angle: {math.degrees(goal_robot_angle):.1f}°, "
-                  f"goal_dist: {goal_dist:.2f}m, front_min: {front_min:.2f}m, "
+            print(f"\n[BLOCKED DEBUG] Goal angle: {math.degrees(goal_robot_angle):.1f}° (sector {goal_sector}), "
+                  f"goal_dist: {goal_dist:.2f}m, goal_dir_min: {goal_dir_min:.2f}m, "
                   f"margin: {self.blocked_margin:.2f}m")
-            print(f"[BLOCKED DEBUG] Check: {front_min:.2f} < {goal_dist:.2f} - {self.blocked_margin:.2f} = {goal_dist - self.blocked_margin:.2f}? {blocked}")
-            print(f"[BLOCKED DEBUG] Front sectors (55-59,0-5): {front_readings}")
+            print(f"[BLOCKED DEBUG] Checking sectors {check_sectors}: {goal_dir_readings}")
+            print(f"[BLOCKED DEBUG] Check: {goal_dir_min:.2f} < {goal_dist:.2f} - {self.blocked_margin:.2f} = {goal_dist - self.blocked_margin:.2f}? {blocked}")
+            print(f"[BLOCKED DEBUG] (Full front arc for reference: {front_readings})")
 
         if blocked:
             return True
