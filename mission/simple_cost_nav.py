@@ -415,7 +415,22 @@ rclpy.shutdown()
 
                 # Diagonal moves cost sqrt(2), orthogonal cost 1
                 move_cost = 1.414 if dx != 0 and dy != 0 else 1.0
-                tentative_g = g_score[current] + move_cost
+
+                # Add wall proximity cost - prefer paths away from walls
+                # Check distance to nearest wall and add penalty for being close
+                wall_penalty = 0.0
+                for wall_cell in self.scan_ends.keys():
+                    wall_dx = wall_cell[0] - neighbor[0]
+                    wall_dy = wall_cell[1] - neighbor[1]
+                    # Quick bounding box check
+                    if abs(wall_dx) <= 3 and abs(wall_dy) <= 3:
+                        wall_dist = math.sqrt(wall_dx*wall_dx + wall_dy*wall_dy)
+                        if wall_dist < 3:  # Within 3 cells (~0.9m)
+                            # Exponential penalty: closer = much higher cost
+                            # wall_dist=1 -> penalty=2.0, wall_dist=2 -> penalty=0.5
+                            wall_penalty = max(wall_penalty, 2.0 / (wall_dist + 0.5))
+
+                tentative_g = g_score[current] + move_cost + wall_penalty
 
                 if neighbor not in g_score or tentative_g < g_score[neighbor]:
                     came_from[neighbor] = current
@@ -1015,7 +1030,7 @@ rclpy.shutdown()
                             v, w = self._compute_blocked_turn(sectors)
                             status_mode = "TURN"
                         else:
-                            v, w = self._compute_velocity_to_goal(front_min)
+                            v, w = self._compute_velocity_to_goal(front_min, sectors)
                             status_mode = "DRIVE"
 
                         v, w = self._ramp_velocity(v, w)
@@ -1113,7 +1128,7 @@ rclpy.shutdown()
                         v, w = self._compute_blocked_turn(sectors)
                         status_mode = "TURN"
                     else:
-                        v, w = self._compute_velocity_to_goal(front_min)
+                        v, w = self._compute_velocity_to_goal(front_min, sectors)
                         status_mode = "DRIVE"
 
                     # Apply velocity ramping for smooth acceleration (Fix 1)
@@ -1624,12 +1639,14 @@ rclpy.shutdown()
 
         return False
 
-    def _compute_velocity_to_goal(self, front_min: float) -> Tuple[float, float]:
+    def _compute_velocity_to_goal(self, front_min: float,
+                                    sectors: List[float] = None) -> Tuple[float, float]:
         """
         Compute velocity commands to drive toward goal.
 
         Uses smooth proportional control throughout (no bang-bang jumps).
         Heading lock for drift correction when well-aligned.
+        Adds slight steering away from side walls for smoother navigation.
         """
         if not self.goal_point or not self.current_pos or self.current_heading is None:
             return 0.0, 0.0
@@ -1676,14 +1693,36 @@ rclpy.shutdown()
 
             v = self.linear_speed
 
-        # Slow down if obstacle nearby, but maintain minimum velocity
-        if front_min < 0.5:
-            speed_factor = (front_min - self.backup_threshold) / (0.5 - self.backup_threshold)
-            speed_factor = max(0.3, min(1.0, speed_factor))
+        # Slow down near front obstacles, but less aggressively
+        if front_min < 0.45:
+            speed_factor = (front_min - self.backup_threshold) / (0.45 - self.backup_threshold)
+            speed_factor = max(0.5, min(1.0, speed_factor))  # Min 50% speed, not 30%
             v *= speed_factor
             # Ensure minimum forward velocity when driving
-            if v > 0 and v < 0.02:
-                v = 0.02
+            if v > 0 and v < 0.03:
+                v = 0.03
+
+        # Add slight steering away from side walls (only when moving forward)
+        if sectors and v > 0.01:
+            # Check left side (sectors 5-15, ~30-90 degrees left)
+            left_vals = [sectors[s] for s in range(5, 16) if sectors[s] > 0.01]
+            left_min = min(left_vals) if left_vals else 5.0
+            # Check right side (sectors 45-55, ~30-90 degrees right)
+            right_vals = [sectors[s] for s in range(45, 56) if sectors[s] > 0.01]
+            right_min = min(right_vals) if right_vals else 5.0
+
+            # If one side is significantly closer, steer slightly away
+            side_threshold = 0.5  # Only react if wall within 0.5m
+            steer_gain = 0.15  # Gentle steering correction
+
+            if left_min < side_threshold and left_min < right_min - 0.1:
+                # Wall on left, steer slightly right (negative w)
+                wall_steer = -steer_gain * (side_threshold - left_min) / side_threshold
+                w += wall_steer
+            elif right_min < side_threshold and right_min < left_min - 0.1:
+                # Wall on right, steer slightly left (positive w)
+                wall_steer = steer_gain * (side_threshold - right_min) / side_threshold
+                w += wall_steer
 
         return v, w
 
