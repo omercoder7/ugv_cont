@@ -137,6 +137,11 @@ class NBVNavigator:
         self.consecutive_no_goal: int = 0  # Count of consecutive "no valid goal" failures
         self.no_goal_turn_threshold: int = 3  # After this many failures, do a 180° turn
 
+        # Turn mode stuck detection (for exploration)
+        self.turn_mode_start_time: float = 0.0  # When we entered TURN mode
+        self.turn_mode_timeout: float = 5.0  # Max time in TURN mode before forcing backup
+        self.was_in_turn_mode: bool = False  # Track if we were in TURN mode last iteration
+
     def _start_marker_thread(self):
         """Start persistent marker publisher that keeps the topic alive."""
         # Start persistent publisher in Docker that reads from stdin
@@ -1141,9 +1146,26 @@ rclpy.shutdown()
                         # Goal is blocked - turn toward goal direction to find a way around
                         v, w = self._compute_blocked_turn(sectors)
                         status_mode = "TURN"
+
+                        # Track time spent in TURN mode - if too long, force backup
+                        if not self.was_in_turn_mode:
+                            self.turn_mode_start_time = time.time()
+                            self.was_in_turn_mode = True
+                        else:
+                            turn_duration = time.time() - self.turn_mode_start_time
+                            if turn_duration > self.turn_mode_timeout:
+                                elapsed_total = time.time() - self.start_time
+                                print(f"\n[{elapsed_total:5.1f}s] [TURN STUCK] In TURN mode for {turn_duration:.1f}s, backing up")
+                                self._backup_toward_clear_side(sectors)
+                                self.backups += 1
+                                self.was_in_turn_mode = False
+                                with self._goal_lock:
+                                    self.goal_point = None
+                                continue
                     else:
                         v, w = self._compute_velocity_to_goal(front_min, sectors)
                         status_mode = "DRIVE"
+                        self.was_in_turn_mode = False
 
                     # Apply velocity ramping for smooth acceleration (Fix 1)
                     v, w = self._ramp_velocity(v, w)
@@ -1880,6 +1902,59 @@ rclpy.shutdown()
         send_velocity_cmd(0.0, 0.0)
 
         # Clear heading lock and reset velocity state after backup
+        self.locked_heading = None
+        self.last_v = 0.0
+        self.last_w = 0.0
+
+    def _backup_toward_clear_side(self, sectors: List[float]):
+        """
+        Backup and turn toward the clearer side based on front-left vs front-right.
+
+        Used when stuck in TURN mode - compares average clearance on front-left
+        (sectors 1-5, ~6-30°) vs front-right (sectors 55-59, ~-30 to -6°) to
+        decide which way to turn after backing up.
+        """
+        print(f"\n[BACKUP CLEAR] Reversing and turning toward clearer side...")
+
+        # Calculate average clearance for front-left and front-right
+        # Front-left: sectors 1-5 (~6° to 30° left)
+        front_left_sectors = range(1, 6)
+        front_left_vals = [sectors[s] for s in front_left_sectors if sectors[s] > 0.01]
+        front_left_avg = sum(front_left_vals) / len(front_left_vals) if front_left_vals else 0.0
+
+        # Front-right: sectors 55-59 (~-30° to -6° right)
+        front_right_sectors = range(55, 60)
+        front_right_vals = [sectors[s] for s in front_right_sectors if sectors[s] > 0.01]
+        front_right_avg = sum(front_right_vals) / len(front_right_vals) if front_right_vals else 0.0
+
+        # Reverse first
+        for _ in range(12):
+            send_velocity_cmd(-0.05, 0.0)
+            time.sleep(0.1)
+
+        # Turn toward the clearer side
+        # Positive w = turn left, negative w = turn right
+        if front_left_avg > front_right_avg + 0.1:
+            turn_w = 0.5  # Turn left
+            direction = "left"
+        elif front_right_avg > front_left_avg + 0.1:
+            turn_w = -0.5  # Turn right
+            direction = "right"
+        else:
+            # Similar clearance - turn left by default
+            turn_w = 0.5
+            direction = "left (default)"
+
+        print(f"[BACKUP CLEAR] Turning {direction} (L_avg={front_left_avg:.2f}m R_avg={front_right_avg:.2f}m)")
+
+        # Turn for longer than normal backup to get a better angle
+        for _ in range(15):
+            send_velocity_cmd(0.0, turn_w)
+            time.sleep(0.1)
+
+        send_velocity_cmd(0.0, 0.0)
+
+        # Clear heading lock and reset velocity state
         self.locked_heading = None
         self.last_v = 0.0
         self.last_w = 0.0
