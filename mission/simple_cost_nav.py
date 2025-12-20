@@ -881,7 +881,11 @@ rclpy.shutdown()
         # Linear velocity based on alignment (smooth transitions)
         if abs(angle_error) > 0.4:  # ~23 degrees - rotate in place
             self.locked_heading = None
-            v = 0.0
+            # If obstacle too close while turning, back up slightly to get clearance
+            if front_min < 0.4:
+                v = -0.03  # Creep backward while turning
+            else:
+                v = 0.0
         elif abs(angle_error) > 0.15:  # ~9-23 degrees - slow forward while turning
             self.locked_heading = None
             # Smooth speed reduction based on angle error
