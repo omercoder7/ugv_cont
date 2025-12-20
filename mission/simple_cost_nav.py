@@ -42,7 +42,7 @@ class NBVNavigator:
     """
 
     def __init__(self, linear_speed: float = 0.08, duration: float = 60.0,
-                 backup_threshold: float = 0.25, blocked_margin: float = 0.05,
+                 backup_threshold: float = 0.15, blocked_margin: float = 0.05,
                  debug_marker: bool = False):
         self.linear_speed = linear_speed
         self.duration = duration
@@ -1730,13 +1730,13 @@ rclpy.shutdown()
             v = self.linear_speed
 
         # Slow down near front obstacles, but less aggressively
-        if front_min < 0.45:
-            speed_factor = (front_min - self.backup_threshold) / (0.45 - self.backup_threshold)
-            speed_factor = max(0.5, min(1.0, speed_factor))  # Min 50% speed, not 30%
+        if front_min < 0.35:
+            speed_factor = (front_min - self.backup_threshold) / (0.35 - self.backup_threshold)
+            speed_factor = max(0.6, min(1.0, speed_factor))  # Min 60% speed
             v *= speed_factor
             # Ensure minimum forward velocity when driving
-            if v > 0 and v < 0.03:
-                v = 0.03
+            if v > 0 and v < 0.05:
+                v = 0.05
 
         # Add slight steering away from side walls (only when moving forward)
         if sectors and v > 0.01:
@@ -1819,8 +1819,8 @@ rclpy.shutdown()
         # Filter out blind spots (same as main loop)
         front_vals = [sectors[s] for s in SECTORS_FRONT_ARC if sectors[s] > 0.01]
         front_min = min(front_vals) if front_vals else 1.0
-        if abs(angle_error) < 0.15 and front_min > 0.3:
-            v = 0.03
+        if abs(angle_error) < 0.15 and front_min > 0.2:
+            v = 0.05
         else:
             v = 0.0
             # If not moving forward, ensure we're at least turning
@@ -2060,7 +2060,7 @@ rclpy.shutdown()
 
 
 def run_simple_nav(speed: float = 0.08, duration: float = 60.0,
-                   backup_threshold: float = 0.25, blocked_margin: float = 0.15,
+                   backup_threshold: float = 0.15, blocked_margin: float = 0.15,
                    debug_marker: bool = False):
     """Entry point for NBV navigation."""
     nav = NBVNavigator(linear_speed=speed, duration=duration,
@@ -2076,7 +2076,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Next-Best-View (NBV) navigation")
     parser.add_argument("--speed", type=float, default=0.08, help="Linear speed (m/s)")
     parser.add_argument("--duration", type=float, default=60.0, help="Duration (seconds, 0=unlimited)")
-    parser.add_argument("--backup-threshold", type=float, default=0.25, help="Backup if closer than this (m)")
+    parser.add_argument("--backup-threshold", type=float, default=0.15, help="Backup if closer than this (m)")
     parser.add_argument("--blocked-margin", type=float, default=0.15, help="Margin for goal blocked detection (m)")
     parser.add_argument("--debug-marker", action="store_true", help="Continuously publish goal marker to RViz")
     args = parser.parse_args()
