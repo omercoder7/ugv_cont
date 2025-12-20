@@ -133,6 +133,10 @@ class NBVNavigator:
         self.path_inflation_radius: int = 2  # Grid cells to inflate walls (2 cells = 0.6m clearance)
         self.goal_clearance_radius: int = 3  # Clear cells within this radius of goal from obstacles
 
+        # Consecutive goal selection failure tracking
+        self.consecutive_no_goal: int = 0  # Count of consecutive "no valid goal" failures
+        self.no_goal_turn_threshold: int = 3  # After this many failures, do a 180° turn
+
     def _start_marker_thread(self):
         """Start persistent marker publisher that keeps the topic alive."""
         # Start persistent publisher in Docker that reads from stdin
@@ -1091,6 +1095,7 @@ rclpy.shutdown()
                                         (new_goal[1] - self.current_pos[1])**2)
                         self.goal_initial_dist = dist  # Store initial distance for timeout calc
                         self.goal_timeout_extended = False  # Reset extension flag
+                        self.consecutive_no_goal = 0  # Reset failure counter on success
 
                         # Publish goal marker to RViz (green sphere)
                         publish_goal_marker(new_goal[0], new_goal[1])
@@ -1103,10 +1108,19 @@ rclpy.shutdown()
                         print(f"[{elapsed_total:5.1f}s] [GOAL] Selected: ({new_goal[0]:.2f}, {new_goal[1]:.2f}) "
                               f"dist={dist:.2f}m timeout={timeout:.0f}s angle={goal_sector}° reason={reason}")
                     else:
-                        # No valid goal found - backup
+                        # No valid goal found
+                        self.consecutive_no_goal += 1
                         elapsed_total = time.time() - self.start_time
-                        print(f"\n[{elapsed_total:5.1f}s] [NO GOAL] No valid viewpoint found, backing up")
-                        self._backup(sectors, scan)
+
+                        if self.consecutive_no_goal >= self.no_goal_turn_threshold:
+                            # Too many failures - do a 180° turn to look the other way
+                            print(f"\n[{elapsed_total:5.1f}s] [NO GOAL] {self.consecutive_no_goal} consecutive failures, turning 180°")
+                            self._turn_around()
+                            self.consecutive_no_goal = 0  # Reset after turning
+                        else:
+                            # Normal backup
+                            print(f"\n[{elapsed_total:5.1f}s] [NO GOAL] No valid viewpoint found ({self.consecutive_no_goal}/{self.no_goal_turn_threshold}), backing up")
+                            self._backup(sectors, scan)
                         self.backups += 1
                         continue
 
@@ -1869,6 +1883,39 @@ rclpy.shutdown()
         self.locked_heading = None
         self.last_v = 0.0
         self.last_w = 0.0
+
+    def _turn_around(self):
+        """
+        Turn 180 degrees to face the opposite direction.
+
+        Used when goal selection fails repeatedly, indicating the robot
+        is stuck in a corner with no valid forward goals.
+        """
+        print(f"[TURN 180] Rotating to face opposite direction...")
+
+        # First, back up a bit to get clearance
+        for _ in range(8):
+            send_velocity_cmd(-0.05, 0.0)
+            time.sleep(0.1)
+
+        # Turn 180 degrees (approximately 3-4 seconds at 0.5 rad/s)
+        # Use positive angular velocity (turn left) - arbitrary choice
+        turn_duration = 3.2  # ~180° at 0.5 rad/s (π / 0.5 ≈ 6.28, but with ramp-up use 3.2s)
+        turn_w = 0.55
+
+        start_time = time.time()
+        while time.time() - start_time < turn_duration:
+            send_velocity_cmd(0.0, turn_w)
+            time.sleep(0.1)
+
+        send_velocity_cmd(0.0, 0.0)
+
+        # Clear heading lock and reset velocity state
+        self.locked_heading = None
+        self.last_v = 0.0
+        self.last_w = 0.0
+
+        print(f"[TURN 180] Complete")
 
     def _sector_to_angle(self, sector: int) -> float:
         """Convert sector index to angle in robot frame."""
