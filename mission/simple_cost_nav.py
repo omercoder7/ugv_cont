@@ -1350,20 +1350,34 @@ rclpy.shutdown()
 
         # Adaptive angular refinement parameters
         min_candidates = 5       # Minimum candidates we want
-        base_num_angles = 25     # Starting number of angles
-        refinement_factor = 5    # Multiply angles by this factor each iteration
-        max_refinements = 3      # Max iterations (25 -> 125 -> 625 -> 3125)
+        min_best_score = 20.0    # Minimum acceptable best score before refining
+        base_num_angles = 50     # Starting number of angles (finer: 300°/50 = 6° per step)
+        refinement_factor = 3    # Multiply angles by this factor each iteration
+        max_refinements = 3      # Max iterations (50 -> 150 -> 450 -> 1350)
 
         candidates = []
         num_angles = base_num_angles
         refinement_level = 0
 
-        # Keep refining until we have enough candidates or hit max refinements
-        while len(candidates) < min_candidates and refinement_level <= max_refinements:
+        # Keep refining until we have enough good candidates or hit max refinements
+        # Refine if: not enough candidates OR best score is too low
+        def should_refine():
+            if len(candidates) < min_candidates:
+                return True
+            # Check if best score is too low - might be missing better options
+            if candidates:
+                best = max(c[0] for c in candidates)
+                if best < min_best_score:
+                    return True
+            return False
+
+        while should_refine() and refinement_level <= max_refinements:
             if refinement_level > 0:
                 # Only show message if we're actually refining
                 elapsed_total = time.time() - self.start_time if self.start_time > 0 else 0
-                print(f"\n[{elapsed_total:5.1f}s] [REFINE] Only {len(candidates)} candidates, "
+                best_so_far = max(c[0] for c in candidates) if candidates else -999
+                reason = f"only {len(candidates)} candidates" if len(candidates) < min_candidates else f"best score {best_so_far:.1f} < {min_best_score}"
+                print(f"\n[{elapsed_total:5.1f}s] [REFINE] {reason}, "
                       f"resampling with {num_angles} angles (level {refinement_level})")
                 candidates = []  # Clear previous candidates for fresh sampling
 
