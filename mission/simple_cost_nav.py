@@ -145,8 +145,9 @@ class NBVNavigator:
         # DRIVE mode stuck detection - front distance not changing while driving
         self.drive_front_dist_start: float = 0.0  # Front distance when we started tracking
         self.drive_front_dist_time: float = 0.0  # When we started tracking front distance
-        self.drive_stuck_margin: float = 0.3  # Front must change by this much
-        self.drive_stuck_timeout: float = 5.0  # Seconds without front change = stuck
+        self.drive_stuck_margin: float = 0.2  # Front must change by this much (loose)
+        self.drive_stuck_timeout: float = 10.0  # Seconds without front change = stuck (longer)
+        self.drive_stuck_front_threshold: float = 0.5  # Only trigger if front < this (actually blocked)
 
     def _start_marker_thread(self):
         """Start persistent marker publisher that keeps the topic alive."""
@@ -1231,8 +1232,9 @@ rclpy.shutdown()
                                     self.drive_front_dist_time = now
                                 else:
                                     # Front not changing - check timeout
+                                    # Only trigger if front is actually blocked (close obstacle)
                                     time_stuck = now - self.drive_front_dist_time
-                                    if time_stuck > self.drive_stuck_timeout:
+                                    if time_stuck > self.drive_stuck_timeout and front_min < self.drive_stuck_front_threshold:
                                         elapsed_total = time.time() - self.start_time
                                         print(f"\n[{elapsed_total:5.1f}s] [DRIVE STUCK] Front distance unchanged for {time_stuck:.1f}s")
                                         print(f"[DRIVE STUCK] front_start={self.drive_front_dist_start:.2f}m, "
@@ -1242,9 +1244,34 @@ rclpy.shutdown()
                                             print(f"s{s}={sectors[s]:.2f} ", end="")
                                         print()
 
-                                        # Backup and abandon goal
-                                        self._backup_toward_clear_side(sectors)
-                                        self.backups += 1
+                                        # Check if we're actually blocked in front or just not making progress
+                                        # If front is close (< 0.4m), backup. Otherwise just rotate.
+                                        if front_min < 0.4:
+                                            print(f"[DRIVE STUCK] Front blocked ({front_min:.2f}m < 0.4m), backing up")
+                                            self._backup_toward_clear_side(sectors)
+                                            self.backups += 1
+                                        else:
+                                            # Not blocked in front - just rotate toward clearer side
+                                            print(f"[DRIVE STUCK] Front open ({front_min:.2f}m), rotating only")
+                                            # Compare left vs right and rotate toward clearer side
+                                            front_left_vals = [sectors[s] for s in range(1, 6) if sectors[s] > 0.01]
+                                            front_left_avg = sum(front_left_vals) / len(front_left_vals) if front_left_vals else 0.0
+                                            front_right_vals = [sectors[s] for s in range(55, 60) if sectors[s] > 0.01]
+                                            front_right_avg = sum(front_right_vals) / len(front_right_vals) if front_right_vals else 0.0
+
+                                            if front_left_avg > front_right_avg:
+                                                turn_w = 0.5  # Turn left
+                                                print(f"[DRIVE STUCK] Rotating left (L_avg={front_left_avg:.2f}m > R_avg={front_right_avg:.2f}m)")
+                                            else:
+                                                turn_w = -0.5  # Turn right
+                                                print(f"[DRIVE STUCK] Rotating right (R_avg={front_right_avg:.2f}m >= L_avg={front_left_avg:.2f}m)")
+
+                                            # Rotate for 1.5 seconds
+                                            for _ in range(15):
+                                                send_velocity_cmd(0.0, turn_w)
+                                                time.sleep(0.1)
+                                            send_velocity_cmd(0.0, 0.0)
+
                                         with self._goal_lock:
                                             self.goal_point = None
                                         # Reset tracking
