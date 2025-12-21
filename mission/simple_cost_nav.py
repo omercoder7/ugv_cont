@@ -142,12 +142,15 @@ class NBVNavigator:
         self.turn_mode_timeout: float = 5.0  # Max time in TURN mode before forcing backup
         self.was_in_turn_mode: bool = False  # Track if we were in TURN mode last iteration
 
-        # DRIVE mode stuck detection - front distance not changing while driving
-        self.drive_front_dist_start: float = 0.0  # Front distance when we started tracking
-        self.drive_front_dist_time: float = 0.0  # When we started tracking front distance
-        self.drive_stuck_margin: float = 0.2  # Front must change by this much (loose)
-        self.drive_stuck_timeout: float = 10.0  # Seconds without front change = stuck (longer)
-        self.drive_stuck_front_threshold: float = 0.5  # Only trigger if front < this (actually blocked)
+        # DRIVE mode stuck detection - sliding window on goal distance
+        # Track recent goal distance readings to detect when robot isn't making progress
+        self.drive_goal_dist_history: List[Tuple[float, float]] = []  # List of (timestamp, goal_distance)
+        self.drive_stuck_window: float = 7.0  # Check for no progress in last 7 seconds
+        self.drive_stuck_margin: float = 0.08  # Must change by 8cm to count as progress
+
+        # Blocked sectors tracking - mark sectors as blocked for a duration
+        # Key: sector index, Value: timestamp when block expires
+        self.blocked_sectors: Dict[int, float] = {}
 
     def _start_marker_thread(self):
         """Start persistent marker publisher that keeps the topic alive."""
@@ -1108,7 +1111,7 @@ rclpy.shutdown()
                         self.goal_initial_dist = dist  # Store initial distance for timeout calc
                         self.goal_timeout_extended = False  # Reset extension flag
                         self.consecutive_no_goal = 0  # Reset failure counter on success
-                        self.drive_front_dist_time = 0  # Reset DRIVE stuck detection
+                        self.drive_goal_dist_history.clear()  # Reset DRIVE stuck detection
 
                         # Publish goal marker to RViz (green sphere)
                         publish_goal_marker(new_goal[0], new_goal[1])
@@ -1215,71 +1218,59 @@ rclpy.shutdown()
                         status_mode = "DRIVE"
                         self.was_in_turn_mode = False
 
-                        # DRIVE mode stuck detection - front distance not changing
-                        # Only check when actually driving forward (v > 0)
+                        # DRIVE mode stuck detection - sliding window on goal distance
+                        # Only check when actually driving forward (v > 0), not rotating
+                        now = time.time()
+                        goal_dist = math.sqrt((self.goal_point[0] - self.current_pos[0])**2 +
+                                             (self.goal_point[1] - self.current_pos[1])**2)
+
                         if v > 0.01:
-                            now = time.time()
-                            # Initialize tracking if not set
-                            if self.drive_front_dist_time == 0:
-                                self.drive_front_dist_start = front_min
-                                self.drive_front_dist_time = now
-                            else:
-                                # Check if front distance changed significantly
-                                front_change = abs(front_min - self.drive_front_dist_start)
-                                if front_change > self.drive_stuck_margin:
-                                    # Front changed - reset tracking
-                                    self.drive_front_dist_start = front_min
-                                    self.drive_front_dist_time = now
-                                else:
-                                    # Front not changing - check timeout
-                                    # Only trigger if front is actually blocked (close obstacle)
-                                    time_stuck = now - self.drive_front_dist_time
-                                    if time_stuck > self.drive_stuck_timeout and front_min < self.drive_stuck_front_threshold:
+                            # Add current reading to history
+                            self.drive_goal_dist_history.append((now, goal_dist))
+
+                            # Remove readings older than the window
+                            cutoff = now - self.drive_stuck_window
+                            self.drive_goal_dist_history = [(t, d) for t, d in self.drive_goal_dist_history if t >= cutoff]
+
+                            # Check if we have enough history (at least 5 seconds of data)
+                            if len(self.drive_goal_dist_history) >= 2:
+                                oldest_time, oldest_dist = self.drive_goal_dist_history[0]
+                                time_span = now - oldest_time
+
+                                # Only check if we have at least 5 seconds of data
+                                if time_span >= 5.0:
+                                    # Check if goal distance changed significantly
+                                    dist_change = abs(oldest_dist - goal_dist)
+
+                                    if dist_change < self.drive_stuck_margin:
+                                        # Goal distance not changing - robot is stuck
                                         elapsed_total = time.time() - self.start_time
-                                        print(f"\n[{elapsed_total:5.1f}s] [DRIVE STUCK] Front distance unchanged for {time_stuck:.1f}s")
-                                        print(f"[DRIVE STUCK] front_start={self.drive_front_dist_start:.2f}m, "
-                                              f"front_now={front_min:.2f}m, change={front_change:.2f}m < margin={self.drive_stuck_margin:.2f}m")
+                                        print(f"\n[{elapsed_total:5.1f}s] [DRIVE STUCK] Goal distance unchanged for {time_span:.1f}s")
+                                        print(f"[DRIVE STUCK] dist_oldest={oldest_dist:.2f}m, "
+                                              f"dist_now={goal_dist:.2f}m, change={dist_change:.2f}m < margin={self.drive_stuck_margin:.2f}m")
                                         print(f"[DRIVE STUCK] Front sectors: ", end="")
                                         for s in SECTORS_FRONT_ARC:
                                             print(f"s{s}={sectors[s]:.2f} ", end="")
                                         print()
 
-                                        # Check if we're actually blocked in front or just not making progress
-                                        # If front is close (< 0.4m), backup. Otherwise just rotate.
-                                        if front_min < 0.4:
-                                            print(f"[DRIVE STUCK] Front blocked ({front_min:.2f}m < 0.4m), backing up")
-                                            self._backup_toward_clear_side(sectors)
-                                            self.backups += 1
-                                        else:
-                                            # Not blocked in front - just rotate toward clearer side
-                                            print(f"[DRIVE STUCK] Front open ({front_min:.2f}m), rotating only")
-                                            # Compare left vs right and rotate toward clearer side
-                                            front_left_vals = [sectors[s] for s in range(1, 6) if sectors[s] > 0.01]
-                                            front_left_avg = sum(front_left_vals) / len(front_left_vals) if front_left_vals else 0.0
-                                            front_right_vals = [sectors[s] for s in range(55, 60) if sectors[s] > 0.01]
-                                            front_right_avg = sum(front_right_vals) / len(front_right_vals) if front_right_vals else 0.0
+                                        # Mark front sectors as blocked for 30 seconds
+                                        block_expire = now + 30.0
+                                        for s in SECTORS_FRONT_ARC:
+                                            self.blocked_sectors[s] = block_expire
+                                        print(f"[DRIVE STUCK] Marked front sectors {list(SECTORS_FRONT_ARC)} as blocked for 30s")
 
-                                            if front_left_avg > front_right_avg:
-                                                turn_w = 0.5  # Turn left
-                                                print(f"[DRIVE STUCK] Rotating left (L_avg={front_left_avg:.2f}m > R_avg={front_right_avg:.2f}m)")
-                                            else:
-                                                turn_w = -0.5  # Turn right
-                                                print(f"[DRIVE STUCK] Rotating right (R_avg={front_right_avg:.2f}m >= L_avg={front_left_avg:.2f}m)")
-
-                                            # Rotate for 1.5 seconds
-                                            for _ in range(15):
-                                                send_velocity_cmd(0.0, turn_w)
-                                                time.sleep(0.1)
-                                            send_velocity_cmd(0.0, 0.0)
+                                        # Backup toward clearer side
+                                        self._backup_toward_clear_side(sectors)
+                                        self.backups += 1
 
                                         with self._goal_lock:
                                             self.goal_point = None
-                                        # Reset tracking
-                                        self.drive_front_dist_time = 0
+                                        # Clear history
+                                        self.drive_goal_dist_history.clear()
                                         continue
                         else:
-                            # Not driving forward - reset tracking
-                            self.drive_front_dist_time = 0
+                            # Not driving forward (rotating) - don't add to history but don't clear it
+                            pass
 
                     # Apply velocity ramping for smooth acceleration (Fix 1)
                     v, w = self._ramp_velocity(v, w)
@@ -1421,9 +1412,10 @@ rclpy.shutdown()
                   f"(scanned={len(self.scanned)} walls={len(self.scan_ends)} visited={len(self.visited)}):")
             for i, (score, ang, d, px, py, brk) in enumerate(candidates[:8]):
                 marker = " <-- BEST" if i == 0 else ""
+                blk = f" B={brk.get('blocked', 0):+.1f}" if brk.get('blocked', 0) != 0 else ""
                 print(f"  #{i+1} ang={ang:+4d}° d={d:.2f}m pos=({px:.2f},{py:.2f}) "
                       f"score={score:+.1f} [O={brk['open']:+.1f} U={brk['unscan']:+.1f} "
-                      f"V={brk['visited']:+.1f} W={brk['wall']:+.1f} R={brk['recent']:+.1f} F={brk['fwd']:+.1f}]{marker}")
+                      f"V={brk['visited']:+.1f} W={brk['wall']:+.1f} R={brk['recent']:+.1f} F={brk['fwd']:+.1f}{blk}]{marker}")
 
         # Record this goal to prevent cycling back
         if best_point:
@@ -1603,6 +1595,27 @@ rclpy.shutdown()
                     fwd_bonus = dot * 5.0
 
         breakdown['fwd'] = fwd_bonus
+
+        # === Factor 8: BLOCKED SECTOR PENALTY ===
+        # Heavily penalize goals in sectors that are currently blocked
+        # (marked after DRIVE stuck detection found an impassable obstacle)
+        blocked_penalty = 0.0
+        if sector_idx in self.blocked_sectors:
+            if now < self.blocked_sectors[sector_idx]:
+                # Sector still blocked - heavy penalty
+                blocked_penalty = 50.0
+            else:
+                # Block expired - remove it
+                del self.blocked_sectors[sector_idx]
+        # Also check adjacent sectors (obstacles span multiple sectors)
+        for adj in [-1, 1, -2, 2]:
+            adj_sector = (sector_idx + adj) % NUM_SECTORS
+            if adj_sector in self.blocked_sectors:
+                if now < self.blocked_sectors[adj_sector]:
+                    blocked_penalty += 25.0  # Lighter penalty for adjacent
+                else:
+                    del self.blocked_sectors[adj_sector]
+        breakdown['blocked'] = -blocked_penalty
 
         total = sum(breakdown.values())
         return total, breakdown
