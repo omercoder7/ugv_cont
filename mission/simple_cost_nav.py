@@ -148,6 +148,14 @@ class NBVNavigator:
         self.blocked_direction_memory: float = 30.0  # Forget after 30 seconds
         self.blocked_direction_threshold: int = 3  # After 3 blocks, heavily penalize
 
+        # DRIVE mode stuck detection - detect when robot isn't making progress
+        self.drive_mode_start_time: float = 0.0  # When we started driving toward current goal
+        self.drive_mode_start_dist: float = 0.0  # Distance to goal when we started
+        self.drive_mode_last_progress_time: float = 0.0  # Last time we made progress
+        self.drive_mode_last_dist: float = 0.0  # Last distance to goal
+        self.drive_mode_stuck_timeout: float = 5.0  # Seconds without progress = stuck
+        self.drive_mode_progress_threshold: float = 0.05  # Must move 5cm to count as progress
+
     def _start_marker_thread(self):
         """Start persistent marker publisher that keeps the topic alive."""
         # Start persistent publisher in Docker that reads from stdin
@@ -1109,6 +1117,9 @@ rclpy.shutdown()
                         self.goal_initial_dist = dist  # Store initial distance for timeout calc
                         self.goal_timeout_extended = False  # Reset extension flag
                         self.consecutive_no_goal = 0  # Reset failure counter on success
+                        # Reset DRIVE mode stuck detection for new goal
+                        self.drive_mode_start_time = 0
+                        self.drive_mode_start_dist = 0
 
                         # Publish goal marker to RViz (green sphere)
                         publish_goal_marker(new_goal[0], new_goal[1])
@@ -1245,13 +1256,74 @@ rclpy.shutdown()
                         status_mode = "DRIVE"
                         self.was_in_turn_mode = False
 
+                        # DRIVE mode stuck detection - check if we're making progress
+                        goal_dist = math.sqrt((self.goal_point[0] - self.current_pos[0])**2 +
+                                             (self.goal_point[1] - self.current_pos[1])**2)
+                        now = time.time()
+
+                        # Initialize on first DRIVE iteration for this goal
+                        if self.drive_mode_start_time == 0 or self.drive_mode_start_dist == 0:
+                            self.drive_mode_start_time = now
+                            self.drive_mode_start_dist = goal_dist
+                            self.drive_mode_last_progress_time = now
+                            self.drive_mode_last_dist = goal_dist
+
+                        # Check if we're making progress (getting closer to goal)
+                        progress = self.drive_mode_last_dist - goal_dist
+                        if progress > self.drive_mode_progress_threshold:
+                            # Made progress - update tracking
+                            self.drive_mode_last_progress_time = now
+                            self.drive_mode_last_dist = goal_dist
+
+                        # Check if stuck (no progress for too long)
+                        time_without_progress = now - self.drive_mode_last_progress_time
+                        if time_without_progress > self.drive_mode_stuck_timeout:
+                            elapsed_total = time.time() - self.start_time
+                            total_progress = self.drive_mode_start_dist - goal_dist
+                            print(f"\n[{elapsed_total:5.1f}s] [DRIVE STUCK] No progress for {time_without_progress:.1f}s")
+                            print(f"[DRIVE STUCK] Started at dist={self.drive_mode_start_dist:.2f}m, "
+                                  f"now={goal_dist:.2f}m, total_progress={total_progress:.2f}m")
+                            print(f"[DRIVE STUCK] front_min={front_min:.2f}m, v={v:.2f}, w={w:.2f}")
+                            print(f"[DRIVE STUCK] Front sectors: ", end="")
+                            for s in SECTORS_FRONT_ARC:
+                                print(f"s{s}={sectors[s]:.2f} ", end="")
+                            print()
+
+                            # Record this as a blocked direction
+                            dx = self.goal_point[0] - self.current_pos[0]
+                            dy = self.goal_point[1] - self.current_pos[1]
+                            goal_world_angle = math.atan2(dy, dx)
+                            goal_robot_angle = self._normalize_angle(goal_world_angle - self.current_heading)
+                            blocked_sector = self._angle_to_sector(goal_robot_angle)
+
+                            if blocked_sector in self.blocked_directions:
+                                count, _ = self.blocked_directions[blocked_sector]
+                                self.blocked_directions[blocked_sector] = (count + 1, now)
+                            else:
+                                self.blocked_directions[blocked_sector] = (1, now)
+                            print(f"[DRIVE STUCK] Marking sector {blocked_sector} as blocked")
+
+                            # Backup and abandon goal
+                            self._backup_toward_clear_side(sectors)
+                            self.backups += 1
+                            with self._goal_lock:
+                                self.goal_point = None
+                            # Reset drive mode tracking
+                            self.drive_mode_start_time = 0
+                            self.drive_mode_start_dist = 0
+                            continue
+
                     # Apply velocity ramping for smooth acceleration (Fix 1)
                     v, w = self._ramp_velocity(v, w)
                     send_velocity_cmd(v, w)
 
                     # Status
-                    goal_dist = math.sqrt((self.goal_point[0] - self.current_pos[0])**2 +
-                                         (self.goal_point[1] - self.current_pos[1])**2)
+                    if not goal_blocked:
+                        # goal_dist already calculated above for DRIVE mode
+                        pass
+                    else:
+                        goal_dist = math.sqrt((self.goal_point[0] - self.current_pos[0])**2 +
+                                             (self.goal_point[1] - self.current_pos[1])**2)
                     pos_str = f"({self.current_pos[0]:.2f},{self.current_pos[1]:.2f})"
                     goal_str = f"({self.goal_point[0]:.2f},{self.goal_point[1]:.2f})"
                     status = f"[{self.iteration:3d}] {status_mode} goal={goal_str} dist={goal_dist:.2f}m front={front_min:.2f}m cells={len(self.visited)}"
