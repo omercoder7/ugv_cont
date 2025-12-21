@@ -1353,6 +1353,8 @@ rclpy.shutdown()
         Uses adaptive angular refinement: if <5 candidates found, resample
         with 5x more angles. Repeat until ≥5 candidates or max refinement reached.
 
+        Fallback: If no candidates found after max refinement, try smaller distances.
+
         Returns: (goal_point, goal_sector) or (None, None)
         """
         if not self.current_pos or self.current_heading is None:
@@ -1367,74 +1369,94 @@ rclpy.shutdown()
         angle_start = -150.0 * math.pi / 180.0  # -150° = right-back
         angle_end = 150.0 * math.pi / 180.0     # +150° = left-back
 
-        # Generate equally spaced distances from min to max goal distance
-        num_distances = 4
-        dist_step = (self.max_goal_dist - self.min_goal_dist) / (num_distances - 1)
-        candidate_distances = [self.min_goal_dist + i * dist_step for i in range(num_distances)]
+        # Distance ranges to try - start with normal range, fall back to smaller
+        # Normal: 0.5-2.0m, Fallback 1: 0.3-1.0m, Fallback 2: 0.25-0.5m
+        distance_configs = [
+            (self.min_goal_dist, self.max_goal_dist),  # Normal: 0.5-2.0m
+            (0.3, 1.0),   # Fallback 1: shorter range
+            (0.25, 0.5),  # Fallback 2: very short range for tight spaces
+        ]
 
-        # Adaptive angular refinement parameters
-        min_candidates = 5       # Minimum candidates we want
-        base_num_angles = 25     # Starting number of angles
-        refinement_factor = 5    # Multiply angles by this factor each iteration
-        max_refinements = 3      # Max iterations (25 -> 125 -> 625 -> 3125)
+        for dist_config_idx, (min_dist, max_dist) in enumerate(distance_configs):
+            # Generate equally spaced distances for this config
+            num_distances = 4
+            if max_dist > min_dist:
+                dist_step = (max_dist - min_dist) / (num_distances - 1)
+                candidate_distances = [min_dist + i * dist_step for i in range(num_distances)]
+            else:
+                candidate_distances = [min_dist]
 
-        candidates = []
-        num_angles = base_num_angles
-        refinement_level = 0
+            # Adaptive angular refinement parameters
+            min_candidates = 5       # Minimum candidates we want
+            base_num_angles = 25     # Starting number of angles
+            refinement_factor = 5    # Multiply angles by this factor each iteration
+            max_refinements = 3      # Max iterations (25 -> 125 -> 625 -> 3125)
 
-        # Keep refining until we have enough candidates or hit max refinements
-        while len(candidates) < min_candidates and refinement_level <= max_refinements:
-            if refinement_level > 0:
-                # Only show message if we're actually refining
-                elapsed_total = time.time() - self.start_time if self.start_time > 0 else 0
-                print(f"\n[{elapsed_total:5.1f}s] [REFINE] Only {len(candidates)} candidates, "
-                      f"resampling with {num_angles} angles (level {refinement_level})")
-                candidates = []  # Clear previous candidates for fresh sampling
+            candidates = []
+            num_angles = base_num_angles
+            refinement_level = 0
 
-            angle_step = (angle_end - angle_start) / (num_angles - 1)
+            # Keep refining until we have enough candidates or hit max refinements
+            while len(candidates) < min_candidates and refinement_level <= max_refinements:
+                if refinement_level > 0:
+                    # Only show message if we're actually refining
+                    elapsed_total = time.time() - self.start_time if self.start_time > 0 else 0
+                    print(f"\n[{elapsed_total:5.1f}s] [REFINE] Only {len(candidates)} candidates, "
+                          f"resampling with {num_angles} angles (level {refinement_level})")
+                    candidates = []  # Clear previous candidates for fresh sampling
 
-            for angle_idx in range(num_angles):
-                # Robot-frame angle for this candidate direction
-                robot_angle = angle_start + angle_idx * angle_step
-                world_angle = self.current_heading + robot_angle
+                angle_step = (angle_end - angle_start) / (num_angles - 1)
 
-                # Find which sector this angle falls into for obstacle checking
-                sector_idx = self._angle_to_sector(robot_angle)
-                sector_dist = sectors[sector_idx]
+                for angle_idx in range(num_angles):
+                    # Robot-frame angle for this candidate direction
+                    robot_angle = angle_start + angle_idx * angle_step
+                    world_angle = self.current_heading + robot_angle
 
-                if sector_dist < self.min_goal_dist + 0.1:
-                    # Direction too blocked
-                    continue
+                    # Find which sector this angle falls into for obstacle checking
+                    sector_idx = self._angle_to_sector(robot_angle)
+                    sector_dist = sectors[sector_idx]
 
-                # Don't place goal at the wall - leave larger margin for safety
-                max_dist = min(sector_dist - 0.5, self.max_goal_dist)
-
-                for dist in candidate_distances:
-                    if dist > max_dist:
+                    # Use current distance config for filtering
+                    if sector_dist < min_dist + 0.1:
+                        # Direction too blocked for this distance config
                         continue
 
-                    # Calculate world position of candidate point
-                    px = self.current_pos[0] + dist * math.cos(world_angle)
-                    py = self.current_pos[1] + dist * math.sin(world_angle)
+                    # Don't place goal at the wall - leave margin for safety
+                    local_max_dist = min(sector_dist - 0.3, max_dist)
 
-                    # FILTER: Skip points that are directly ON a known wall cell
-                    point_cell = self._pos_to_cell(px, py)
-                    if self.scan_ends.get(point_cell, 0) > 0:
-                        continue  # Discard - this is a wall cell
+                    for dist in candidate_distances:
+                        if dist > local_max_dist:
+                            continue
 
-                    # FILTER: Check angular opening (not just single ray)
-                    # Require 10° opening on each side to filter narrow slits and noise
-                    if raw_scan and not self._check_angular_opening(raw_scan, robot_angle, dist + 0.2, min_opening_deg=10.0):
-                        continue  # Discard - narrow slit or noise, robot can't fit
+                        # Calculate world position of candidate point
+                        px = self.current_pos[0] + dist * math.cos(world_angle)
+                        py = self.current_pos[1] + dist * math.sin(world_angle)
 
-                    # Score this viewpoint with detailed breakdown
-                    score, breakdown = self._score_viewpoint_debug(px, py, sector_idx, dist, sectors)
-                    angle_deg = int(robot_angle * 180 / math.pi)
-                    candidates.append((score, angle_deg, dist, px, py, breakdown))
+                        # FILTER: Skip points that are directly ON a known wall cell
+                        point_cell = self._pos_to_cell(px, py)
+                        if self.scan_ends.get(point_cell, 0) > 0:
+                            continue  # Discard - this is a wall cell
 
-            # Prepare for next refinement if needed
-            refinement_level += 1
-            num_angles *= refinement_factor
+                        # FILTER: Check angular opening (not just single ray)
+                        # Require 10° opening on each side to filter narrow slits and noise
+                        if raw_scan and not self._check_angular_opening(raw_scan, robot_angle, dist + 0.2, min_opening_deg=10.0):
+                            continue  # Discard - narrow slit or noise, robot can't fit
+
+                        # Score this viewpoint with detailed breakdown
+                        score, breakdown = self._score_viewpoint_debug(px, py, sector_idx, dist, sectors)
+                        angle_deg = int(robot_angle * 180 / math.pi)
+                        candidates.append((score, angle_deg, dist, px, py, breakdown))
+
+                # Prepare for next refinement if needed
+                refinement_level += 1
+                num_angles *= refinement_factor
+
+            # If we found candidates with this distance config, use them
+            if candidates:
+                if dist_config_idx > 0:
+                    elapsed_total = time.time() - self.start_time if self.start_time > 0 else 0
+                    print(f"\n[{elapsed_total:5.1f}s] [FALLBACK] Using shorter distance range {min_dist:.2f}-{max_dist:.2f}m")
+                break  # Exit distance config loop - we have candidates
 
         # Find best candidate
         best_point = None
