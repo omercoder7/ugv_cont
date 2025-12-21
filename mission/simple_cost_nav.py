@@ -617,6 +617,8 @@ rclpy.shutdown()
 
                 if cell in self.scan_ends:
                     return False  # Wall blocking path
+                if cell in self.unreachable_cells:
+                    return False  # Known unreachable cell
 
         return True
 
@@ -627,9 +629,26 @@ rclpy.shutdown()
 
         If any connection is blocked, insert intermediate waypoints from
         the original A* path to ensure connectivity.
+
+        If too many segments are blocked (>50%), just return the original
+        unsimplified path since simplification is causing more harm than good.
         """
         if len(simplified) <= 1:
             return simplified
+
+        # First pass: count how many segments are blocked
+        blocked_count = 0
+        for i in range(1, len(simplified)):
+            prev = simplified[i-1]
+            curr = simplified[i]
+            if not self._has_line_of_sight_with_margin(prev[0], prev[1], curr[0], curr[1]):
+                blocked_count += 1
+
+        # If more than 50% of segments are blocked, skip simplification entirely
+        # The scan_ends map doesn't match reality - just use raw A* path
+        if blocked_count > len(simplified) * 0.5:
+            print(f"[A* DEBUG] {blocked_count}/{len(simplified)-1} segments blocked, using unsimplified A* path")
+            return original_path
 
         validated = [simplified[0]]
 
@@ -1062,6 +1081,10 @@ rclpy.shutdown()
                             failed_cell = self._pos_to_cell(failed_wp[0], failed_wp[1])
                             self.unreachable_cells[failed_cell] = time.time()
                             print(f"[A*] Marked waypoint ({failed_wp[0]:.2f},{failed_wp[1]:.2f}) cell {failed_cell} as UNREACHABLE")
+
+                        # Update scan_ends with current LiDAR obstacles
+                        # This ensures A* knows about obstacles we're seeing now
+                        self._update_obstacles_from_lidar(scan)
 
                         self._backup(sectors, scan)
                         self.backups += 1
@@ -1703,6 +1726,46 @@ rclpy.shutdown()
 
         total = sum(breakdown.values())
         return total, breakdown
+
+    def _update_obstacles_from_lidar(self, raw_scan: List[float]):
+        """
+        Update scan_ends with obstacles detected by current LiDAR scan.
+
+        Called when robot gets stuck during return - adds any close obstacles
+        to the map so A* can route around them.
+        """
+        if not self.current_pos or self.current_heading is None:
+            return
+
+        if not raw_scan:
+            return
+
+        now = time.time()
+        n_points = len(raw_scan)
+        lidar_rotation_rad = 3 * (2 * math.pi / 12)  # 90° offset
+        angle_per_point = 2 * math.pi / n_points
+
+        new_walls = 0
+        for i, dist in enumerate(raw_scan):
+            # Only add close obstacles (< 1m) - these are what's blocking us
+            if not (0.1 < dist < 1.0):
+                continue
+
+            lidar_angle = i * angle_per_point
+            robot_angle = lidar_angle + lidar_rotation_rad
+            world_angle = self.current_heading + robot_angle
+
+            # Mark the obstacle cell
+            wall_x = self.current_pos[0] + dist * math.cos(world_angle)
+            wall_y = self.current_pos[1] + dist * math.sin(world_angle)
+            wall_cell = self._pos_to_cell(wall_x, wall_y)
+
+            if wall_cell not in self.scan_ends:
+                self.scan_ends[wall_cell] = now
+                new_walls += 1
+
+        if new_walls > 0:
+            print(f"[A*] Added {new_walls} new wall cells from current LiDAR")
 
     def _record_scan_coverage(self, raw_scan: List[float]):
         """
