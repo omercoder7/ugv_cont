@@ -142,6 +142,14 @@ class NBVNavigator:
         self.return_last_pos: Optional[Tuple[float, float]] = None  # Last position for movement detection
         self.return_last_heading: Optional[float] = None  # Last heading for rotation detection
         self.return_movement_threshold: float = 0.10  # Min movement (m) to count as "not stuck"
+
+        # Area-based progress tracking for return
+        # Triggers replan if robot stays in same area without getting closer to origin
+        self.return_area_center: Optional[Tuple[float, float]] = None  # Center of current area
+        self.return_area_time: float = 0.0  # When we entered this area
+        self.return_area_radius: float = 0.5  # Radius to consider "same area" (0.5m)
+        self.return_area_timeout: float = 15.0  # Replan if in same area for 15s without progress
+        self.return_area_best_dist: float = float('inf')  # Best distance to origin while in this area
         self.return_rotation_threshold: float = 0.15  # Min rotation (rad, ~9°) to count as "not stuck"
 
         # Origin marker subprocess
@@ -1068,6 +1076,72 @@ rclpy.shutdown()
                     # Also track progress toward origin
                     if dist_to_origin < self.return_last_dist - 0.1:
                         self.return_last_dist = dist_to_origin
+
+                    # === Area-based progress tracking ===
+                    # Check if robot is staying in same area without making progress toward origin
+                    now = time.time()
+                    if self.return_area_center is None:
+                        # Initialize area tracking
+                        self.return_area_center = self.current_pos
+                        self.return_area_time = now
+                        self.return_area_best_dist = dist_to_origin
+                    else:
+                        # Check if we've left the area
+                        dist_from_area_center = math.sqrt(
+                            (self.current_pos[0] - self.return_area_center[0])**2 +
+                            (self.current_pos[1] - self.return_area_center[1])**2
+                        )
+
+                        if dist_from_area_center > self.return_area_radius:
+                            # Left the area - reset tracking
+                            self.return_area_center = self.current_pos
+                            self.return_area_time = now
+                            self.return_area_best_dist = dist_to_origin
+                        else:
+                            # Still in same area - track best distance
+                            if dist_to_origin < self.return_area_best_dist - 0.1:
+                                # Made progress toward origin
+                                self.return_area_best_dist = dist_to_origin
+                                self.return_area_time = now  # Reset timer on progress
+
+                            # Check if we've been in this area too long without progress
+                            time_in_area = now - self.return_area_time
+                            if time_in_area > self.return_area_timeout:
+                                elapsed_total = now - self.start_time
+                                print(f"\n[{elapsed_total:5.1f}s] [A*] No progress in {time_in_area:.1f}s (stayed within {self.return_area_radius}m), replanning...")
+                                print(f"[A*] Area center: ({self.return_area_center[0]:.2f},{self.return_area_center[1]:.2f}), "
+                                      f"best_dist={self.return_area_best_dist:.2f}m, current_dist={dist_to_origin:.2f}m")
+
+                                # Mark current waypoint as unreachable
+                                if self.return_path and self.return_waypoint_idx < len(self.return_path):
+                                    failed_wp = self.return_path[self.return_waypoint_idx]
+                                    failed_cell = self._pos_to_cell(failed_wp[0], failed_wp[1])
+                                    self.unreachable_cells[failed_cell] = now
+                                    print(f"[A*] Marked waypoint ({failed_wp[0]:.2f},{failed_wp[1]:.2f}) cell {failed_cell} as UNREACHABLE")
+
+                                # Update obstacles and replan
+                                self._update_obstacles_from_lidar(scan)
+                                self._backup(sectors, scan)
+                                self.backups += 1
+
+                                # Reset area tracking
+                                self.return_area_center = self.current_pos
+                                self.return_area_time = now
+                                self.return_area_best_dist = dist_to_origin
+
+                                # Replan
+                                self.return_path = self._plan_path_astar(self.current_pos, self.start_pos)
+                                self.return_waypoint_idx = 0
+                                self.return_last_progress_time = now
+                                if self.return_path:
+                                    print(f"[A*] Replanned with {len(self.return_path)} waypoints")
+                                    with self._goal_lock:
+                                        self.goal_point = self.return_path[0]
+                                else:
+                                    print(f"[A*] Replan failed, using direct navigation")
+                                    with self._goal_lock:
+                                        self.goal_point = self.start_pos
+                                continue
 
                     # Check if stuck (no significant movement OR rotation for too long)
                     time_since_progress = time.time() - self.return_last_progress_time
