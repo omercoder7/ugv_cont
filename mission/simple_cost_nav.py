@@ -133,6 +133,11 @@ class NBVNavigator:
         self.path_inflation_radius: int = 2  # Grid cells to inflate walls (2 cells = 0.6m clearance)
         self.goal_clearance_radius: int = 3  # Clear cells within this radius of goal from obstacles
 
+        # Unreachable waypoints - cells that A* should treat as walls
+        # When robot gets stuck trying to reach a waypoint, mark it as unreachable
+        # Key: cell tuple, Value: timestamp when added (for debugging/expiry)
+        self.unreachable_cells: Dict[Tuple[int, int], float] = {}
+
         # Consecutive goal selection failure tracking
         self.consecutive_no_goal: int = 0  # Count of consecutive "no valid goal" failures
         self.no_goal_turn_threshold: int = 3  # After this many failures, do a 180° turn
@@ -338,7 +343,15 @@ rclpy.shutdown()
                     if max(abs(dx), abs(dy)) <= inflation:
                         obstacles.add((wall_cell[0] + dx, wall_cell[1] + dy))
 
-        print(f"[A* DEBUG] Inflated obstacles: {len(obstacles)} cells (inflation={inflation})")
+        # Add unreachable cells (waypoints we got stuck trying to reach)
+        for unreachable_cell in self.unreachable_cells.keys():
+            obstacles.add(unreachable_cell)
+            # Also inflate unreachable cells to avoid routing close to them
+            for dx in range(-1, 2):
+                for dy in range(-1, 2):
+                    obstacles.add((unreachable_cell[0] + dx, unreachable_cell[1] + dy))
+
+        print(f"[A* DEBUG] Inflated obstacles: {len(obstacles)} cells (inflation={inflation}, unreachable={len(self.unreachable_cells)})")
 
         # IMPORTANT: Remove visited cells from obstacles - we've already been there!
         visited_cleared = 0
@@ -1004,6 +1017,14 @@ rclpy.shutdown()
                     if time_since_progress > self.return_stuck_threshold:
                         elapsed_total = time.time() - self.start_time
                         print(f"\n[{elapsed_total:5.1f}s] [A*] Stuck for {time_since_progress:.1f}s (no movement/rotation), replanning...")
+
+                        # Mark the current waypoint as unreachable so A* won't route through it again
+                        if self.return_path and self.return_waypoint_idx < len(self.return_path):
+                            failed_wp = self.return_path[self.return_waypoint_idx]
+                            failed_cell = self._pos_to_cell(failed_wp[0], failed_wp[1])
+                            self.unreachable_cells[failed_cell] = time.time()
+                            print(f"[A*] Marked waypoint ({failed_wp[0]:.2f},{failed_wp[1]:.2f}) cell {failed_cell} as UNREACHABLE")
+
                         self._backup(sectors, scan)
                         self.backups += 1
                         self.return_last_progress_time = time.time()
