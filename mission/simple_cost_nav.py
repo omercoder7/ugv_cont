@@ -142,6 +142,12 @@ class NBVNavigator:
         self.turn_mode_timeout: float = 5.0  # Max time in TURN mode before forcing backup
         self.was_in_turn_mode: bool = False  # Track if we were in TURN mode last iteration
 
+        # DRIVE mode stuck detection - front distance not changing while driving
+        self.drive_front_dist_start: float = 0.0  # Front distance when we started tracking
+        self.drive_front_dist_time: float = 0.0  # When we started tracking front distance
+        self.drive_stuck_margin: float = 0.3  # Front must change by this much
+        self.drive_stuck_timeout: float = 5.0  # Seconds without front change = stuck
+
     def _start_marker_thread(self):
         """Start persistent marker publisher that keeps the topic alive."""
         # Start persistent publisher in Docker that reads from stdin
@@ -1101,6 +1107,7 @@ rclpy.shutdown()
                         self.goal_initial_dist = dist  # Store initial distance for timeout calc
                         self.goal_timeout_extended = False  # Reset extension flag
                         self.consecutive_no_goal = 0  # Reset failure counter on success
+                        self.drive_front_dist_time = 0  # Reset DRIVE stuck detection
 
                         # Publish goal marker to RViz (green sphere)
                         publish_goal_marker(new_goal[0], new_goal[1])
@@ -1206,6 +1213,46 @@ rclpy.shutdown()
                         v, w = self._compute_velocity_to_goal(front_min, sectors)
                         status_mode = "DRIVE"
                         self.was_in_turn_mode = False
+
+                        # DRIVE mode stuck detection - front distance not changing
+                        # Only check when actually driving forward (v > 0)
+                        if v > 0.01:
+                            now = time.time()
+                            # Initialize tracking if not set
+                            if self.drive_front_dist_time == 0:
+                                self.drive_front_dist_start = front_min
+                                self.drive_front_dist_time = now
+                            else:
+                                # Check if front distance changed significantly
+                                front_change = abs(front_min - self.drive_front_dist_start)
+                                if front_change > self.drive_stuck_margin:
+                                    # Front changed - reset tracking
+                                    self.drive_front_dist_start = front_min
+                                    self.drive_front_dist_time = now
+                                else:
+                                    # Front not changing - check timeout
+                                    time_stuck = now - self.drive_front_dist_time
+                                    if time_stuck > self.drive_stuck_timeout:
+                                        elapsed_total = time.time() - self.start_time
+                                        print(f"\n[{elapsed_total:5.1f}s] [DRIVE STUCK] Front distance unchanged for {time_stuck:.1f}s")
+                                        print(f"[DRIVE STUCK] front_start={self.drive_front_dist_start:.2f}m, "
+                                              f"front_now={front_min:.2f}m, change={front_change:.2f}m < margin={self.drive_stuck_margin:.2f}m")
+                                        print(f"[DRIVE STUCK] Front sectors: ", end="")
+                                        for s in SECTORS_FRONT_ARC:
+                                            print(f"s{s}={sectors[s]:.2f} ", end="")
+                                        print()
+
+                                        # Backup and abandon goal
+                                        self._backup_toward_clear_side(sectors)
+                                        self.backups += 1
+                                        with self._goal_lock:
+                                            self.goal_point = None
+                                        # Reset tracking
+                                        self.drive_front_dist_time = 0
+                                        continue
+                        else:
+                            # Not driving forward - reset tracking
+                            self.drive_front_dist_time = 0
 
                     # Apply velocity ramping for smooth acceleration (Fix 1)
                     v, w = self._ramp_velocity(v, w)
