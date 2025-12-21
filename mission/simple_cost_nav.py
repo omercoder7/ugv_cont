@@ -1520,9 +1520,10 @@ rclpy.shutdown()
             for i, (score, ang, d, px, py, brk) in enumerate(candidates[:8]):
                 marker = " <-- BEST" if i == 0 else ""
                 blk = f" B={brk.get('blocked', 0):+.1f}" if brk.get('blocked', 0) != 0 else ""
+                bkt = f" T={brk.get('backtrack', 0):+.1f}" if brk.get('backtrack', 0) != 0 else ""
                 print(f"  #{i+1} ang={ang:+4d}° d={d:.2f}m pos=({px:.2f},{py:.2f}) "
                       f"score={score:+.1f} [O={brk['open']:+.1f} U={brk['unscan']:+.1f} "
-                      f"V={brk['visited']:+.1f} W={brk['wall']:+.1f} R={brk['recent']:+.1f} F={brk['fwd']:+.1f}{blk}]{marker}")
+                      f"V={brk['visited']:+.1f} W={brk['wall']:+.1f} R={brk['recent']:+.1f} F={brk['fwd']:+.1f}{blk}{bkt}]{marker}")
 
         # Record this goal to prevent cycling back
         if best_point:
@@ -1676,7 +1677,7 @@ rclpy.shutdown()
         # Prefer continuing in the direction we were heading, not backtracking
         # This prevents oscillating between areas
         fwd_bonus = 0.0
-        if self.goal_point and self.start_pos:
+        if self.start_pos:
             # Direction from start to current position (overall exploration direction)
             explore_dx = self.current_pos[0] - self.start_pos[0]
             explore_dy = self.current_pos[1] - self.start_pos[1]
@@ -1697,11 +1698,32 @@ rclpy.shutdown()
                     # Dot product: +1 = same direction, -1 = opposite
                     dot = explore_dx * cand_dx + explore_dy * cand_dy
 
-                    # Bonus for forward, penalty for backward
-                    # dot=1 -> +5, dot=0 -> 0, dot=-1 -> -5
-                    fwd_bonus = dot * 5.0
+                    # Stronger bonus for forward, penalty for backward
+                    # dot=1 -> +15, dot=0 -> 0, dot=-1 -> -15
+                    # This needs to be strong enough to overcome unscanned bonus
+                    fwd_bonus = dot * 15.0
 
         breakdown['fwd'] = fwd_bonus
+
+        # === Factor 7b: ALREADY VISITED AREA PENALTY ===
+        # Strong penalty for selecting goals in areas we've recently been
+        # This prevents going back to where we just came from
+        backtrack_penalty = 0.0
+        for visited_cell, visit_time in self.visited.items():
+            # Check if candidate is close to a visited cell
+            visited_wx = (visited_cell[0] + 0.5) * self.grid_res
+            visited_wy = (visited_cell[1] + 0.5) * self.grid_res
+            dist_to_visited = math.sqrt((px - visited_wx)**2 + (py - visited_wy)**2)
+
+            # If candidate is within 0.5m of a visited cell, penalize based on recency
+            if dist_to_visited < 0.5:
+                time_since_visit = now - visit_time
+                if time_since_visit < 60:  # Visited in last 60 seconds
+                    # Recent visits get higher penalty
+                    recency_factor = 1.0 - (time_since_visit / 60.0)
+                    backtrack_penalty += recency_factor * 10.0
+
+        breakdown['backtrack'] = -min(backtrack_penalty, 25.0)  # Cap at -25
 
         # === Factor 8: BLOCKED SECTOR PENALTY ===
         # Heavily penalize goals in sectors that are currently blocked
