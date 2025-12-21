@@ -19,10 +19,31 @@ import time
 import threading
 import subprocess
 import heapq
+import os
+import sys
+from datetime import datetime
 from enum import Enum
-from typing import Optional, List, Tuple, Dict, Set
+from typing import Optional, List, Tuple, Dict, Set, TextIO
 
 from .ros_interface import get_lidar_scan, send_velocity_cmd, get_odometry, publish_goal_marker
+
+
+class TeeLogger:
+    """Write to both console and file simultaneously."""
+    def __init__(self, log_file: TextIO):
+        self.terminal = sys.stdout
+        self.log_file = log_file
+
+    def write(self, message):
+        self.terminal.write(message)
+        self.log_file.write(message)
+        self.log_file.flush()
+
+    def flush(self):
+        self.terminal.flush()
+        self.log_file.flush()
+
+
 from .avoider.lidar import compute_sector_distances
 from .constants import NUM_SECTORS, CONTAINER_NAME, SECTORS_FRONT_ARC, SECTORS_LEFT, SECTORS_RIGHT
 
@@ -156,6 +177,19 @@ class NBVNavigator:
         # Blocked sectors tracking - mark sectors as blocked for a duration
         # Key: sector index, Value: timestamp when block expires
         self.blocked_sectors: Dict[int, float] = {}
+
+        # Output logging
+        self.output_dir: Optional[str] = None
+        self.log_file: Optional[TextIO] = None
+        self._original_stdout = None
+
+        # Drive accuracy tracking
+        # Track deviation from ideal straight-line path to goal
+        self.drive_error_sum_sq: float = 0.0  # Sum of squared cross-track errors
+        self.drive_error_count: int = 0  # Number of measurements
+        self.drive_total_distance: float = 0.0  # Total distance traveled
+        self.drive_ideal_distance: float = 0.0  # Sum of straight-line distances to goals
+        self.last_pos_for_distance: Optional[Tuple[float, float]] = None
 
     def _start_marker_thread(self):
         """Start persistent marker publisher that keeps the topic alive."""
@@ -822,6 +856,9 @@ rclpy.shutdown()
 
     def run(self):
         """Main loop: select goal -> drive to goal -> repeat."""
+        # Setup output logging first
+        self._setup_output_logging()
+
         print("=" * 55)
         print("NEXT-BEST-VIEW (NBV) NAVIGATION")
         print("=" * 55)
@@ -832,6 +869,7 @@ rclpy.shutdown()
         self.running = True
         self.start_time = time.time()
         self.start_pos = None  # Track starting position
+        self.goal_start_pos = None  # Track position when goal was set (for accuracy)
 
         # Start marker publishing thread if debug mode
         if self.debug_marker:
@@ -1134,6 +1172,10 @@ rclpy.shutdown()
                         self.consecutive_no_goal = 0  # Reset failure counter on success
                         self.drive_goal_dist_history.clear()  # Reset DRIVE stuck detection
 
+                        # Track for drive accuracy
+                        self.goal_start_pos = self.current_pos
+                        self.drive_ideal_distance += dist
+
                         # Publish goal marker to RViz (green sphere)
                         publish_goal_marker(new_goal[0], new_goal[1])
 
@@ -1297,12 +1339,17 @@ rclpy.shutdown()
                     v, w = self._ramp_velocity(v, w)
                     send_velocity_cmd(v, w)
 
-                    # Status
+                    # Update drive accuracy tracking
+                    if self.goal_start_pos and self.goal_point:
+                        self._update_drive_accuracy(self.goal_start_pos, self.goal_point)
+
+                    # Status with drive accuracy
                     goal_dist = math.sqrt((self.goal_point[0] - self.current_pos[0])**2 +
                                          (self.goal_point[1] - self.current_pos[1])**2)
                     pos_str = f"({self.current_pos[0]:.2f},{self.current_pos[1]:.2f})"
                     goal_str = f"({self.goal_point[0]:.2f},{self.goal_point[1]:.2f})"
-                    status = f"[{self.iteration:3d}] {status_mode} goal={goal_str} dist={goal_dist:.2f}m front={front_min:.2f}m cells={len(self.visited)}"
+                    rms_cm = self._get_drive_rms_error() * 100
+                    status = f"[{self.iteration:3d}] {status_mode} goal={goal_str} dist={goal_dist:.2f}m front={front_min:.2f}m cells={len(self.visited)} rms={rms_cm:.1f}cm"
                     print(f"\r{status}", end="", flush=True)
 
                 time.sleep(0.1)
@@ -1315,6 +1362,8 @@ rclpy.shutdown()
             self._stop_marker_thread()
             self._stop_origin_marker()
             self._print_stats()
+            self._save_map()
+            self._cleanup_logging()
 
     def _select_goal_point(self, sectors: List[float], raw_scan: List[float] = None) -> Tuple[Optional[Tuple[float, float]], Optional[int]]:
         """
@@ -2243,6 +2292,120 @@ rclpy.shutdown()
             except:
                 pass
 
+    def _setup_output_logging(self):
+        """Setup output directory and logging to file."""
+        # Create output directory with timestamp
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        self.output_dir = os.path.join(base_dir, "outputs", timestamp)
+
+        # Create subdirectories
+        logs_dir = os.path.join(self.output_dir, "logs")
+        maps_dir = os.path.join(self.output_dir, "maps")
+        os.makedirs(logs_dir, exist_ok=True)
+        os.makedirs(maps_dir, exist_ok=True)
+
+        # Setup logging to file
+        log_path = os.path.join(logs_dir, "navigation.log")
+        self.log_file = open(log_path, 'w')
+        self._original_stdout = sys.stdout
+        sys.stdout = TeeLogger(self.log_file)
+
+        print(f"[OUTPUT] Logging to: {self.output_dir}")
+        print(f"[OUTPUT] Log file: {log_path}")
+
+    def _cleanup_logging(self):
+        """Restore stdout and close log file."""
+        if self._original_stdout:
+            sys.stdout = self._original_stdout
+        if self.log_file:
+            self.log_file.close()
+
+    def _save_map(self):
+        """Save the current map to the output directory."""
+        if not self.output_dir:
+            return
+
+        maps_dir = os.path.join(self.output_dir, "maps")
+        try:
+            # Save map using ROS map_saver
+            result = subprocess.run(
+                ['docker', 'exec', CONTAINER_NAME, 'bash', '-c',
+                 'source /opt/ros/humble/setup.bash && cd /tmp && '
+                 'ros2 run nav2_map_server map_saver_cli -f map --ros-args -p save_map_timeout:=10.0'],
+                capture_output=True, text=True, timeout=15
+            )
+
+            if result.returncode == 0:
+                # Copy files from container
+                subprocess.run(['docker', 'cp', f'{CONTAINER_NAME}:/tmp/map.pgm', maps_dir], check=True)
+                subprocess.run(['docker', 'cp', f'{CONTAINER_NAME}:/tmp/map.yaml', maps_dir], check=True)
+
+                # Convert to PNG
+                try:
+                    from PIL import Image
+                    pgm_path = os.path.join(maps_dir, 'map.pgm')
+                    png_path = os.path.join(maps_dir, 'map.png')
+                    img = Image.open(pgm_path)
+                    img.save(png_path)
+                    print(f"[OUTPUT] Map saved to: {maps_dir}")
+                except ImportError:
+                    print(f"[OUTPUT] Map saved (PGM only, PIL not available for PNG conversion)")
+            else:
+                print(f"[OUTPUT] Map save failed: {result.stderr}")
+        except Exception as e:
+            print(f"[OUTPUT] Map save error: {e}")
+
+    def _update_drive_accuracy(self, goal_start: Tuple[float, float], goal_end: Tuple[float, float]):
+        """
+        Update drive accuracy metrics.
+
+        Calculates cross-track error (perpendicular distance from ideal line)
+        and updates cumulative RMS error.
+        """
+        if not self.current_pos or not goal_start:
+            return
+
+        # Calculate cross-track error (perpendicular distance from ideal line)
+        # Line from goal_start to goal_end
+        dx = goal_end[0] - goal_start[0]
+        dy = goal_end[1] - goal_start[1]
+        line_len = math.sqrt(dx*dx + dy*dy)
+
+        if line_len < 0.01:
+            return
+
+        # Perpendicular distance from current position to line
+        # Using formula: |((y2-y1)*x0 - (x2-x1)*y0 + x2*y1 - y2*x1)| / sqrt((y2-y1)^2 + (x2-x1)^2)
+        cross_track_error = abs(
+            dy * self.current_pos[0] - dx * self.current_pos[1] +
+            goal_end[0] * goal_start[1] - goal_end[1] * goal_start[0]
+        ) / line_len
+
+        self.drive_error_sum_sq += cross_track_error ** 2
+        self.drive_error_count += 1
+
+        # Track actual distance traveled
+        if self.last_pos_for_distance:
+            dist_moved = math.sqrt(
+                (self.current_pos[0] - self.last_pos_for_distance[0])**2 +
+                (self.current_pos[1] - self.last_pos_for_distance[1])**2
+            )
+            self.drive_total_distance += dist_moved
+        self.last_pos_for_distance = self.current_pos
+
+    def _get_drive_rms_error(self) -> float:
+        """Get RMS cross-track error."""
+        if self.drive_error_count == 0:
+            return 0.0
+        return math.sqrt(self.drive_error_sum_sq / self.drive_error_count)
+
+    def _get_drive_efficiency(self) -> float:
+        """Get drive efficiency (ideal distance / actual distance)."""
+        if self.drive_total_distance < 0.01:
+            return 1.0
+        return self.drive_ideal_distance / self.drive_total_distance
+
     def _print_stats(self):
         """Print final statistics."""
         elapsed = time.time() - self.start_time
@@ -2258,9 +2421,19 @@ rclpy.shutdown()
         print(f"Cells scanned by LiDAR: {len(self.scanned)}")
         print(f"Walls detected: {len(self.scan_ends)}")
 
+        # Drive accuracy stats
+        print(f"\n--- Drive Accuracy ---")
+        rms_error = self._get_drive_rms_error()
+        efficiency = self._get_drive_efficiency()
+        print(f"Cross-track RMS error: {rms_error*100:.1f}cm")
+        print(f"Total distance traveled: {self.drive_total_distance:.2f}m")
+        print(f"Ideal distance (sum of goals): {self.drive_ideal_distance:.2f}m")
+        print(f"Drive efficiency: {efficiency*100:.1f}%")
+
         # Return phase stats
         if self.return_start_time > 0:
             return_duration = time.time() - self.return_start_time
+            print(f"\n--- Return Phase ---")
             print(f"Return phase duration: {return_duration:.1f}s")
             if self.start_pos and self.current_pos:
                 final_dist = math.sqrt(
@@ -2272,6 +2445,18 @@ rclpy.shutdown()
         if total > 0:
             revisit_pct = 100 * (total - len(self.visited)) / total
             print(f"Revisit rate: {revisit_pct:.1f}%")
+
+        # Map accuracy suggestions
+        print(f"\n--- Map Accuracy Suggestions ---")
+        print("To measure map accuracy, consider:")
+        print("1. Ground truth comparison: Place markers at known positions,")
+        print("   compare measured vs actual distances between them")
+        print("2. Loop closure error: After returning to origin, check")
+        print("   odometry drift (final_dist to origin should be ~0)")
+        print("3. Feature alignment: Compare map walls to actual room layout")
+        print("4. Consistency check: Run multiple times, overlay maps")
+        print("5. Tape measure validation: Measure actual room dimensions,")
+        print("   compare to map scale (resolution * pixels)")
 
 
 def run_simple_nav(speed: float = 0.08, duration: float = 60.0,
