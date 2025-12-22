@@ -160,7 +160,7 @@ class NBVNavigator:
         self.return_waypoint_idx: int = 0  # Current waypoint index
         self.waypoint_reached_dist: float = 0.35  # Distance to consider waypoint reached
         self.origin_reached_dist: float = 0.15  # Tighter threshold for reaching origin (15cm)
-        self.path_inflation_radius: int = 2  # Grid cells to inflate walls (2 cells = 0.6m clearance)
+        self.path_inflation_radius: int = 4  # Grid cells to inflate walls (4 cells = 16cm clearance)
         self.goal_clearance_radius: int = 3  # Clear cells within this radius of goal from obstacles
 
         # Unreachable waypoints - cells that A* should treat as walls
