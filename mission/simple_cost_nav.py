@@ -799,77 +799,6 @@ rclpy.shutdown()
 
         return best_idx
 
-    def _ensure_los_to_waypoint(self, from_pos: Tuple[float, float],
-                                 waypoint_idx: int) -> Optional[Tuple[float, float]]:
-        """
-        Ensure clear line-of-sight from current position to the waypoint.
-
-        If there's no clear line-of-sight, find an intermediate point between
-        the current position and the waypoint that DOES have clear line-of-sight.
-
-        Returns:
-            The waypoint to drive to (either the original or an intermediate one).
-            Returns None if no safe waypoint can be found.
-        """
-        if not self.return_path or waypoint_idx >= len(self.return_path):
-            return None
-
-        target_wp = self.return_path[waypoint_idx]
-
-        # Check if direct line-of-sight exists
-        if self._has_line_of_sight_with_margin(from_pos[0], from_pos[1],
-                                                target_wp[0], target_wp[1]):
-            return target_wp  # Direct path is clear
-
-        # No direct line-of-sight - need to find intermediate point
-        # Look for the furthest point along the path that has clear LOS
-        elapsed_total = time.time() - self.start_time
-        print(f"[{elapsed_total:5.1f}s] [A*] No clear LOS to WP{waypoint_idx} ({target_wp[0]:.2f},{target_wp[1]:.2f}), finding intermediate...")
-
-        # Generate intermediate points between current position and waypoint
-        dx = target_wp[0] - from_pos[0]
-        dy = target_wp[1] - from_pos[1]
-        dist = math.sqrt(dx*dx + dy*dy)
-
-        if dist < 0.1:
-            return target_wp  # Too close, just go there
-
-        # Try points at decreasing distances from current position
-        # Start at 90% of the way and work backwards in 10% increments
-        for fraction in [0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.2]:
-            intermediate_x = from_pos[0] + dx * fraction
-            intermediate_y = from_pos[1] + dy * fraction
-
-            # Check if this intermediate point has clear LOS from current pos
-            if self._has_line_of_sight_with_margin(from_pos[0], from_pos[1],
-                                                    intermediate_x, intermediate_y):
-                # Also ensure this intermediate point is not in a wall
-                cell = self._pos_to_cell(intermediate_x, intermediate_y)
-                if cell not in self.scan_ends and cell not in self.unreachable_cells:
-                    print(f"[{elapsed_total:5.1f}s] [A*] Using intermediate point at {fraction*100:.0f}% ({intermediate_x:.2f},{intermediate_y:.2f})")
-                    # Insert this intermediate point into the path
-                    self.return_path.insert(waypoint_idx, (intermediate_x, intermediate_y))
-                    return (intermediate_x, intermediate_y)
-
-        # If no fraction works, try even smaller steps
-        for fraction in [0.15, 0.1, 0.05]:
-            intermediate_x = from_pos[0] + dx * fraction
-            intermediate_y = from_pos[1] + dy * fraction
-
-            if self._has_line_of_sight_with_margin(from_pos[0], from_pos[1],
-                                                    intermediate_x, intermediate_y):
-                cell = self._pos_to_cell(intermediate_x, intermediate_y)
-                if cell not in self.scan_ends and cell not in self.unreachable_cells:
-                    print(f"[{elapsed_total:5.1f}s] [A*] Using very close intermediate at {fraction*100:.0f}% ({intermediate_x:.2f},{intermediate_y:.2f})")
-                    self.return_path.insert(waypoint_idx, (intermediate_x, intermediate_y))
-                    return (intermediate_x, intermediate_y)
-
-        # No clear path found - but A* validated this path, so trust it
-        # The scan_ends map may have stale/inaccurate obstacles
-        # Just use the original waypoint and let obstacle avoidance handle it
-        print(f"[{elapsed_total:5.1f}s] [A*] No clear LOS, trusting A* path to WP{waypoint_idx}")
-        return target_wp
-
     def _ensure_penultimate_in_open_space(self, simplified: List[Tuple[float, float]],
                                           original_path: List[Tuple[float, float]]) -> List[Tuple[float, float]]:
         """
@@ -1161,15 +1090,9 @@ rclpy.shutdown()
                         print(f"[A*] Planned path with {len(self.return_path)} waypoints")
                         for i, wp in enumerate(self.return_path):
                             print(f"  WP{i}: ({wp[0]:.2f}, {wp[1]:.2f})")
-                        # Set first waypoint as goal (with LOS check)
-                        safe_wp = self._ensure_los_to_waypoint(self.current_pos, 0)
-                        if safe_wp:
-                            with self._goal_lock:
-                                self.goal_point = safe_wp
-                        else:
-                            # Fallback to first waypoint anyway
-                            with self._goal_lock:
-                                self.goal_point = self.return_path[0]
+                        # Set first waypoint as goal
+                        with self._goal_lock:
+                            self.goal_point = self.return_path[0]
                         self.goal_set_time = time.time()
                     else:
                         print(f"[A*] No path found! Will use direct navigation")
@@ -1211,15 +1134,13 @@ rclpy.shutdown()
                             # Advance to next waypoint
                             self.return_waypoint_idx += 1
                             if self.return_waypoint_idx < len(self.return_path):
-                                # Check if clear LOS to next waypoint, insert intermediate if needed
-                                # _ensure_los_to_waypoint always returns a valid waypoint (original or intermediate)
-                                safe_wp = self._ensure_los_to_waypoint(self.current_pos, self.return_waypoint_idx)
+                                next_wp = self.return_path[self.return_waypoint_idx]
                                 with self._goal_lock:
-                                    self.goal_point = safe_wp
+                                    self.goal_point = next_wp
                                 self.locked_heading = None
                                 elapsed_total = time.time() - self.start_time
                                 print(f"\n[{elapsed_total:5.1f}s] [A*] Reached WP{self.return_waypoint_idx - 1}, "
-                                      f"heading to WP{self.return_waypoint_idx} ({safe_wp[0]:.2f}, {safe_wp[1]:.2f})")
+                                      f"heading to WP{self.return_waypoint_idx} ({next_wp[0]:.2f}, {next_wp[1]:.2f})")
                             else:
                                 # All waypoints done, head to final origin
                                 with self._goal_lock:
@@ -1323,9 +1244,8 @@ rclpy.shutdown()
                                 self.return_last_progress_time = now
                                 if self.return_path:
                                     print(f"[A*] Replanned with {len(self.return_path)} waypoints")
-                                    safe_wp = self._ensure_los_to_waypoint(self.current_pos, 0)
                                     with self._goal_lock:
-                                        self.goal_point = safe_wp if safe_wp else self.return_path[0]
+                                        self.goal_point = self.return_path[0]
                                 else:
                                     print(f"[A*] Replan failed, using direct navigation")
                                     with self._goal_lock:
@@ -1371,9 +1291,8 @@ rclpy.shutdown()
                         self.return_waypoint_idx = 0
                         if self.return_path:
                             print(f"[A*] Replanned with {len(self.return_path)} waypoints")
-                            safe_wp = self._ensure_los_to_waypoint(self.current_pos, 0)
                             with self._goal_lock:
-                                self.goal_point = safe_wp if safe_wp else self.return_path[0]
+                                self.goal_point = self.return_path[0]
                         else:
                             print(f"[A*] Replan failed, using direct navigation")
                             with self._goal_lock:
@@ -1393,9 +1312,8 @@ rclpy.shutdown()
                         self.return_path = self._plan_path_astar(self.current_pos, self.start_pos)
                         self.return_waypoint_idx = 0
                         if self.return_path:
-                            safe_wp = self._ensure_los_to_waypoint(self.current_pos, 0)
                             with self._goal_lock:
-                                self.goal_point = safe_wp if safe_wp else self.return_path[0]
+                                self.goal_point = self.return_path[0]
                         else:
                             with self._goal_lock:
                                 self.goal_point = self.start_pos
