@@ -159,6 +159,7 @@ class NBVNavigator:
         self.return_path: List[Tuple[float, float]] = []  # Waypoints to follow
         self.return_waypoint_idx: int = 0  # Current waypoint index
         self.waypoint_reached_dist: float = 0.35  # Distance to consider waypoint reached
+        self.origin_reached_dist: float = 0.15  # Tighter threshold for reaching origin (15cm)
         self.path_inflation_radius: int = 2  # Grid cells to inflate walls (2 cells = 0.6m clearance)
         self.goal_clearance_radius: int = 3  # Clear cells within this radius of goal from obstacles
 
@@ -1014,8 +1015,8 @@ rclpy.shutdown()
                         (self.current_pos[0] - self.start_pos[0])**2 +
                         (self.current_pos[1] - self.start_pos[1])**2)
 
-                    # Check if we've reached origin
-                    if dist_to_origin < self.goal_reached_dist:
+                    # Check if we've reached origin (tighter threshold than other waypoints)
+                    if dist_to_origin < self.origin_reached_dist:
                         print(f"\n\n{'=' * 55}")
                         print(f"[{time.time() - self.start_time:.1f}s] MISSION COMPLETE!")
                         print(f"{'=' * 55}")
