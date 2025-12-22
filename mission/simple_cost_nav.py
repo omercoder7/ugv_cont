@@ -1123,6 +1123,42 @@ rclpy.shutdown()
                         print(f"{'=' * 55}\n")
                         break
 
+                    # Check if origin drifted behind a wall (SLAM drift)
+                    # If we're close to origin (<0.6m), heading directly to it (no more waypoints),
+                    # and there's a wall between us and the origin, finish here
+                    if (dist_to_origin < 0.6 and
+                        self.goal_point == self.start_pos and
+                        (not self.return_path or self.return_waypoint_idx >= len(self.return_path))):
+
+                        # Check if origin is behind a wall
+                        origin_cell = self._pos_to_cell(self.start_pos[0], self.start_pos[1])
+                        if origin_cell in self.scan_ends:
+                            # Origin cell is marked as a wall - SLAM drifted
+                            print(f"\n\n{'=' * 55}")
+                            print(f"[{time.time() - self.start_time:.1f}s] MISSION COMPLETE!")
+                            print(f"{'=' * 55}")
+                            print(f"Origin appears to have drifted behind a wall (SLAM drift)")
+                            print(f"Finishing at closest safe position.")
+                            print(f"Final position: ({self.current_pos[0]:.2f}, {self.current_pos[1]:.2f})")
+                            print(f"Origin: ({self.start_pos[0]:.2f}, {self.start_pos[1]:.2f})")
+                            print(f"Distance error: {dist_to_origin:.2f}m")
+                            print(f"{'=' * 55}\n")
+                            break
+
+                        # Also check if there's a wall directly in front blocking path to origin
+                        if front_min < 0.25 and dist_to_origin < 0.5:
+                            # Very close to origin but wall in front - likely drift
+                            print(f"\n\n{'=' * 55}")
+                            print(f"[{time.time() - self.start_time:.1f}s] MISSION COMPLETE!")
+                            print(f"{'=' * 55}")
+                            print(f"Wall blocking final approach to origin (likely SLAM drift)")
+                            print(f"Finishing at current position.")
+                            print(f"Final position: ({self.current_pos[0]:.2f}, {self.current_pos[1]:.2f})")
+                            print(f"Origin: ({self.start_pos[0]:.2f}, {self.start_pos[1]:.2f})")
+                            print(f"Distance error: {dist_to_origin:.2f}m")
+                            print(f"{'=' * 55}\n")
+                            break
+
                     # Check if current waypoint reached
                     if self.return_path and self.return_waypoint_idx < len(self.return_path):
                         current_wp = self.return_path[self.return_waypoint_idx]
