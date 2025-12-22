@@ -1113,12 +1113,24 @@ rclpy.shutdown()
                                 print(f"[A*] Area center: ({self.return_area_center[0]:.2f},{self.return_area_center[1]:.2f}), "
                                       f"best_dist={self.return_area_best_dist:.2f}m, current_dist={dist_to_origin:.2f}m")
 
-                                # Mark current waypoint as unreachable
+                                # Mark current waypoint and surrounding cells as unreachable
+                                # If we've already failed at this cell, expand the blocked area
                                 if self.return_path and self.return_waypoint_idx < len(self.return_path):
                                     failed_wp = self.return_path[self.return_waypoint_idx]
                                     failed_cell = self._pos_to_cell(failed_wp[0], failed_wp[1])
-                                    self.unreachable_cells[failed_cell] = now
-                                    print(f"[A*] Marked waypoint ({failed_wp[0]:.2f},{failed_wp[1]:.2f}) cell {failed_cell} as UNREACHABLE")
+
+                                    # Check if we've already failed here before
+                                    if failed_cell in self.unreachable_cells:
+                                        # Expand blocked area - mark all adjacent cells too
+                                        print(f"[A*] Cell {failed_cell} already unreachable, EXPANDING blocked area")
+                                        for dx in range(-2, 3):
+                                            for dy in range(-2, 3):
+                                                expanded_cell = (failed_cell[0] + dx, failed_cell[1] + dy)
+                                                self.unreachable_cells[expanded_cell] = now
+                                        print(f"[A*] Blocked 5x5 area around ({failed_wp[0]:.2f},{failed_wp[1]:.2f})")
+                                    else:
+                                        self.unreachable_cells[failed_cell] = now
+                                        print(f"[A*] Marked waypoint ({failed_wp[0]:.2f},{failed_wp[1]:.2f}) cell {failed_cell} as UNREACHABLE")
 
                                 # Update obstacles and replan
                                 self._update_obstacles_from_lidar(scan)
@@ -1151,11 +1163,22 @@ rclpy.shutdown()
                         print(f"\n[{elapsed_total:5.1f}s] [A*] Stuck for {time_since_progress:.1f}s (no movement/rotation), replanning...")
 
                         # Mark the current waypoint as unreachable so A* won't route through it again
+                        # If already unreachable, expand the blocked area
                         if self.return_path and self.return_waypoint_idx < len(self.return_path):
                             failed_wp = self.return_path[self.return_waypoint_idx]
                             failed_cell = self._pos_to_cell(failed_wp[0], failed_wp[1])
-                            self.unreachable_cells[failed_cell] = time.time()
-                            print(f"[A*] Marked waypoint ({failed_wp[0]:.2f},{failed_wp[1]:.2f}) cell {failed_cell} as UNREACHABLE")
+
+                            if failed_cell in self.unreachable_cells:
+                                # Already failed here - expand blocked area
+                                print(f"[A*] Cell {failed_cell} already unreachable, EXPANDING blocked area")
+                                for dx in range(-2, 3):
+                                    for dy in range(-2, 3):
+                                        expanded_cell = (failed_cell[0] + dx, failed_cell[1] + dy)
+                                        self.unreachable_cells[expanded_cell] = time.time()
+                                print(f"[A*] Blocked 5x5 area around ({failed_wp[0]:.2f},{failed_wp[1]:.2f})")
+                            else:
+                                self.unreachable_cells[failed_cell] = time.time()
+                                print(f"[A*] Marked waypoint ({failed_wp[0]:.2f},{failed_wp[1]:.2f}) cell {failed_cell} as UNREACHABLE")
 
                         # Update scan_ends with current LiDAR obstacles
                         # This ensures A* knows about obstacles we're seeing now
