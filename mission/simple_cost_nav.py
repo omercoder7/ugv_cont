@@ -768,9 +768,11 @@ rclpy.shutdown()
                     self.return_path.insert(waypoint_idx, (intermediate_x, intermediate_y))
                     return (intermediate_x, intermediate_y)
 
-        # No clear path found at all - will need to replan
-        print(f"[{elapsed_total:5.1f}s] [A*] WARNING: No clear LOS path found to WP{waypoint_idx}")
-        return None
+        # No clear path found - but A* validated this path, so trust it
+        # The scan_ends map may have stale/inaccurate obstacles
+        # Just use the original waypoint and let obstacle avoidance handle it
+        print(f"[{elapsed_total:5.1f}s] [A*] No clear LOS, trusting A* path to WP{waypoint_idx}")
+        return target_wp
 
     def _ensure_penultimate_in_open_space(self, simplified: List[Tuple[float, float]],
                                           original_path: List[Tuple[float, float]]) -> List[Tuple[float, float]]:
@@ -1114,42 +1116,21 @@ rclpy.shutdown()
                             self.return_waypoint_idx += 1
                             if self.return_waypoint_idx < len(self.return_path):
                                 # Check if clear LOS to next waypoint, insert intermediate if needed
+                                # _ensure_los_to_waypoint always returns a valid waypoint (original or intermediate)
                                 safe_wp = self._ensure_los_to_waypoint(self.current_pos, self.return_waypoint_idx)
-                                if safe_wp:
-                                    with self._goal_lock:
-                                        self.goal_point = safe_wp
-                                    self.locked_heading = None
-                                    elapsed_total = time.time() - self.start_time
-                                    print(f"\n[{elapsed_total:5.1f}s] [A*] Reached WP{self.return_waypoint_idx - 1}, "
-                                          f"heading to WP{self.return_waypoint_idx} ({safe_wp[0]:.2f}, {safe_wp[1]:.2f})")
-                                else:
-                                    # No safe waypoint found, trigger replan
-                                    elapsed_total = time.time() - self.start_time
-                                    print(f"\n[{elapsed_total:5.1f}s] [A*] No safe path to next WP, replanning...")
-                                    self.return_path = self._plan_path_astar(self.current_pos, self.start_pos)
-                                    self.return_waypoint_idx = 0
-                                    if self.return_path:
-                                        with self._goal_lock:
-                                            self.goal_point = self.return_path[0]
+                                with self._goal_lock:
+                                    self.goal_point = safe_wp
+                                self.locked_heading = None
+                                elapsed_total = time.time() - self.start_time
+                                print(f"\n[{elapsed_total:5.1f}s] [A*] Reached WP{self.return_waypoint_idx - 1}, "
+                                      f"heading to WP{self.return_waypoint_idx} ({safe_wp[0]:.2f}, {safe_wp[1]:.2f})")
                             else:
                                 # All waypoints done, head to final origin
-                                # Check LOS to origin as well
-                                if self._has_line_of_sight_with_margin(self.current_pos[0], self.current_pos[1],
-                                                                        self.start_pos[0], self.start_pos[1]):
-                                    with self._goal_lock:
-                                        self.goal_point = self.start_pos
-                                    self.locked_heading = None
-                                    elapsed_total = time.time() - self.start_time
-                                    print(f"\n[{elapsed_total:5.1f}s] [A*] All waypoints reached, heading to origin")
-                                else:
-                                    # No clear LOS to origin, replan
-                                    elapsed_total = time.time() - self.start_time
-                                    print(f"\n[{elapsed_total:5.1f}s] [A*] No clear LOS to origin, replanning...")
-                                    self.return_path = self._plan_path_astar(self.current_pos, self.start_pos)
-                                    self.return_waypoint_idx = 0
-                                    if self.return_path:
-                                        with self._goal_lock:
-                                            self.goal_point = self.return_path[0]
+                                with self._goal_lock:
+                                    self.goal_point = self.start_pos
+                                self.locked_heading = None
+                                elapsed_total = time.time() - self.start_time
+                                print(f"\n[{elapsed_total:5.1f}s] [A*] All waypoints reached, heading to origin")
 
                     # Check for movement OR rotation (stuck detection)
                     # Robot is "active" if it moved position OR rotated significantly
