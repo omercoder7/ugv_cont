@@ -1844,10 +1844,21 @@ rclpy.shutdown()
         visit_time = self.visited.get(point_cell, 0)
         if visit_time > 0:
             time_since_visit = now - visit_time
-            decay_rate = 0.05  # Decay constant: penalty halves every ~14 seconds
+            decay_rate = 0.03  # SLOWER decay: penalty lasts longer
             decay_factor = math.exp(-decay_rate * time_since_visit)
-            # Base penalty of 8.0, decays over time
-            visited_penalty = 8.0 * decay_factor
+            # INCREASED base penalty of 15.0 - strongly discourage revisiting
+            visited_penalty = 15.0 * decay_factor
+        # Also check neighboring cells - penalize being NEAR visited areas
+        for dx in [-1, 0, 1]:
+            for dy in [-1, 0, 1]:
+                if dx == 0 and dy == 0:
+                    continue
+                neighbor = (point_cell[0] + dx, point_cell[1] + dy)
+                neighbor_visit = self.visited.get(neighbor, 0)
+                if neighbor_visit > 0:
+                    time_since = now - neighbor_visit
+                    decay = math.exp(-0.03 * time_since)
+                    visited_penalty += 3.0 * decay  # Lighter penalty for neighbors
         breakdown['visited'] = -visited_penalty
 
         # === Factor 6: DISTANCE EFFICIENCY ===
@@ -1878,10 +1889,10 @@ rclpy.shutdown()
                     # Dot product: +1 = same direction, -1 = opposite
                     dot = explore_dx * cand_dx + explore_dy * cand_dy
 
-                    # Stronger bonus for forward, penalty for backward
-                    # dot=1 -> +15, dot=0 -> 0, dot=-1 -> -15
-                    # This needs to be strong enough to overcome unscanned bonus
-                    fwd_bonus = dot * 15.0
+                    # REDUCED: Forward momentum should be a tiebreaker, not dominate
+                    # The visited penalty already handles not revisiting areas
+                    # dot=1 -> +8, dot=0 -> 0, dot=-1 -> -8
+                    fwd_bonus = dot * 8.0
 
         breakdown['fwd'] = fwd_bonus
 
