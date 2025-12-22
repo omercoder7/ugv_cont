@@ -541,21 +541,23 @@ rclpy.shutdown()
 
     def _simplify_path(self, path: List[Tuple[float, float]]) -> List[Tuple[float, float]]:
         """
-        Simplify path by removing intermediate waypoints where possible.
+        Simplify path by removing intermediate waypoints while GUARANTEEING
+        line-of-sight between all consecutive waypoints.
 
-        Only removes a waypoint if:
-        1. Direction change is small (< 11 degrees)
-        2. There's clear line-of-sight between the previous and next waypoint
+        Uses visibility-preserving simplification:
+        1. Only removes waypoints if resulting connection has clear LOS
+        2. More conservative at corners (lower angle threshold)
+        3. Inserts corner waypoints when needed to maintain LOS
 
-        This ensures the simplified path doesn't cut through walls.
-        Also ensures the penultimate waypoint is in verified open space
-        for a clear final approach to the goal.
+        This ensures the robot can always drive in a straight line to
+        the next waypoint without hitting walls.
         """
         if len(path) <= 2:
             return path
 
+        # Phase 1: Conservative simplification - only remove if LOS is clear
         simplified = [path[0]]
-        angle_threshold = 0.2  # ~11 degrees - keep waypoints with significant direction change
+        angle_threshold = 0.35  # ~20 degrees - more conservative, keep more corners
 
         for i in range(1, len(path) - 1):
             prev = simplified[-1]
@@ -568,7 +570,7 @@ rclpy.shutdown()
             angle_diff = abs(self._normalize_angle(angle2 - angle1))
 
             # Keep this waypoint if:
-            # 1. Direction changes significantly, OR
+            # 1. Direction changes significantly (corner), OR
             # 2. No clear line-of-sight from prev to next (would cut through walls)
             if angle_diff > angle_threshold:
                 simplified.append(curr)
@@ -578,13 +580,165 @@ rclpy.shutdown()
 
         simplified.append(path[-1])
 
-        # Validate all waypoint connections have line-of-sight
-        simplified = self._validate_path_connectivity(simplified, path)
+        # Phase 2: Ensure LOS between ALL consecutive waypoints
+        # Insert corner waypoints where needed
+        simplified = self._ensure_all_waypoints_have_los(simplified, path)
 
-        # Ensure penultimate waypoint is in open space for clear final approach
+        # Phase 3: Ensure penultimate waypoint is in open space for clear final approach
         simplified = self._ensure_penultimate_in_open_space(simplified, path)
 
         return simplified
+
+    def _ensure_all_waypoints_have_los(self, simplified: List[Tuple[float, float]],
+                                        original_path: List[Tuple[float, float]]) -> List[Tuple[float, float]]:
+        """
+        Ensure every consecutive pair of waypoints has clear line-of-sight.
+
+        For each blocked segment, find and insert a corner waypoint that:
+        1. Has LOS to the previous waypoint
+        2. Has LOS to the next waypoint
+        3. Is away from walls (safe passage)
+
+        This is based on the visibility graph approach where waypoints are
+        placed at corners where visibility changes.
+        """
+        if len(simplified) <= 1:
+            return simplified
+
+        result = [simplified[0]]
+        max_iterations = 10  # Prevent infinite loops
+
+        i = 1
+        while i < len(simplified):
+            prev = result[-1]
+            curr = simplified[i]
+
+            # Check if direct LOS exists
+            if self._has_line_of_sight_with_margin(prev[0], prev[1], curr[0], curr[1]):
+                result.append(curr)
+                i += 1
+            else:
+                # No LOS - need to insert corner waypoint(s)
+                corner = self._find_corner_waypoint(prev, curr, original_path)
+
+                if corner:
+                    # Insert corner and continue (will check LOS from corner to curr next iteration)
+                    result.append(corner)
+                    # Don't increment i - we still need to reach curr
+                    # But to prevent infinite loops, check if we're making progress
+                    dist_to_curr = math.sqrt((corner[0] - curr[0])**2 + (corner[1] - curr[1])**2)
+                    dist_prev_to_curr = math.sqrt((prev[0] - curr[0])**2 + (prev[1] - curr[1])**2)
+
+                    if dist_to_curr >= dist_prev_to_curr * 0.9:
+                        # Not making progress, just add curr and move on
+                        result.append(curr)
+                        i += 1
+                else:
+                    # Couldn't find corner waypoint - try to use original path waypoints
+                    inserted = self._insert_original_waypoints(prev, curr, original_path, result)
+                    if not inserted:
+                        # Last resort: just add the waypoint anyway
+                        result.append(curr)
+                    i += 1
+
+        return result
+
+    def _find_corner_waypoint(self, start: Tuple[float, float], end: Tuple[float, float],
+                               original_path: List[Tuple[float, float]]) -> Optional[Tuple[float, float]]:
+        """
+        Find a corner waypoint between start and end that has LOS to both.
+
+        Strategy:
+        1. First try waypoints from the original A* path
+        2. Then try points along the perpendicular to find a corner
+        3. Look for visited cells that have LOS to both points
+        """
+        # Strategy 1: Find original path waypoints between start and end
+        start_idx = self._find_closest_path_index(original_path, start)
+        end_idx = self._find_closest_path_index(original_path, end)
+
+        if start_idx < end_idx:
+            # Check each intermediate waypoint from original path
+            for j in range(start_idx + 1, end_idx):
+                candidate = original_path[j]
+                # Check if this point has LOS to both start and end
+                if (self._has_line_of_sight_with_margin(start[0], start[1], candidate[0], candidate[1]) and
+                    self._has_line_of_sight_with_margin(candidate[0], candidate[1], end[0], end[1])):
+                    return candidate
+
+            # If no single point works, find the best intermediate that at least has LOS to start
+            for j in range(start_idx + 1, min(start_idx + 5, end_idx)):
+                candidate = original_path[j]
+                if self._has_line_of_sight_with_margin(start[0], start[1], candidate[0], candidate[1]):
+                    return candidate
+
+        # Strategy 2: Try points offset from the midpoint (perpendicular search)
+        mid_x = (start[0] + end[0]) / 2
+        mid_y = (start[1] + end[1]) / 2
+
+        dx = end[0] - start[0]
+        dy = end[1] - start[1]
+        dist = math.sqrt(dx*dx + dy*dy)
+
+        if dist > 0.1:
+            # Perpendicular direction
+            perp_x = -dy / dist
+            perp_y = dx / dist
+
+            # Try offsets in perpendicular direction
+            for offset in [0.2, 0.4, 0.6, -0.2, -0.4, -0.6]:
+                corner_x = mid_x + perp_x * offset
+                corner_y = mid_y + perp_y * offset
+
+                # Check if this is a valid corner (not in wall, has LOS to both)
+                cell = self._pos_to_cell(corner_x, corner_y)
+                if cell not in self.scan_ends and cell not in self.unreachable_cells:
+                    if (self._has_line_of_sight_with_margin(start[0], start[1], corner_x, corner_y) and
+                        self._has_line_of_sight_with_margin(corner_x, corner_y, end[0], end[1])):
+                        return (corner_x, corner_y)
+
+        # Strategy 3: Look for visited cells near the path that have LOS to both
+        for visited_cell in self.visited.keys():
+            vx = (visited_cell[0] + 0.5) * self.grid_res
+            vy = (visited_cell[1] + 0.5) * self.grid_res
+
+            # Check if visited cell is roughly between start and end
+            dist_to_start = math.sqrt((vx - start[0])**2 + (vy - start[1])**2)
+            dist_to_end = math.sqrt((vx - end[0])**2 + (vy - end[1])**2)
+            direct_dist = math.sqrt((end[0] - start[0])**2 + (end[1] - start[1])**2)
+
+            # Visited cell should be reasonably close to the path
+            if dist_to_start + dist_to_end < direct_dist * 2.0:
+                if (self._has_line_of_sight_with_margin(start[0], start[1], vx, vy) and
+                    self._has_line_of_sight_with_margin(vx, vy, end[0], end[1])):
+                    return (vx, vy)
+
+        return None
+
+    def _insert_original_waypoints(self, start: Tuple[float, float], end: Tuple[float, float],
+                                    original_path: List[Tuple[float, float]],
+                                    result: List[Tuple[float, float]]) -> bool:
+        """
+        Insert waypoints from original path to bridge between start and end.
+        Returns True if any waypoints were inserted.
+        """
+        start_idx = self._find_closest_path_index(original_path, start)
+        end_idx = self._find_closest_path_index(original_path, end)
+
+        if start_idx >= end_idx:
+            return False
+
+        inserted = False
+        for j in range(start_idx + 1, end_idx):
+            wp = original_path[j]
+            # Only add if it has LOS to the last result point
+            if self._has_line_of_sight_with_margin(result[-1][0], result[-1][1], wp[0], wp[1]):
+                result.append(wp)
+                inserted = True
+
+        # Add the end point
+        result.append(end)
+        return inserted
 
     def _has_line_of_sight_with_margin(self, x1: float, y1: float, x2: float, y2: float,
                                         margin_cells: int = 1) -> bool:
@@ -630,64 +784,6 @@ rclpy.shutdown()
                     return False  # Known unreachable cell
 
         return True
-
-    def _validate_path_connectivity(self, simplified: List[Tuple[float, float]],
-                                     original_path: List[Tuple[float, float]]) -> List[Tuple[float, float]]:
-        """
-        Validate that all consecutive waypoints have clear line-of-sight.
-
-        If any connection is blocked, insert intermediate waypoints from
-        the original A* path to ensure connectivity.
-
-        If too many segments are blocked (>50%), just return the original
-        unsimplified path since simplification is causing more harm than good.
-        """
-        if len(simplified) <= 1:
-            return simplified
-
-        # First pass: count how many segments are blocked
-        blocked_count = 0
-        for i in range(1, len(simplified)):
-            prev = simplified[i-1]
-            curr = simplified[i]
-            if not self._has_line_of_sight_with_margin(prev[0], prev[1], curr[0], curr[1]):
-                blocked_count += 1
-
-        # If more than 50% of segments are blocked, skip simplification entirely
-        # The scan_ends map doesn't match reality - just use raw A* path
-        if blocked_count > len(simplified) * 0.5:
-            print(f"[A* DEBUG] {blocked_count}/{len(simplified)-1} segments blocked, using unsimplified A* path")
-            return original_path
-
-        validated = [simplified[0]]
-
-        for i in range(1, len(simplified)):
-            prev = validated[-1]
-            curr = simplified[i]
-
-            # Check if direct path is clear
-            if self._has_line_of_sight_with_margin(prev[0], prev[1], curr[0], curr[1]):
-                validated.append(curr)
-            else:
-                # Path blocked - find intermediate waypoints from original path
-                print(f"[A* DEBUG] Path blocked between ({prev[0]:.2f},{prev[1]:.2f}) and ({curr[0]:.2f},{curr[1]:.2f})")
-
-                # Find the segment in original path that corresponds to this gap
-                prev_idx = self._find_closest_path_index(original_path, prev)
-                curr_idx = self._find_closest_path_index(original_path, curr)
-
-                if prev_idx < curr_idx:
-                    # Add intermediate waypoints from original path
-                    for j in range(prev_idx + 1, curr_idx):
-                        intermediate = original_path[j]
-                        # Only add if it helps (has LOS to previous)
-                        if self._has_line_of_sight_with_margin(validated[-1][0], validated[-1][1],
-                                                               intermediate[0], intermediate[1]):
-                            validated.append(intermediate)
-
-                validated.append(curr)
-
-        return validated
 
     def _find_closest_path_index(self, path: List[Tuple[float, float]],
                                   point: Tuple[float, float]) -> int:
@@ -1889,10 +1985,10 @@ rclpy.shutdown()
                     # Dot product: +1 = same direction, -1 = opposite
                     dot = explore_dx * cand_dx + explore_dy * cand_dy
 
-                    # REDUCED: Forward momentum should be a tiebreaker, not dominate
-                    # The visited penalty already handles not revisiting areas
-                    # dot=1 -> +8, dot=0 -> 0, dot=-1 -> -8
-                    fwd_bonus = dot * 8.0
+                    # Stronger bonus for forward, penalty for backward
+                    # dot=1 -> +15, dot=0 -> 0, dot=-1 -> -15
+                    # This needs to be strong enough to overcome unscanned bonus
+                    fwd_bonus = dot * 15.0
 
         breakdown['fwd'] = fwd_bonus
 
