@@ -153,6 +153,9 @@ class NBVNavigator:
         self.return_replan_count: int = 0  # Count of replans at similar distance
         self.return_replan_max: int = 5  # Give up after this many replans without progress
         self.return_last_replan_dist: float = float('inf')  # Distance at last replan
+        self.return_last_approach_point: Optional[Tuple[float, float]] = None  # Track last approach point
+        self.return_approach_fail_count: int = 0  # Count failures with same approach point
+        self.return_approach_fail_max: int = 2  # Block approach point after this many failures
         self.return_rotation_threshold: float = 0.15  # Min rotation (rad, ~9°) to count as "not stuck"
 
         # Origin marker subprocess
@@ -917,6 +920,36 @@ rclpy.shutdown()
         approach_point = self._find_clear_approach_point(goal)
 
         if approach_point:
+            # Track if we're getting the same approach point repeatedly
+            if self.return_last_approach_point:
+                dist_to_last = math.sqrt(
+                    (approach_point[0] - self.return_last_approach_point[0])**2 +
+                    (approach_point[1] - self.return_last_approach_point[1])**2
+                )
+                if dist_to_last < 0.5:  # Same approach point (within 0.5m)
+                    self.return_approach_fail_count += 1
+                    print(f"[A* DEBUG] Same approach point #{self.return_approach_fail_count} "
+                          f"({approach_point[0]:.2f}, {approach_point[1]:.2f})")
+
+                    # If we've failed too many times with this approach point, block it
+                    if self.return_approach_fail_count >= self.return_approach_fail_max:
+                        approach_cell = self._pos_to_cell(approach_point[0], approach_point[1])
+                        self.unreachable_cells[approach_cell] = time.time()
+                        print(f"[A* DEBUG] Blocking approach point cell {approach_cell} after "
+                              f"{self.return_approach_fail_count} failures - will find new approach")
+                        # Reset and try to find a different approach point
+                        self.return_approach_fail_count = 0
+                        self.return_last_approach_point = None
+                        # Recursively try to find a new approach point
+                        return self._add_clear_approach_point(simplified)
+                else:
+                    # Different approach point, reset counter
+                    self.return_approach_fail_count = 1
+            else:
+                self.return_approach_fail_count = 1
+
+            self.return_last_approach_point = approach_point
+
             # Replace path ending with: ... -> approach_point -> goal
             # Keep earlier waypoints that lead toward the approach point
             new_simplified = []
