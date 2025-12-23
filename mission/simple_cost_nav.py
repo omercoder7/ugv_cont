@@ -1212,9 +1212,9 @@ rclpy.shutdown()
                         break
 
                     # Check if origin drifted behind a wall (SLAM drift)
-                    # If we're close to origin (<0.6m), heading directly to it (no more waypoints),
-                    # and there's a wall between us and the origin, finish here
-                    if (dist_to_origin < 0.6 and
+                    # Only trigger when VERY close (<20cm) but blocked - don't give up at 50cm!
+                    # Must be heading directly to origin (no more waypoints)
+                    if (dist_to_origin < 0.20 and
                         self.goal_point == self.start_pos and
                         (not self.return_path or self.return_waypoint_idx >= len(self.return_path))):
 
@@ -1234,7 +1234,7 @@ rclpy.shutdown()
                             break
 
                         # Also check if there's a wall directly in front blocking path to origin
-                        if front_min < 0.25 and dist_to_origin < 0.5:
+                        if front_min < 0.20:
                             # Very close to origin but wall in front - likely drift
                             print(f"\n\n{'=' * 55}")
                             print(f"[{time.time() - self.start_time:.1f}s] MISSION COMPLETE!")
