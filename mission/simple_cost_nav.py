@@ -599,10 +599,12 @@ rclpy.shutdown()
                     blocked_neighbors.append(neighbor)
             print(f"[A* DEBUG] Goal neighbors blocked: {len(blocked_neighbors)}/8")
 
-        # If path failed and we have inflation > 0, retry with no inflation
+        # If path failed and we have inflation > 0, retry with smaller inflation
+        # Iteratively reduce inflation until we find a path or reach 0
         if inflation > 0:
-            print(f"[A* DEBUG] Retrying with inflation=0...")
-            return self._plan_path_astar(start, goal, inflation=0)
+            next_inflation = inflation - 1
+            print(f"[A* RETRY] No path with inflation={inflation}, trying inflation={next_inflation}...")
+            return self._plan_path_astar(start, goal, inflation=next_inflation)
 
         return []
 
