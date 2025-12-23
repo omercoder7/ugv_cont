@@ -68,7 +68,9 @@ class BridgeNode(Node):
         self.scan_data = None
         self.odom_data = None
         self.create_subscription(LaserScan, '/scan', self.scan_cb, 1)
-        self.create_subscription(Odometry, '/odom', self.odom_cb, 1)
+        # Use raw RF2O laser odometry instead of EKF-filtered /odom
+        # EKF can jump/drift when SLAM makes corrections, causing origin drift
+        self.create_subscription(Odometry, '/odom_rf2o', self.odom_cb, 1)
 
     def scan_cb(self, msg):
         self.scan_data = [round(r, 3) for r in msg.ranges]
@@ -265,7 +267,7 @@ rclpy.init()
 node = rclpy.create_node('odom_reader')
 msg = None
 def cb(m): global msg; msg = m
-sub = node.create_subscription(Odometry, '/odom', cb, 1)
+sub = node.create_subscription(Odometry, '/odom_rf2o', cb, 1)
 for _ in range(20):
     rclpy.spin_once(node, timeout_sec=0.05)
     if msg: break
