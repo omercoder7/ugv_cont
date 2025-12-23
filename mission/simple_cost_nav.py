@@ -159,7 +159,7 @@ class NBVNavigator:
         self.return_path: List[Tuple[float, float]] = []  # Waypoints to follow
         self.return_waypoint_idx: int = 0  # Current waypoint index
         self.waypoint_reached_dist: float = 0.35  # Distance to consider waypoint reached
-        self.origin_reached_dist: float = 0.15  # Tighter threshold for reaching origin (15cm)
+        self.origin_reached_dist: float = 0.05  # Very tight threshold for reaching origin (5cm)
         # Wall inflation: 2 cells × 0.3m = 0.6m clearance (robot is ~17cm wide, need margin)
         # IMPORTANT: At 0.3m grid resolution, 4 cells = 1.2m which is WAY too much
         self.path_inflation_radius: int = 2  # Grid cells to inflate walls (2 cells = 0.6m clearance)
