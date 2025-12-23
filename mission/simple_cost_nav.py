@@ -378,9 +378,12 @@ rclpy.shutdown()
         start_cell = self._pos_to_cell(start[0], start[1])
         goal_cell = self._pos_to_cell(goal[0], goal[1])
 
-        print(f"[A* DEBUG] Planning from {start_cell} to {goal_cell}")
-        print(f"[A* DEBUG] World coords: ({start[0]:.2f},{start[1]:.2f}) -> ({goal[0]:.2f},{goal[1]:.2f})")
-        print(f"[A* DEBUG] Map stats: {len(self.scan_ends)} walls, {len(self.scanned)} scanned, {len(self.visited)} visited")
+        print(f"\n[A* PLAN] ========== PATH PLANNING START ==========")
+        print(f"[A* PLAN] From cell {start_cell} to cell {goal_cell}")
+        print(f"[A* PLAN] World: ({start[0]:.2f},{start[1]:.2f}) -> ({goal[0]:.2f},{goal[1]:.2f})")
+        print(f"[A* PLAN] Distance: {math.sqrt((goal[0]-start[0])**2 + (goal[1]-start[1])**2):.2f}m")
+        print(f"[A* PLAN] Grid res: {self.grid_res}m, Inflation: {inflation} cells = {inflation * self.grid_res:.2f}m clearance")
+        print(f"[A* PLAN] Map: {len(self.scan_ends)} walls, {len(self.scanned)} scanned, {len(self.visited)} visited")
 
         # Build obstacle set with inflation for robot clearance
         obstacles: Set[Tuple[int, int]] = set()
@@ -400,7 +403,21 @@ rclpy.shutdown()
                 for dy in range(-1, 2):
                     obstacles.add((unreachable_cell[0] + dx, unreachable_cell[1] + dy))
 
-        print(f"[A* DEBUG] Inflated obstacles: {len(obstacles)} cells (inflation={inflation}, unreachable={len(self.unreachable_cells)})")
+        print(f"[A* PLAN] Inflated obstacles: {len(obstacles)} cells (inflation={inflation}, unreachable={len(self.unreachable_cells)})")
+
+        # Show nearby walls around start and goal for debugging
+        walls_near_start = [(w, math.sqrt((w[0]-start_cell[0])**2 + (w[1]-start_cell[1])**2))
+                           for w in self.scan_ends.keys()
+                           if abs(w[0]-start_cell[0]) <= 3 and abs(w[1]-start_cell[1]) <= 3]
+        walls_near_goal = [(w, math.sqrt((w[0]-goal_cell[0])**2 + (w[1]-goal_cell[1])**2))
+                          for w in self.scan_ends.keys()
+                          if abs(w[0]-goal_cell[0]) <= 3 and abs(w[1]-goal_cell[1]) <= 3]
+        if walls_near_start:
+            closest_start = min(walls_near_start, key=lambda x: x[1])
+            print(f"[A* PLAN] Closest wall to START: {closest_start[0]} at {closest_start[1]:.1f} cells = {closest_start[1]*self.grid_res:.2f}m")
+        if walls_near_goal:
+            closest_goal = min(walls_near_goal, key=lambda x: x[1])
+            print(f"[A* PLAN] Closest wall to GOAL: {closest_goal[0]} at {closest_goal[1]:.1f} cells = {closest_goal[1]*self.grid_res:.2f}m")
 
         # NOTE: We NO LONGER clear visited cells from obstacles!
         # This was causing paths to route through inflated wall zones because
@@ -426,7 +443,11 @@ rclpy.shutdown()
         # Check if start or goal are in obstacles
         start_in_obs = start_cell in obstacles
         goal_in_obs = goal_cell in obstacles
-        print(f"[A* DEBUG] Start in obstacles: {start_in_obs}, Goal in obstacles: {goal_in_obs}")
+        print(f"[A* PLAN] Start in obstacles: {start_in_obs}, Goal in obstacles: {goal_in_obs}")
+        if start_in_obs:
+            print(f"[A* WARN] Robot starting position is inside inflated obstacle zone!")
+        if goal_in_obs:
+            print(f"[A* WARN] Goal is inside inflated obstacle zone - will be cleared")
 
         # Don't block the start or goal cells
         obstacles.discard(start_cell)
@@ -469,7 +490,24 @@ rclpy.shutdown()
                     path_cells.append(current)
                 path_cells.reverse()
 
-                print(f"[A* DEBUG] Path found! {len(path_cells)} cells, {iterations} iterations")
+                # Calculate path statistics for debugging
+                total_cost = g_score.get(goal_cell, 0)
+                path_length_cells = len(path_cells)
+                path_length_m = (path_length_cells - 1) * self.grid_res  # Approximate
+
+                # Find minimum wall clearance along path
+                min_clearance = float('inf')
+                min_clearance_cell = None
+                for cell in path_cells:
+                    for wall in self.scan_ends.keys():
+                        dist = math.sqrt((wall[0]-cell[0])**2 + (wall[1]-cell[1])**2)
+                        if dist < min_clearance:
+                            min_clearance = dist
+                            min_clearance_cell = cell
+
+                print(f"[A* RESULT] Path found! {path_length_cells} cells, {iterations} iterations")
+                print(f"[A* RESULT] Total cost: {total_cost:.1f}, Path length: ~{path_length_m:.2f}m")
+                print(f"[A* RESULT] Min wall clearance: {min_clearance:.1f} cells = {min_clearance * self.grid_res:.2f}m at {min_clearance_cell}")
 
                 # Convert to world coordinates (center of each cell)
                 path_world = []
@@ -480,7 +518,8 @@ rclpy.shutdown()
 
                 # Simplify path: remove intermediate waypoints on straight lines
                 simplified = self._simplify_path(path_world)
-                print(f"[A* DEBUG] Simplified to {len(simplified)} waypoints")
+                print(f"[A* RESULT] Simplified to {len(simplified)} waypoints")
+                print(f"[A* PLAN] ========== PATH PLANNING END ==========\n")
                 return simplified
 
             for dx, dy in neighbors:
@@ -1131,6 +1170,21 @@ rclpy.shutdown()
                         print(f"Final position: ({self.current_pos[0]:.2f}, {self.current_pos[1]:.2f})")
                         print(f"Origin: ({self.start_pos[0]:.2f}, {self.start_pos[1]:.2f})")
                         print(f"Distance error: {dist_to_origin:.2f}m")
+
+                        # Compare wall signature to detect drift
+                        if self.origin_wall_signature:
+                            print(f"\n[DRIFT CHECK] Comparing wall signatures:")
+                            print(f"  Original: {[f'{d:.2f}' for d in self.origin_wall_signature]}")
+                            print(f"  Current:  {[f'{d:.2f}' for d in sectors]}")
+                            drift_errors = []
+                            for i, (orig, curr) in enumerate(zip(self.origin_wall_signature, sectors)):
+                                if orig > 0.1 and curr > 0.1:  # Both valid
+                                    drift_errors.append(abs(orig - curr))
+                            if drift_errors:
+                                avg_drift = sum(drift_errors) / len(drift_errors)
+                                max_drift = max(drift_errors)
+                                print(f"  Avg drift: {avg_drift:.2f}m, Max drift: {max_drift:.2f}m")
+
                         print(f"{'=' * 55}\n")
                         break
 
@@ -2009,9 +2063,11 @@ rclpy.shutdown()
         to the map so A* can route around them.
         """
         if not self.current_pos or self.current_heading is None:
+            print(f"[LIDAR UPDATE] Skipped - no position/heading")
             return
 
         if not raw_scan:
+            print(f"[LIDAR UPDATE] Skipped - no scan data")
             return
 
         now = time.time()
@@ -2019,7 +2075,10 @@ rclpy.shutdown()
         lidar_rotation_rad = 3 * (2 * math.pi / 12)  # 90° offset
         angle_per_point = 2 * math.pi / n_points
 
+        walls_before = len(self.scan_ends)
         new_walls = 0
+        new_wall_cells = []
+
         for i, dist in enumerate(raw_scan):
             # Only add close obstacles (< 1m) - these are what's blocking us
             if not (0.1 < dist < 1.0):
@@ -2037,9 +2096,20 @@ rclpy.shutdown()
             if wall_cell not in self.scan_ends:
                 self.scan_ends[wall_cell] = now
                 new_walls += 1
+                new_wall_cells.append((wall_cell, dist))
 
         if new_walls > 0:
-            print(f"[A*] Added {new_walls} new wall cells from current LiDAR")
+            print(f"[LIDAR UPDATE] Added {new_walls} new wall cells (total: {walls_before} -> {len(self.scan_ends)})")
+            # Show a sample of new walls for debugging
+            if len(new_wall_cells) <= 5:
+                for cell, dist in new_wall_cells:
+                    print(f"  - Cell {cell} at {dist:.2f}m")
+            else:
+                for cell, dist in new_wall_cells[:3]:
+                    print(f"  - Cell {cell} at {dist:.2f}m")
+                print(f"  ... and {len(new_wall_cells) - 3} more")
+        else:
+            print(f"[LIDAR UPDATE] No new walls (all {walls_before} already known)")
 
     def _record_scan_coverage(self, raw_scan: List[float]):
         """
