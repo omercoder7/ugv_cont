@@ -1,0 +1,1694 @@
+[OUTPUT] Logging to: /home/ws/ugv_cont/mission/outputs/20251222_201841
+[OUTPUT] Log file: /home/ws/ugv_cont/mission/outputs/20251222_201841/logs/navigation.log
+=======================================================
+NEXT-BEST-VIEW (NBV) NAVIGATION
+=======================================================
+Speed: 0.08 m/s
+Goal distance: 0.5-2.0m
+Press Ctrl+C to stop
+
+[DEBUG] Marker publishing enabled - check /nav_goal in RViz
+[MARKER] Persistent marker publisher started - add /nav_goal in RViz
+[START] Initial position: (0.04, 0.03)
+[MARKER] Origin marker (blue) started at (0.04, 0.03) - add /nav_origin in RViz
+
+[  4.4s] [GOAL SELECT] robot@(0.04,0.03) | 21 candidates (scanned=49 walls=19 visited=1):
+  #1 ang= -52° d=0.50m pos=(-0.28,0.42) score=+37.1 [O=+2.0 U=+36.0 V=-0.0 W=-1.0 R=-0.0 F=+0.0] <-- BEST
+  #2 ang= -88° d=1.00m pos=(-0.01,1.03) score=+33.1 [O=+1.8 U=+32.0 V=-0.0 W=-1.0 R=-0.0 F=+0.0]
+  #3 ang= -94° d=1.00m pos=(0.10,1.03) score=+31.1 [O=+1.8 U=+30.0 V=-0.0 W=-1.0 R=-0.0 F=+0.0]
+  #4 ang=-107° d=1.50m pos=(0.44,1.48) score=+31.0 [O=+2.5 U=+28.0 V=-0.0 W=-0.0 R=-0.0 F=+0.0]
+  #5 ang=-101° d=1.50m pos=(0.29,1.51) score=+30.4 [O=+2.5 U=+30.4 V=-0.0 W=-3.0 R=-0.0 F=+0.0]
+  #6 ang=-113° d=1.50m pos=(0.59,1.42) score=+30.0 [O=+1.6 U=+28.0 V=-0.0 W=-0.0 R=-0.0 F=+0.0]
+  #7 ang= -58° d=0.50m pos=(-0.24,0.45) score=+27.1 [O=+1.9 U=+36.0 V=-0.0 W=-1.0 R=-0.0 F=+0.0 T=-10.0]
+  #8 ang=-113° d=1.00m pos=(0.41,0.96) score=+23.4 [O=+2.1 U=+22.0 V=-0.0 W=-1.0 R=-0.0 F=+0.0]
+[  4.4s] [GOAL] Selected: (-0.28, 0.42) dist=0.50m timeout=28s angle=-52° reason=no goal
+[  1] DRIVE goal=(-0.28,0.42) dist=0.50m front=0.42m cells=1 rms=0.0cm[  2] DRIVE goal=(-0.28,0.42) dist=0.50m front=0.42m cells=1 rms=0.0cm[  3] DRIVE goal=(-0.28,0.42) dist=0.50m front=0.43m cells=1 rms=0.2cm[  4] DRIVE goal=(-0.28,0.42) dist=0.50m front=0.43m cells=1 rms=0.3cm[  5] DRIVE goal=(-0.28,0.42) dist=0.50m front=0.44m cells=1 rms=0.3cm[  6] DRIVE goal=(-0.28,0.42) dist=0.50m front=0.44m cells=1 rms=0.4cm[  7] DRIVE goal=(-0.28,0.42) dist=0.50m front=0.44m cells=1 rms=0.5cm[  8] DRIVE goal=(-0.28,0.42) dist=0.50m front=0.44m cells=1 rms=0.5cm[  9] DRIVE goal=(-0.28,0.42) dist=0.51m front=0.44m cells=1 rms=0.6cm[ 10] DRIVE goal=(-0.28,0.42) dist=0.50m front=0.44m cells=1 rms=0.6cm[ 11] DRIVE goal=(-0.28,0.42) dist=0.51m front=0.44m cells=1 rms=0.7cm[ 12] DRIVE goal=(-0.28,0.42) dist=0.51m front=0.44m cells=1 rms=0.7cm[ 13] DRIVE goal=(-0.28,0.42) dist=0.51m front=0.44m cells=1 rms=0.8cm[ 14] DRIVE goal=(-0.28,0.42) dist=0.51m front=0.44m cells=1 rms=0.9cm[ 15] DRIVE goal=(-0.28,0.42) dist=0.51m front=0.44m cells=1 rms=0.9cm[ 16] DRIVE goal=(-0.28,0.42) dist=0.51m front=0.45m cells=1 rms=1.0cm[ 17] DRIVE goal=(-0.28,0.42) dist=0.51m front=0.45m cells=1 rms=1.0cm[ 18] DRIVE goal=(-0.28,0.42) dist=0.51m front=0.46m cells=1 rms=1.1cm[ 19] DRIVE goal=(-0.28,0.42) dist=0.51m front=0.46m cells=1 rms=1.1cm[ 20] DRIVE goal=(-0.28,0.42) dist=0.50m front=0.47m cells=1 rms=1.2cm[ 21] DRIVE goal=(-0.28,0.42) dist=0.49m front=0.47m cells=1 rms=1.2cm[ 22] DRIVE goal=(-0.28,0.42) dist=0.48m front=0.47m cells=1 rms=1.3cm[ 23] DRIVE goal=(-0.28,0.42) dist=0.46m front=0.45m cells=1 rms=1.3cm[ 24] DRIVE goal=(-0.28,0.42) dist=0.44m front=0.44m cells=1 rms=1.4cm[ 25] DRIVE goal=(-0.28,0.42) dist=0.44m front=0.43m cells=1 rms=1.4cm[ 26] DRIVE goal=(-0.28,0.42) dist=0.42m front=0.42m cells=1 rms=1.4cm
+[  9.9s] [GOAL SELECT] robot@(-0.05,0.10) | 20 candidates (scanned=56 walls=28 visited=1):
+  #1 ang= -33° d=1.00m pos=(-0.17,1.10) score=+28.5 [O=+1.7 U=+32.1 V=-0.0 W=-1.0 R=-4.5 F=+0.0] <-- BEST
+  #2 ang= -76° d=1.00m pos=(0.54,0.91) score=+26.9 [O=+1.6 U=+26.0 V=-0.0 W=-1.0 R=-0.0 F=+0.0]
+  #3 ang= -58° d=1.50m pos=(0.40,1.53) score=+24.0 [O=+2.5 U=+24.1 V=-0.0 W=-3.0 R=-0.0 F=+0.0]
+  #4 ang= -45° d=1.00m pos=(0.04,1.10) score=+23.4 [O=+2.5 U=+26.1 V=-0.0 W=-1.0 R=-4.5 F=+0.0]
+  #5 ang= -70° d=1.00m pos=(0.45,0.97) score=+23.0 [O=+1.7 U=+22.0 V=-0.0 W=-1.0 R=-0.0 F=+0.0]
+  #6 ang= -39° d=1.00m pos=(-0.06,1.10) score=+22.6 [O=+1.7 U=+26.1 V=-0.0 W=-1.0 R=-4.5 F=+0.0]
+  #7 ang= -64° d=1.00m pos=(0.35,1.02) score=+21.3 [O=+1.9 U=+20.0 V=-0.0 W=-1.0 R=-0.0 F=+0.0]
+  #8 ang= -21° d=0.50m pos=(-0.21,0.58) score=+21.2 [O=+1.7 U=+36.0 V=-0.0 W=-3.0 R=-13.6 F=+0.0]
+[  9.9s] [GOAL] Selected: (-0.17, 1.10) dist=1.00m timeout=35s angle=-33° reason=reached
+[ 27] DRIVE goal=(-0.17,1.10) dist=1.00m front=0.41m cells=1 rms=1.4cm[ 28] DRIVE goal=(-0.17,1.10) dist=0.98m front=0.41m cells=1 rms=1.4cm[ 29] DRIVE goal=(-0.17,1.10) dist=0.97m front=0.38m cells=1 rms=1.4cm[ 30] DRIVE goal=(-0.17,1.10) dist=0.96m front=0.86m cells=1 rms=1.5cm[ 31] DRIVE goal=(-0.17,1.10) dist=0.97m front=0.86m cells=1 rms=1.5cm[ 32] DRIVE goal=(-0.17,1.10) dist=0.96m front=0.86m cells=1 rms=1.6cm[ 33] DRIVE goal=(-0.17,1.10) dist=0.96m front=0.86m cells=1 rms=1.6cm[ 34] DRIVE goal=(-0.17,1.10) dist=0.96m front=0.86m cells=1 rms=1.7cm[ 35] DRIVE goal=(-0.17,1.10) dist=0.96m front=0.86m cells=1 rms=1.7cm[ 36] DRIVE goal=(-0.17,1.10) dist=0.96m front=0.86m cells=1 rms=1.8cm[ 37] DRIVE goal=(-0.17,1.10) dist=0.96m front=0.91m cells=1 rms=1.9cm[ 38] DRIVE goal=(-0.17,1.10) dist=0.97m front=1.01m cells=1 rms=1.9cm[ 39] DRIVE goal=(-0.17,1.10) dist=0.96m front=1.09m cells=1 rms=2.0cm[ 40] DRIVE goal=(-0.17,1.10) dist=0.96m front=1.15m cells=1 rms=2.0cm[ 41] DRIVE goal=(-0.17,1.10) dist=0.96m front=1.15m cells=1 rms=2.1cm[ 42] DRIVE goal=(-0.17,1.10) dist=0.95m front=1.14m cells=1 rms=2.2cm[ 43] DRIVE goal=(-0.17,1.10) dist=0.94m front=1.14m cells=1 rms=2.2cm[ 44] DRIVE goal=(-0.17,1.10) dist=0.94m front=1.12m cells=1 rms=2.3cm[ 45] DRIVE goal=(-0.17,1.10) dist=0.92m front=1.11m cells=1 rms=2.3cm[ 46] DRIVE goal=(-0.17,1.10) dist=0.91m front=1.09m cells=1 rms=2.4cm[ 47] DRIVE goal=(-0.17,1.10) dist=0.89m front=1.08m cells=1 rms=2.4cm[ 48] DRIVE goal=(-0.17,1.10) dist=0.87m front=1.06m cells=1 rms=2.5cm[ 49] DRIVE goal=(-0.17,1.10) dist=0.85m front=1.03m cells=1 rms=2.5cm[ 50] DRIVE goal=(-0.17,1.10) dist=0.83m front=1.01m cells=1 rms=2.6cm[ 51] DRIVE goal=(-0.17,1.10) dist=0.81m front=0.99m cells=1 rms=2.6cm[ 52] DRIVE goal=(-0.17,1.10) dist=0.79m front=0.97m cells=2 rms=2.6cm[ 53] DRIVE goal=(-0.17,1.10) dist=0.77m front=0.96m cells=2 rms=2.7cm[ 54] DRIVE goal=(-0.17,1.10) dist=0.75m front=0.94m cells=2 rms=2.7cm[ 55] DRIVE goal=(-0.17,1.10) dist=0.73m front=0.91m cells=2 rms=2.7cm[ 56] DRIVE goal=(-0.17,1.10) dist=0.71m front=0.90m cells=2 rms=2.7cm[ 57] DRIVE goal=(-0.17,1.10) dist=0.69m front=0.88m cells=2 rms=2.7cm[ 58] DRIVE goal=(-0.17,1.10) dist=0.68m front=0.87m cells=2 rms=2.7cm[ 59] DRIVE goal=(-0.17,1.10) dist=0.67m front=0.85m cells=2 rms=2.7cm[ 60] DRIVE goal=(-0.17,1.10) dist=0.65m front=0.83m cells=2 rms=2.7cm[ 61] DRIVE goal=(-0.17,1.10) dist=0.63m front=0.81m cells=2 rms=2.7cm[ 62] DRIVE goal=(-0.17,1.10) dist=0.61m front=0.79m cells=2 rms=2.7cm[ 63] DRIVE goal=(-0.17,1.10) dist=0.58m front=0.76m cells=2 rms=2.7cm[ 64] DRIVE goal=(-0.17,1.10) dist=0.57m front=0.75m cells=2 rms=2.7cm[ 65] DRIVE goal=(-0.17,1.10) dist=0.55m front=0.74m cells=2 rms=2.7cm[ 66] DRIVE goal=(-0.17,1.10) dist=0.53m front=0.72m cells=2 rms=2.7cm[ 67] DRIVE goal=(-0.17,1.10) dist=0.50m front=0.70m cells=2 rms=2.7cm[ 68] DRIVE goal=(-0.17,1.10) dist=0.48m front=0.68m cells=3 rms=2.7cm[ 69] DRIVE goal=(-0.17,1.10) dist=0.47m front=0.66m cells=3 rms=2.7cm[ 70] DRIVE goal=(-0.17,1.10) dist=0.47m front=0.66m cells=3 rms=2.7cm[ 71] DRIVE goal=(-0.17,1.10) dist=0.46m front=0.64m cells=3 rms=2.7cm[ 72] DRIVE goal=(-0.17,1.10) dist=0.45m front=0.64m cells=3 rms=2.8cm[ 73] DRIVE goal=(-0.17,1.10) dist=0.44m front=0.63m cells=3 rms=2.8cm[ 74] DRIVE goal=(-0.17,1.10) dist=0.43m front=0.62m cells=3 rms=2.8cm[ 75] DRIVE goal=(-0.17,1.10) dist=0.41m front=0.61m cells=3 rms=2.8cm
+[ 19.7s] [GOAL SELECT] robot@(-0.16,0.71) | 11 candidates (scanned=93 walls=54 visited=3):
+  #1 ang=+119° d=1.00m pos=(-1.03,0.21) score=+26.5 [O=+2.2 U=+30.4 V=-0.0 W=-3.0 R=-0.0 F=-3.5] <-- BEST
+  #2 ang= -58° d=0.50m pos=(0.27,0.97) score=+6.9 [O=+1.8 U=+28.1 V=-0.0 W=-1.0 R=-16.3 F=+4.1 T=-10.0]
+  #3 ang= -15° d=0.50m pos=(-0.03,1.19) score=+6.7 [O=+2.5 U=+18.5 V=-0.0 W=-1.0 R=-16.3 F=+12.8 T=-10.0]
+  #4 ang= -52° d=0.50m pos=(0.23,1.02) score=+6.5 [O=+1.8 U=+26.1 V=-0.0 W=-1.0 R=-16.3 F=+5.6 T=-10.0]
+  #5 ang= -45° d=0.50m pos=(0.20,1.06) score=+2.0 [O=+1.9 U=+20.2 V=-0.0 W=-1.0 R=-16.3 F=+7.1 T=-10.0]
+  #6 ang= -21° d=0.50m pos=(0.02,1.17) score=+1.4 [O=+2.5 U=+14.1 V=-0.0 W=-1.0 R=-16.3 F=+11.9 T=-10.0]
+  #7 ang= -64° d=0.50m pos=(0.29,0.93) score=-2.4 [O=+1.8 U=+30.0 V=-0.0 W=-1.0 R=-16.3 F=+2.6 T=-19.7]
+  #8 ang= -39° d=0.50m pos=(0.16,1.09) score=-2.7 [O=+2.0 U=+14.0 V=-0.0 W=-1.0 R=-16.3 F=+8.5 T=-10.0]
+[ 19.7s] [GOAL] Selected: (-1.03, 0.21) dist=1.00m timeout=35s angle=119° reason=reached
+[ 76] DRIVE goal=(-1.03,0.21) dist=1.00m front=0.58m cells=3 rms=2.8cm[ 77] DRIVE goal=(-1.03,0.21) dist=1.01m front=0.57m cells=3 rms=2.8cm[ 78] DRIVE goal=(-1.03,0.21) dist=1.01m front=0.56m cells=3 rms=2.8cm[ 79] DRIVE goal=(-1.03,0.21) dist=1.02m front=0.54m cells=3 rms=2.8cm[ 80] DRIVE goal=(-1.03,0.21) dist=1.02m front=0.53m cells=3 rms=2.8cm[ 81] DRIVE goal=(-1.03,0.21) dist=1.03m front=0.53m cells=3 rms=2.9cm[ 82] DRIVE goal=(-1.03,0.21) dist=1.02m front=0.53m cells=3 rms=2.9cm[ 83] DRIVE goal=(-1.03,0.21) dist=1.03m front=0.53m cells=3 rms=2.9cm[ 84] DRIVE goal=(-1.03,0.21) dist=1.03m front=0.53m cells=3 rms=2.9cm[ 85] DRIVE goal=(-1.03,0.21) dist=1.03m front=0.53m cells=3 rms=3.0cm[ 86] DRIVE goal=(-1.03,0.21) dist=1.03m front=0.53m cells=3 rms=3.0cm[ 87] DRIVE goal=(-1.03,0.21) dist=1.03m front=0.53m cells=3 rms=3.0cm[ 88] DRIVE goal=(-1.03,0.21) dist=1.03m front=0.53m cells=3 rms=3.0cm[ 89] DRIVE goal=(-1.03,0.21) dist=1.03m front=0.53m cells=3 rms=3.0cm[ 90] DRIVE goal=(-1.03,0.21) dist=1.03m front=0.54m cells=3 rms=3.1cm[ 91] DRIVE goal=(-1.03,0.21) dist=1.03m front=0.54m cells=3 rms=3.1cm[ 92] DRIVE goal=(-1.03,0.21) dist=1.03m front=0.54m cells=3 rms=3.1cm[ 93] DRIVE goal=(-1.03,0.21) dist=1.03m front=0.54m cells=3 rms=3.1cm[ 94] DRIVE goal=(-1.03,0.21) dist=1.04m front=0.54m cells=3 rms=3.1cm[ 95] DRIVE goal=(-1.03,0.21) dist=1.04m front=0.54m cells=3 rms=3.1cm[ 96] DRIVE goal=(-1.03,0.21) dist=1.04m front=0.54m cells=3 rms=3.1cm[ 97] DRIVE goal=(-1.03,0.21) dist=1.04m front=0.54m cells=3 rms=3.1cm[ 98] DRIVE goal=(-1.03,0.21) dist=1.04m front=0.55m cells=3 rms=3.1cm[ 99] DRIVE goal=(-1.03,0.21) dist=1.04m front=0.55m cells=3 rms=3.1cm[100] DRIVE goal=(-1.03,0.21) dist=1.04m front=0.56m cells=3 rms=3.2cm[101] DRIVE goal=(-1.03,0.21) dist=1.04m front=0.56m cells=3 rms=3.2cm[102] DRIVE goal=(-1.03,0.21) dist=1.04m front=0.56m cells=3 rms=3.2cm[103] DRIVE goal=(-1.03,0.21) dist=1.04m front=0.56m cells=3 rms=3.2cm[104] DRIVE goal=(-1.03,0.21) dist=1.04m front=0.58m cells=3 rms=3.3cm[105] DRIVE goal=(-1.03,0.21) dist=1.05m front=0.60m cells=3 rms=3.3cm[106] DRIVE goal=(-1.03,0.21) dist=1.05m front=0.59m cells=3 rms=3.3cm[107] DRIVE goal=(-1.03,0.21) dist=1.05m front=0.60m cells=3 rms=3.3cm[108] DRIVE goal=(-1.03,0.21) dist=1.05m front=0.60m cells=3 rms=3.3cm[109] DRIVE goal=(-1.03,0.21) dist=1.05m front=0.60m cells=3 rms=3.3cm[110] DRIVE goal=(-1.03,0.21) dist=1.05m front=0.60m cells=3 rms=3.3cm
+[ 26.8s] [TURN ENTER] Entering TURN mode
+
+[BLOCKED DEBUG] Goal angle: 43.7° (sector 7), goal_dist: 1.05m, goal_dir_min: 0.67m, margin: 0.15m
+[BLOCKED DEBUG] Checking 1 sectors (robot angular width at 1.0m = 9.8°): {7: 0.672}
+[BLOCKED DEBUG] Check: 0.67 < 1.05 - 0.15 = 0.90? True
+[BLOCKED DEBUG] (Full front arc for reference: {55: 0.674, 56: 0.733, 57: 0.826, 58: 0.778, 59: 0.751, 0: 0.778, 1: 0.682, 2: 0.618, 3: 0.6, 4: 0.6, 5: 0.603})
+
+[BLOCKED TURN] goal_sector=7, best_sector=7 (dist=0.67m), target_angle=42.0°, angle_error=42.0°, v=0.00, w=0.50
+[111] TURN goal=(-1.03,0.21) dist=1.05m front=0.60m cells=3 rms=3.3cm[112] TURN goal=(-1.03,0.21) dist=1.05m front=0.60m cells=3 rms=3.4cm[113] TURN goal=(-1.03,0.21) dist=1.05m front=0.60m cells=3 rms=3.4cm[114] TURN goal=(-1.03,0.21) dist=1.05m front=0.60m cells=3 rms=3.4cm[115] TURN goal=(-1.03,0.21) dist=1.05m front=0.60m cells=3 rms=3.4cm[116] TURN goal=(-1.03,0.21) dist=1.05m front=0.60m cells=3 rms=3.4cm[117] TURN goal=(-1.03,0.21) dist=1.05m front=0.60m cells=3 rms=3.4cm[118] TURN goal=(-1.03,0.21) dist=1.05m front=0.60m cells=3 rms=3.4cm[119] TURN goal=(-1.03,0.21) dist=1.05m front=0.60m cells=3 rms=3.5cm[120] DRIVE goal=(-1.03,0.21) dist=1.05m front=0.60m cells=3 rms=3.5cm
+[ 28.9s] [TURN ENTER] Entering TURN mode
+
+[BLOCKED DEBUG] Goal angle: 19.4° (sector 3), goal_dist: 1.05m, goal_dir_min: 0.73m, margin: 0.15m
+[BLOCKED DEBUG] Checking 1 sectors (robot angular width at 1.0m = 9.8°): {3: 0.727}
+[BLOCKED DEBUG] Check: 0.73 < 1.05 - 0.15 = 0.90? True
+[BLOCKED DEBUG] (Full front arc for reference: {55: 0.755, 56: 0.877, 57: 0.639, 58: 0.602, 59: 0.594, 0: 0.598, 1: 0.604, 2: 0.637, 3: 0.727, 4: 2.207, 5: 1.4})
+
+[BLOCKED TURN] goal_sector=3, best_sector=3 (dist=0.73m), target_angle=18.0°, angle_error=18.0°, v=0.00, w=0.47
+[121] TURN goal=(-1.03,0.21) dist=1.05m front=0.59m cells=3 rms=3.5cm[122] TURN goal=(-1.03,0.21) dist=1.05m front=0.59m cells=3 rms=3.5cm[123] TURN goal=(-1.03,0.21) dist=1.05m front=0.59m cells=3 rms=3.5cm[124] TURN goal=(-1.03,0.21) dist=1.05m front=0.59m cells=3 rms=3.6cm[125] TURN goal=(-1.03,0.21) dist=1.05m front=0.59m cells=3 rms=3.6cm[126] TURN goal=(-1.03,0.21) dist=1.04m front=0.55m cells=3 rms=3.6cm[127] TURN goal=(-1.03,0.21) dist=1.03m front=0.54m cells=3 rms=3.6cm[128] TURN goal=(-1.03,0.21) dist=1.02m front=0.50m cells=3 rms=3.7cm[129] DRIVE goal=(-1.03,0.21) dist=1.01m front=0.45m cells=3 rms=3.7cm[130] DRIVE goal=(-1.03,0.21) dist=1.00m front=0.43m cells=3 rms=3.7cm
+[ 30.8s] [TURN ENTER] Entering TURN mode
+
+[BLOCKED DEBUG] Goal angle: -8.7° (sector 58), goal_dist: 0.98m, goal_dir_min: 0.80m, margin: 0.15m
+[BLOCKED DEBUG] Checking 1 sectors (robot angular width at 1.0m = 10.5°): {58: 0.796}
+[BLOCKED DEBUG] Check: 0.80 < 0.98 - 0.15 = 0.83? True
+[BLOCKED DEBUG] (Full front arc for reference: {55: 0.541, 56: 0.561, 57: 0.62, 58: 0.796, 59: 2.129, 0: 1.307, 1: 1.485, 2: 0.522, 3: 0.477, 4: 0.439, 5: 0.415})
+
+[BLOCKED TURN] goal_sector=58, best_sector=58 (dist=0.80m), target_angle=-12.0°, angle_error=-12.0°, v=0.00, w=-0.31
+[131] TURN goal=(-1.03,0.21) dist=0.98m front=0.41m cells=3 rms=3.7cm[132] DRIVE goal=(-1.03,0.21) dist=0.96m front=0.41m cells=3 rms=3.7cm[133] DRIVE goal=(-1.03,0.21) dist=0.96m front=0.40m cells=3 rms=3.7cm[134] DRIVE goal=(-1.03,0.21) dist=0.95m front=0.39m cells=3 rms=3.8cm[135] DRIVE goal=(-1.03,0.21) dist=0.94m front=0.41m cells=3 rms=3.8cm[136] DRIVE goal=(-1.03,0.21) dist=0.93m front=0.40m cells=3 rms=3.8cm
+[ 32.1s] [TURN ENTER] Entering TURN mode
+
+[BLOCKED DEBUG] Goal angle: -6.1° (sector 58), goal_dist: 0.92m, goal_dir_min: 0.67m, margin: 0.15m
+[BLOCKED DEBUG] Checking 1 sectors (robot angular width at 0.9m = 11.2°): {58: 0.674}
+[BLOCKED DEBUG] Check: 0.67 < 0.92 - 0.15 = 0.77? True
+[BLOCKED DEBUG] (Full front arc for reference: {55: 0.497, 56: 0.516, 57: 0.554, 58: 0.674, 59: 2.072, 0: 2.082, 1: 1.257, 2: 1.363, 3: 0.455, 4: 0.415, 5: 0.388})
+
+[BLOCKED TURN] goal_sector=58, best_sector=58 (dist=0.67m), target_angle=-12.0°, angle_error=-12.0°, v=0.00, w=-0.31
+[137] TURN goal=(-1.03,0.21) dist=0.92m front=0.39m cells=3 rms=3.8cm[138] TURN goal=(-1.03,0.21) dist=0.90m front=0.37m cells=3 rms=3.8cm[139] DRIVE goal=(-1.03,0.21) dist=0.89m front=0.39m cells=3 rms=3.8cm[140] DRIVE goal=(-1.03,0.21) dist=0.88m front=0.37m cells=3 rms=3.8cm[141] DRIVE goal=(-1.03,0.21) dist=0.87m front=0.39m cells=3 rms=3.8cm[142] DRIVE goal=(-1.03,0.21) dist=0.85m front=0.38m cells=4 rms=3.8cm[143] DRIVE goal=(-1.03,0.21) dist=0.83m front=0.39m cells=4 rms=3.8cm[144] DRIVE goal=(-1.03,0.21) dist=0.81m front=0.40m cells=4 rms=3.8cm[145] DRIVE goal=(-1.03,0.21) dist=0.78m front=0.37m cells=4 rms=3.8cm[146] DRIVE goal=(-1.03,0.21) dist=0.77m front=0.38m cells=4 rms=3.8cm[147] DRIVE goal=(-1.03,0.21) dist=0.75m front=0.37m cells=4 rms=3.8cm[148] DRIVE goal=(-1.03,0.21) dist=0.74m front=0.36m cells=4 rms=3.8cm[149] DRIVE goal=(-1.03,0.21) dist=0.72m front=0.29m cells=4 rms=3.8cm[150] DRIVE goal=(-1.03,0.21) dist=0.71m front=0.29m cells=5 rms=3.8cm[151] DRIVE goal=(-1.03,0.21) dist=0.69m front=0.27m cells=5 rms=3.8cm[152] DRIVE goal=(-1.03,0.21) dist=0.68m front=0.26m cells=5 rms=3.8cm[153] DRIVE goal=(-1.03,0.21) dist=0.68m front=0.27m cells=5 rms=3.8cm[154] DRIVE goal=(-1.03,0.21) dist=0.67m front=0.25m cells=5 rms=3.8cm[155] DRIVE goal=(-1.03,0.21) dist=0.65m front=0.23m cells=5 rms=3.8cm[156] DRIVE goal=(-1.03,0.21) dist=0.64m front=0.36m cells=5 rms=3.8cm[157] DRIVE goal=(-1.03,0.21) dist=0.64m front=0.35m cells=5 rms=3.8cm[158] DRIVE goal=(-1.03,0.21) dist=0.63m front=0.34m cells=5 rms=3.8cm[159] DRIVE goal=(-1.03,0.21) dist=0.61m front=0.34m cells=5 rms=3.8cm[160] DRIVE goal=(-1.03,0.21) dist=0.59m front=0.34m cells=5 rms=3.8cm[161] DRIVE goal=(-1.03,0.21) dist=0.57m front=0.32m cells=5 rms=3.7cm[162] DRIVE goal=(-1.03,0.21) dist=0.55m front=0.32m cells=5 rms=3.7cm[163] DRIVE goal=(-1.03,0.21) dist=0.54m front=0.39m cells=5 rms=3.7cm[164] DRIVE goal=(-1.03,0.21) dist=0.53m front=0.39m cells=5 rms=3.7cm[165] DRIVE goal=(-1.03,0.21) dist=0.51m front=0.38m cells=6 rms=3.7cm[166] DRIVE goal=(-1.03,0.21) dist=0.49m front=0.51m cells=6 rms=3.7cm[167] DRIVE goal=(-1.03,0.21) dist=0.48m front=0.51m cells=6 rms=3.7cm[168] DRIVE goal=(-1.03,0.21) dist=0.47m front=0.50m cells=6 rms=3.7cm[169] DRIVE goal=(-1.03,0.21) dist=0.46m front=0.49m cells=6 rms=3.7cm[170] DRIVE goal=(-1.03,0.21) dist=0.45m front=0.48m cells=6 rms=3.7cm[171] DRIVE goal=(-1.03,0.21) dist=0.45m front=0.48m cells=6 rms=3.7cm[172] DRIVE goal=(-1.03,0.21) dist=0.44m front=0.46m cells=6 rms=3.7cm[173] DRIVE goal=(-1.03,0.21) dist=0.42m front=0.44m cells=6 rms=3.7cm
+[ 39.4s] [REFINE] only 0 candidates, resampling with 150 angles (level 1)
+
+[ 39.5s] [REFINE] only 0 candidates, resampling with 450 angles (level 2)
+
+[ 39.5s] [REFINE] only 0 candidates, resampling with 1350 angles (level 3)
+
+[ 39.5s] [NO GOAL] No valid viewpoint found (1/3), backing up
+
+[BACKUP] Reversing...
+[BACKUP] Turning left (L_openings=3 R_openings=1)
+[175] DRIVE goal=(-1.03,0.21) dist=0.49m front=0.53m cells=6 rms=3.7cm[176] DRIVE goal=(-1.03,0.21) dist=0.49m front=0.53m cells=6 rms=3.7cm[177] DRIVE goal=(-1.03,0.21) dist=0.49m front=0.53m cells=6 rms=3.8cm[178] DRIVE goal=(-1.03,0.21) dist=0.49m front=0.53m cells=6 rms=3.8cm[179] DRIVE goal=(-1.03,0.21) dist=0.48m front=0.52m cells=6 rms=3.8cm
+[ 43.9s] [DRIVE STUCK] Goal distance unchanged for 6.8s
+[DRIVE STUCK] dist_oldest=0.55m, dist_now=0.48m, change=0.07m < margin=0.08m
+[DRIVE STUCK] Front sectors: s55=1.72 s56=1.67 s57=1.64 s58=1.62 s59=1.77 s0=0.82 s1=1.01 s2=0.93 s3=0.52 s4=0.52 s5=0.77 
+[DRIVE STUCK] Marked front sectors [55, 56, 57, 58, 59, 0, 1, 2, 3, 4, 5] as blocked for 30s
+
+[BACKUP CLEAR] Reversing and turning toward clearer side...
+[BACKUP CLEAR] Turning right (L_avg=0.75m R_avg=1.69m)
+
+[ 48.6s] [REFINE] only 0 candidates, resampling with 150 angles (level 1)
+
+[ 48.6s] [REFINE] only 0 candidates, resampling with 450 angles (level 2)
+
+[ 48.6s] [REFINE] only 0 candidates, resampling with 1350 angles (level 3)
+
+[ 48.6s] [NO GOAL] No valid viewpoint found (2/3), backing up
+
+[BACKUP] Reversing...
+[BACKUP] Turning left (L_openings=1 R_openings=0)
+
+[ 52.1s] [REFINE] only 0 candidates, resampling with 150 angles (level 1)
+
+[ 52.1s] [REFINE] only 0 candidates, resampling with 450 angles (level 2)
+
+[ 52.1s] [REFINE] only 0 candidates, resampling with 1350 angles (level 3)
+
+[ 52.1s] [GOAL SELECT] robot@(-0.49,0.60) | 1 candidates (refined 3x) (scanned=104 walls=66 visited=6):
+  #1 ang=-132° d=0.50m pos=(-0.47,1.10) score=+34.8 [O=+2.5 U=+37.7 V=-0.0 W=-3.0 R=-3.0 F=+10.4 T=-10.0] <-- BEST
+[ 52.1s] [GOAL] Selected: (-0.47, 1.10) dist=0.50m timeout=28s angle=-132° reason=no goal
+[182] DRIVE goal=(-0.47,1.10) dist=0.50m front=0.29m cells=6 rms=3.8cm[183] DRIVE goal=(-0.47,1.10) dist=0.50m front=0.26m cells=6 rms=3.8cm[184] DRIVE goal=(-0.47,1.10) dist=0.50m front=0.26m cells=6 rms=3.8cm[185] DRIVE goal=(-0.47,1.10) dist=0.49m front=0.28m cells=6 rms=3.7cm[186] DRIVE goal=(-0.47,1.10) dist=0.48m front=0.32m cells=6 rms=3.7cm[187] DRIVE goal=(-0.47,1.10) dist=0.48m front=0.32m cells=6 rms=3.7cm[188] DRIVE goal=(-0.47,1.10) dist=0.48m front=0.32m cells=6 rms=3.7cm[189] DRIVE goal=(-0.47,1.10) dist=0.48m front=0.32m cells=6 rms=3.7cm[190] DRIVE goal=(-0.47,1.10) dist=0.47m front=0.33m cells=6 rms=3.7cm[191] DRIVE goal=(-0.47,1.10) dist=0.48m front=0.33m cells=6 rms=3.7cm[192] DRIVE goal=(-0.47,1.10) dist=0.48m front=0.33m cells=6 rms=3.8cm[193] DRIVE goal=(-0.47,1.10) dist=0.47m front=0.33m cells=6 rms=3.8cm[194] DRIVE goal=(-0.47,1.10) dist=0.48m front=0.34m cells=6 rms=3.8cm[195] DRIVE goal=(-0.47,1.10) dist=0.48m front=0.35m cells=6 rms=3.8cm[196] DRIVE goal=(-0.47,1.10) dist=0.48m front=0.36m cells=6 rms=3.9cm[197] DRIVE goal=(-0.47,1.10) dist=0.48m front=0.37m cells=6 rms=3.9cm[198] DRIVE goal=(-0.47,1.10) dist=0.48m front=0.37m cells=6 rms=4.0cm[199] DRIVE goal=(-0.47,1.10) dist=0.48m front=0.37m cells=6 rms=4.0cm[200] DRIVE goal=(-0.47,1.10) dist=0.49m front=0.38m cells=6 rms=4.1cm[201] DRIVE goal=(-0.47,1.10) dist=0.49m front=0.39m cells=6 rms=4.2cm[202] DRIVE goal=(-0.47,1.10) dist=0.50m front=0.40m cells=6 rms=4.3cm[203] DRIVE goal=(-0.47,1.10) dist=0.50m front=0.40m cells=6 rms=4.4cm[204] DRIVE goal=(-0.47,1.10) dist=0.51m front=0.41m cells=6 rms=4.5cm[205] DRIVE goal=(-0.47,1.10) dist=0.51m front=0.42m cells=6 rms=4.6cm[206] DRIVE goal=(-0.47,1.10) dist=0.51m front=0.42m cells=6 rms=4.7cm[207] DRIVE goal=(-0.47,1.10) dist=0.51m front=0.42m cells=6 rms=4.8cm[208] DRIVE goal=(-0.47,1.10) dist=0.51m front=0.42m cells=6 rms=4.9cm[209] DRIVE goal=(-0.47,1.10) dist=0.51m front=0.42m cells=6 rms=5.0cm[210] DRIVE goal=(-0.47,1.10) dist=0.51m front=0.43m cells=6 rms=5.1cm[211] DRIVE goal=(-0.47,1.10) dist=0.51m front=0.43m cells=6 rms=5.2cm[212] DRIVE goal=(-0.47,1.10) dist=0.51m front=0.45m cells=6 rms=5.3cm[213] DRIVE goal=(-0.47,1.10) dist=0.51m front=0.46m cells=6 rms=5.4cm[214] DRIVE goal=(-0.47,1.10) dist=0.51m front=0.47m cells=6 rms=5.5cm[215] DRIVE goal=(-0.47,1.10) dist=0.51m front=0.50m cells=6 rms=5.5cm[216] DRIVE goal=(-0.47,1.10) dist=0.51m front=0.50m cells=6 rms=5.6cm[217] DRIVE goal=(-0.47,1.10) dist=0.51m front=0.62m cells=6 rms=5.7cm[218] DRIVE goal=(-0.47,1.10) dist=0.51m front=0.70m cells=6 rms=5.8cm[219] DRIVE goal=(-0.47,1.10) dist=0.51m front=0.70m cells=6 rms=5.8cm[220] DRIVE goal=(-0.47,1.10) dist=0.52m front=0.70m cells=6 rms=5.9cm[221] DRIVE goal=(-0.47,1.10) dist=0.51m front=0.69m cells=6 rms=6.0cm[222] DRIVE goal=(-0.47,1.10) dist=0.51m front=0.69m cells=6 rms=6.0cm[223] DRIVE goal=(-0.47,1.10) dist=0.51m front=0.69m cells=6 rms=6.1cm[224] DRIVE goal=(-0.47,1.10) dist=0.50m front=0.68m cells=6 rms=6.2cm[225] DRIVE goal=(-0.47,1.10) dist=0.49m front=0.67m cells=6 rms=6.2cm[226] DRIVE goal=(-0.47,1.10) dist=0.48m front=0.66m cells=6 rms=6.3cm[227] DRIVE goal=(-0.47,1.10) dist=0.47m front=0.64m cells=6 rms=6.3cm[228] DRIVE goal=(-0.47,1.10) dist=0.45m front=0.62m cells=6 rms=6.3cm[229] DRIVE goal=(-0.47,1.10) dist=0.43m front=0.61m cells=6 rms=6.4cm[230] DRIVE goal=(-0.47,1.10) dist=0.40m front=0.59m cells=6 rms=6.4cm
+[ 62.0s] [GOAL SELECT] robot@(-0.39,0.72) | 10 candidates (scanned=108 walls=77 visited=6):
+  #1 ang= -64° d=1.00m pos=(0.37,1.37) score=+28.1 [O=+1.6 U=+27.5 V=-0.0 W=-3.0 R=-0.7 F=+2.3] <-- BEST
+  #2 ang= -70° d=1.00m pos=(0.43,1.29) score=+27.7 [O=+1.6 U=+28.8 V=-0.0 W=-3.0 R=-0.7 F=+0.7]
+  #3 ang= -76° d=0.50m pos=(0.05,0.96) score=+1.4 [O=+2.0 U=+28.7 V=-0.0 W=-3.0 R=-10.5 F=-0.9 T=-15.1]
+  #4 ang= -82° d=0.50m pos=(0.07,0.91) score=-2.1 [O=+1.5 U=+30.0 V=-0.0 W=-3.0 R=-10.5 F=-2.5 T=-17.8]
+  #5 ang= -64° d=0.50m pos=(-0.01,1.05) score=-4.6 [O=+2.1 U=+19.5 V=-0.0 W=-3.0 R=-10.5 F=+2.3 T=-15.1]
+  #6 ang= -70° d=0.50m pos=(0.02,1.00) score=-4.9 [O=+2.1 U=+20.8 V=-0.0 W=-3.0 R=-10.5 F=+0.7 T=-15.1]
+  #7 ang= -52° d=0.50m pos=(-0.09,1.12) score=-9.5 [O=+2.3 U=+11.3 V=-0.0 W=-3.0 R=-10.5 F=+5.4 T=-15.1]
+  #8 ang=-113° d=0.50m pos=(0.10,0.65) score=-10.9 [O=+1.5 U=+32.8 V=-1.9 W=-3.0 R=-5.9 F=-9.7 T=-25.0]
+[ 62.0s] [GOAL] Selected: (0.37, 1.37) dist=1.00m timeout=35s angle=-64° reason=reached
+[231] DRIVE goal=(0.37,1.37) dist=1.00m front=0.57m cells=6 rms=6.4cm[232] DRIVE goal=(0.37,1.37) dist=0.99m front=0.53m cells=6 rms=6.4cm[233] DRIVE goal=(0.37,1.37) dist=0.97m front=0.52m cells=6 rms=6.4cm[234] DRIVE goal=(0.37,1.37) dist=0.97m front=0.51m cells=6 rms=6.4cm[235] DRIVE goal=(0.37,1.37) dist=0.97m front=0.50m cells=6 rms=6.3cm[236] DRIVE goal=(0.37,1.37) dist=0.96m front=0.49m cells=6 rms=6.3cm[237] DRIVE goal=(0.37,1.37) dist=0.96m front=0.49m cells=6 rms=6.4cm[238] DRIVE goal=(0.37,1.37) dist=0.97m front=0.50m cells=6 rms=6.4cm[239] DRIVE goal=(0.37,1.37) dist=0.97m front=0.49m cells=6 rms=6.4cm[240] DRIVE goal=(0.37,1.37) dist=0.97m front=0.49m cells=6 rms=6.4cm[241] DRIVE goal=(0.37,1.37) dist=0.95m front=0.48m cells=6 rms=6.4cm[242] DRIVE goal=(0.37,1.37) dist=0.96m front=0.48m cells=6 rms=6.4cm[243] DRIVE goal=(0.37,1.37) dist=0.96m front=0.49m cells=6 rms=6.4cm[244] DRIVE goal=(0.37,1.37) dist=0.97m front=0.51m cells=6 rms=6.4cm[245] DRIVE goal=(0.37,1.37) dist=0.97m front=0.53m cells=6 rms=6.4cm[246] DRIVE goal=(0.37,1.37) dist=0.97m front=0.53m cells=6 rms=6.4cm[247] DRIVE goal=(0.37,1.37) dist=0.97m front=0.53m cells=6 rms=6.4cm[248] DRIVE goal=(0.37,1.37) dist=0.96m front=0.55m cells=6 rms=6.4cm[249] DRIVE goal=(0.37,1.37) dist=0.96m front=0.55m cells=6 rms=6.4cm[250] DRIVE goal=(0.37,1.37) dist=0.96m front=0.55m cells=6 rms=6.4cm[251] DRIVE goal=(0.37,1.37) dist=0.95m front=0.53m cells=6 rms=6.4cm[252] DRIVE goal=(0.37,1.37) dist=0.94m front=0.53m cells=6 rms=6.4cm[253] DRIVE goal=(0.37,1.37) dist=0.93m front=0.88m cells=6 rms=6.5cm[254] DRIVE goal=(0.37,1.37) dist=0.92m front=0.87m cells=6 rms=6.5cm[255] DRIVE goal=(0.37,1.37) dist=0.91m front=0.86m cells=6 rms=6.5cm[256] DRIVE goal=(0.37,1.37) dist=0.90m front=0.85m cells=6 rms=6.5cm[257] DRIVE goal=(0.37,1.37) dist=0.89m front=0.83m cells=6 rms=6.5cm[258] DRIVE goal=(0.37,1.37) dist=0.86m front=0.82m cells=6 rms=6.5cm[259] DRIVE goal=(0.37,1.37) dist=0.84m front=0.84m cells=6 rms=6.5cm[260] DRIVE goal=(0.37,1.37) dist=0.82m front=0.78m cells=7 rms=6.5cm[261] DRIVE goal=(0.37,1.37) dist=0.80m front=0.78m cells=8 rms=6.5cm[262] DRIVE goal=(0.37,1.37) dist=0.80m front=0.77m cells=8 rms=6.5cm[263] DRIVE goal=(0.37,1.37) dist=0.77m front=0.76m cells=8 rms=6.6cm[264] DRIVE goal=(0.37,1.37) dist=0.76m front=0.76m cells=8 rms=6.6cm[265] DRIVE goal=(0.37,1.37) dist=0.74m front=0.71m cells=8 rms=6.6cm[266] DRIVE goal=(0.37,1.37) dist=0.71m front=0.72m cells=8 rms=6.6cm[267] DRIVE goal=(0.37,1.37) dist=0.68m front=1.20m cells=8 rms=6.6cm[268] DRIVE goal=(0.37,1.37) dist=0.65m front=1.19m cells=8 rms=6.6cm[269] DRIVE goal=(0.37,1.37) dist=0.64m front=1.17m cells=8 rms=6.6cm[270] DRIVE goal=(0.37,1.37) dist=0.61m front=1.15m cells=8 rms=6.6cm[271] DRIVE goal=(0.37,1.37) dist=0.60m front=1.14m cells=8 rms=6.6cm[272] DRIVE goal=(0.37,1.37) dist=0.59m front=1.13m cells=8 rms=6.6cm[273] DRIVE goal=(0.37,1.37) dist=0.57m front=1.11m cells=8 rms=6.6cm[274] DRIVE goal=(0.37,1.37) dist=0.56m front=1.10m cells=8 rms=6.6cm[275] DRIVE goal=(0.37,1.37) dist=0.54m front=1.09m cells=8 rms=6.6cm[276] DRIVE goal=(0.37,1.37) dist=0.54m front=1.07m cells=8 rms=6.6cm[277] DRIVE goal=(0.37,1.37) dist=0.52m front=1.05m cells=8 rms=6.6cm[278] DRIVE goal=(0.37,1.37) dist=0.49m front=1.03m cells=8 rms=6.6cm[279] DRIVE goal=(0.37,1.37) dist=0.47m front=1.01m cells=8 rms=6.6cm[280] DRIVE goal=(0.37,1.37) dist=0.45m front=0.99m cells=8 rms=6.6cm[281] DRIVE goal=(0.37,1.37) dist=0.43m front=0.98m cells=8 rms=6.6cm[282] DRIVE goal=(0.37,1.37) dist=0.41m front=0.95m cells=8 rms=6.6cm
+[ 72.6s] [REFINE] best score -12.9 < 20.0, resampling with 150 angles (level 1)
+
+[ 72.6s] [REFINE] best score -12.8 < 20.0, resampling with 450 angles (level 2)
+
+[ 72.6s] [GOAL SELECT] robot@(0.05,1.16) | 70 candidates (refined 2x) (scanned=123 walls=86 visited=8):
+  #1 ang= +42° d=2.00m pos=(0.63,3.08) score=+27.9 [O=+1.8 U=+36.0 V=-0.0 W=-0.0 R=-0.0 F=+14.4 B=-25.0] <-- BEST
+  #2 ang= +42° d=1.50m pos=(0.48,2.60) score=+20.2 [O=+2.3 U=+28.0 V=-0.0 W=-0.0 R=-0.0 F=+14.4 B=-25.0]
+  #3 ang= +42° d=1.00m pos=(0.34,2.12) score=+11.2 [O=+2.5 U=+20.0 V=-0.0 W=-1.0 R=-0.0 F=+14.4 B=-25.0]
+  #4 ang=-110° d=0.50m pos=(0.14,0.67) score=-12.8 [O=+2.1 U=+32.1 V=-1.1 W=-3.0 R=-3.3 F=-14.7 T=-25.0]
+  #5 ang=-111° d=0.50m pos=(0.13,0.67) score=-12.8 [O=+2.1 U=+32.1 V=-1.1 W=-3.0 R=-3.3 F=-14.8 T=-25.0]
+  #6 ang=-111° d=0.50m pos=(0.12,0.67) score=-12.9 [O=+2.1 U=+32.1 V=-1.1 W=-3.0 R=-3.3 F=-14.8 T=-25.0]
+  #7 ang=-112° d=0.50m pos=(0.12,0.67) score=-12.9 [O=+2.1 U=+32.1 V=-1.1 W=-3.0 R=-3.3 F=-14.8 T=-25.0]
+  #8 ang=-115° d=0.50m pos=(0.10,0.66) score=-12.9 [O=+2.1 U=+32.1 V=-1.1 W=-3.0 R=-3.3 F=-14.9 T=-25.0]
+[ 72.6s] [GOAL] Selected: (0.63, 3.08) dist=2.00m timeout=50s angle=42° reason=reached
+[283] DRIVE goal=(0.63,3.08) dist=2.00m front=0.93m cells=8 rms=6.6cm[284] DRIVE goal=(0.63,3.08) dist=1.98m front=0.91m cells=8 rms=6.6cm[285] DRIVE goal=(0.63,3.08) dist=1.97m front=0.89m cells=8 rms=6.6cm[286] DRIVE goal=(0.63,3.08) dist=1.96m front=0.89m cells=8 rms=6.6cm[287] DRIVE goal=(0.63,3.08) dist=1.96m front=0.89m cells=8 rms=6.6cm[288] DRIVE goal=(0.63,3.08) dist=1.96m front=0.89m cells=8 rms=6.6cm[289] DRIVE goal=(0.63,3.08) dist=1.96m front=0.89m cells=8 rms=6.5cm[290] DRIVE goal=(0.63,3.08) dist=1.96m front=0.89m cells=8 rms=6.5cm[291] DRIVE goal=(0.63,3.08) dist=1.96m front=0.89m cells=8 rms=6.5cm[292] DRIVE goal=(0.63,3.08) dist=1.95m front=0.88m cells=8 rms=6.5cm[293] DRIVE goal=(0.63,3.08) dist=1.95m front=0.88m cells=8 rms=6.5cm[294] DRIVE goal=(0.63,3.08) dist=1.96m front=0.88m cells=8 rms=6.5cm[295] DRIVE goal=(0.63,3.08) dist=1.95m front=0.88m cells=8 rms=6.5cm[296] DRIVE goal=(0.63,3.08) dist=1.95m front=0.89m cells=8 rms=6.5cm[297] DRIVE goal=(0.63,3.08) dist=1.94m front=0.88m cells=8 rms=6.5cm[298] DRIVE goal=(0.63,3.08) dist=1.94m front=0.87m cells=9 rms=6.5cm[299] DRIVE goal=(0.63,3.08) dist=1.93m front=0.87m cells=9 rms=6.5cm[300] DRIVE goal=(0.63,3.08) dist=1.92m front=0.88m cells=9 rms=6.5cm[301] DRIVE goal=(0.63,3.08) dist=1.89m front=0.89m cells=9 rms=6.5cm[302] DRIVE goal=(0.63,3.08) dist=1.88m front=0.91m cells=9 rms=6.5cm[303] DRIVE goal=(0.63,3.08) dist=1.87m front=0.92m cells=9 rms=6.5cm[304] DRIVE goal=(0.63,3.08) dist=1.85m front=0.90m cells=9 rms=6.5cm[305] DRIVE goal=(0.63,3.08) dist=1.84m front=0.88m cells=9 rms=6.5cm[306] DRIVE goal=(0.63,3.08) dist=1.83m front=0.84m cells=9 rms=6.5cm[307] DRIVE goal=(0.63,3.08) dist=1.80m front=0.83m cells=9 rms=6.5cm[308] DRIVE goal=(0.63,3.08) dist=1.79m front=0.81m cells=9 rms=6.5cm[309] DRIVE goal=(0.63,3.08) dist=1.77m front=0.80m cells=9 rms=6.5cm[310] DRIVE goal=(0.63,3.08) dist=1.74m front=0.79m cells=9 rms=6.5cm[311] DRIVE goal=(0.63,3.08) dist=1.73m front=0.79m cells=9 rms=6.5cm[312] DRIVE goal=(0.63,3.08) dist=1.72m front=0.78m cells=9 rms=6.5cm[313] DRIVE goal=(0.63,3.08) dist=1.71m front=0.76m cells=9 rms=6.5cm[314] DRIVE goal=(0.63,3.08) dist=1.69m front=0.75m cells=9 rms=6.6cm[315] DRIVE goal=(0.63,3.08) dist=1.67m front=0.76m cells=9 rms=6.6cm[316] DRIVE goal=(0.63,3.08) dist=1.64m front=0.73m cells=9 rms=6.6cm[317] DRIVE goal=(0.63,3.08) dist=1.62m front=0.76m cells=9 rms=6.6cm[318] DRIVE goal=(0.63,3.08) dist=1.61m front=1.19m cells=10 rms=6.6cm[319] DRIVE goal=(0.63,3.08) dist=1.60m front=1.18m cells=10 rms=6.6cm[320] DRIVE goal=(0.63,3.08) dist=1.57m front=1.17m cells=10 rms=6.6cm[321] DRIVE goal=(0.63,3.08) dist=1.55m front=1.14m cells=10 rms=6.6cm[322] DRIVE goal=(0.63,3.08) dist=1.54m front=1.19m cells=10 rms=6.6cm[323] DRIVE goal=(0.63,3.08) dist=1.52m front=1.20m cells=10 rms=6.6cm[324] DRIVE goal=(0.63,3.08) dist=1.50m front=1.18m cells=10 rms=6.6cm[325] DRIVE goal=(0.63,3.08) dist=1.47m front=1.16m cells=10 rms=6.6cm[326] DRIVE goal=(0.63,3.08) dist=1.45m front=1.14m cells=10 rms=6.6cm[327] DRIVE goal=(0.63,3.08) dist=1.44m front=1.13m cells=10 rms=6.6cm[328] DRIVE goal=(0.63,3.08) dist=1.44m front=1.11m cells=10 rms=6.6cm[329] DRIVE goal=(0.63,3.08) dist=1.42m front=1.11m cells=10 rms=6.6cm[330] DRIVE goal=(0.63,3.08) dist=1.42m front=1.11m cells=10 rms=6.6cm[331] DRIVE goal=(0.63,3.08) dist=1.41m front=1.10m cells=10 rms=6.6cm[332] DRIVE goal=(0.63,3.08) dist=1.41m front=1.09m cells=10 rms=6.6cm[333] DRIVE goal=(0.63,3.08) dist=1.40m front=1.17m cells=10 rms=6.6cm[334] DRIVE goal=(0.63,3.08) dist=1.39m front=1.13m cells=10 rms=6.6cm[335] DRIVE goal=(0.63,3.08) dist=1.38m front=1.08m cells=10 rms=6.6cm[336] DRIVE goal=(0.63,3.08) dist=1.37m front=1.05m cells=10 rms=6.6cm[337] DRIVE goal=(0.63,3.08) dist=1.35m front=1.02m cells=10 rms=6.6cm[338] DRIVE goal=(0.63,3.08) dist=1.32m front=1.01m cells=10 rms=6.6cm[339] DRIVE goal=(0.63,3.08) dist=1.30m front=1.00m cells=11 rms=6.6cm[340] DRIVE goal=(0.63,3.08) dist=1.29m front=0.99m cells=11 rms=6.6cm[341] DRIVE goal=(0.63,3.08) dist=1.27m front=1.01m cells=11 rms=6.6cm[342] DRIVE goal=(0.63,3.08) dist=1.24m front=0.98m cells=11 rms=6.6cm[343] DRIVE goal=(0.63,3.08) dist=1.23m front=0.95m cells=11 rms=6.6cm[344] DRIVE goal=(0.63,3.08) dist=1.23m front=0.91m cells=11 rms=6.6cm[345] DRIVE goal=(0.63,3.08) dist=1.20m front=0.87m cells=11 rms=6.6cm[346] DRIVE goal=(0.63,3.08) dist=1.19m front=0.85m cells=11 rms=6.6cm[347] DRIVE goal=(0.63,3.08) dist=1.18m front=0.86m cells=11 rms=6.6cm[348] DRIVE goal=(0.63,3.08) dist=1.17m front=0.87m cells=11 rms=6.6cm[349] DRIVE goal=(0.63,3.08) dist=1.16m front=0.87m cells=11 rms=6.6cm[350] DRIVE goal=(0.63,3.08) dist=1.16m front=0.85m cells=11 rms=6.6cm[351] DRIVE goal=(0.63,3.08) dist=1.15m front=0.88m cells=11 rms=6.6cm[352] DRIVE goal=(0.63,3.08) dist=1.13m front=0.89m cells=11 rms=6.6cm[353] DRIVE goal=(0.63,3.08) dist=1.14m front=0.93m cells=11 rms=6.6cm[354] DRIVE goal=(0.63,3.08) dist=1.13m front=0.88m cells=11 rms=6.6cm[355] DRIVE goal=(0.63,3.08) dist=1.11m front=0.87m cells=11 rms=6.6cm[356] DRIVE goal=(0.63,3.08) dist=1.08m front=0.86m cells=11 rms=6.6cm[357] DRIVE goal=(0.63,3.08) dist=1.07m front=0.84m cells=11 rms=6.6cm[358] DRIVE goal=(0.63,3.08) dist=1.06m front=0.84m cells=11 rms=6.6cm[359] DRIVE goal=(0.63,3.08) dist=1.05m front=0.83m cells=11 rms=6.7cm[360] DRIVE goal=(0.63,3.08) dist=1.03m front=0.83m cells=11 rms=6.7cm[361] DRIVE goal=(0.63,3.08) dist=1.01m front=0.80m cells=11 rms=6.7cm[362] DRIVE goal=(0.63,3.08) dist=1.01m front=0.81m cells=11 rms=6.7cm[363] DRIVE goal=(0.63,3.08) dist=0.99m front=0.82m cells=12 rms=6.7cm[364] DRIVE goal=(0.63,3.08) dist=0.99m front=0.84m cells=12 rms=6.7cm[365] DRIVE goal=(0.63,3.08) dist=0.97m front=0.83m cells=12 rms=6.7cm[366] DRIVE goal=(0.63,3.08) dist=0.95m front=0.82m cells=12 rms=6.7cm[367] DRIVE goal=(0.63,3.08) dist=0.93m front=0.81m cells=12 rms=6.7cm[368] DRIVE goal=(0.63,3.08) dist=0.91m front=0.75m cells=12 rms=6.7cm[369] DRIVE goal=(0.63,3.08) dist=0.90m front=0.77m cells=12 rms=6.7cm[370] DRIVE goal=(0.63,3.08) dist=0.88m front=0.78m cells=12 rms=6.7cm[371] DRIVE goal=(0.63,3.08) dist=0.86m front=0.79m cells=12 rms=6.8cm[372] DRIVE goal=(0.63,3.08) dist=0.86m front=0.81m cells=12 rms=6.8cm[373] DRIVE goal=(0.63,3.08) dist=0.85m front=0.81m cells=12 rms=6.8cm[374] DRIVE goal=(0.63,3.08) dist=0.85m front=1.44m cells=12 rms=6.8cm[375] DRIVE goal=(0.63,3.08) dist=0.81m front=1.42m cells=12 rms=6.8cm[376] DRIVE goal=(0.63,3.08) dist=0.80m front=1.40m cells=12 rms=6.8cm[377] DRIVE goal=(0.63,3.08) dist=0.79m front=1.39m cells=12 rms=6.8cm[378] DRIVE goal=(0.63,3.08) dist=0.77m front=1.38m cells=12 rms=6.8cm[379] DRIVE goal=(0.63,3.08) dist=0.77m front=1.37m cells=12 rms=6.8cm[380] DRIVE goal=(0.63,3.08) dist=0.75m front=0.71m cells=12 rms=6.8cm[381] DRIVE goal=(0.63,3.08) dist=0.73m front=0.69m cells=12 rms=6.8cm[382] DRIVE goal=(0.63,3.08) dist=0.72m front=0.67m cells=12 rms=6.8cm[383] DRIVE goal=(0.63,3.08) dist=0.70m front=0.66m cells=12 rms=6.8cm[384] DRIVE goal=(0.63,3.08) dist=0.70m front=0.66m cells=12 rms=6.8cm[385] DRIVE goal=(0.63,3.08) dist=0.68m front=0.67m cells=13 rms=6.8cm[386] DRIVE goal=(0.63,3.08) dist=0.67m front=1.26m cells=13 rms=6.8cm[387] DRIVE goal=(0.63,3.08) dist=0.66m front=1.26m cells=13 rms=6.9cm[388] DRIVE goal=(0.63,3.08) dist=0.65m front=1.24m cells=13 rms=6.9cm[389] DRIVE goal=(0.63,3.08) dist=0.65m front=1.22m cells=13 rms=6.9cm[390] DRIVE goal=(0.63,3.08) dist=0.63m front=1.21m cells=13 rms=6.9cm[391] DRIVE goal=(0.63,3.08) dist=0.61m front=1.19m cells=13 rms=6.9cm[392] DRIVE goal=(0.63,3.08) dist=0.59m front=1.17m cells=13 rms=6.9cm[393] DRIVE goal=(0.63,3.08) dist=0.57m front=1.14m cells=13 rms=6.9cm[394] DRIVE goal=(0.63,3.08) dist=0.55m front=1.12m cells=13 rms=6.9cm[395] DRIVE goal=(0.63,3.08) dist=0.53m front=1.11m cells=13 rms=6.9cm[396] DRIVE goal=(0.63,3.08) dist=0.51m front=1.08m cells=13 rms=6.9cm[397] DRIVE goal=(0.63,3.08) dist=0.48m front=1.06m cells=13 rms=6.9cm[398] DRIVE goal=(0.63,3.08) dist=0.46m front=1.05m cells=13 rms=6.9cm[399] DRIVE goal=(0.63,3.08) dist=0.45m front=1.03m cells=13 rms=6.9cm[400] DRIVE goal=(0.63,3.08) dist=0.43m front=1.01m cells=13 rms=6.9cm[401] DRIVE goal=(0.63,3.08) dist=0.41m front=0.99m cells=13 rms=6.8cm
+[ 96.5s] [GOAL SELECT] robot@(0.56,2.70) | 21 candidates (scanned=183 walls=117 visited=13):
+  #1 ang= +33° d=2.00m pos=(-0.20,4.55) score=+45.8 [O=+1.7 U=+32.0 V=-0.0 W=-1.0 R=-0.0 F=+12.5] <-- BEST
+  #2 ang=  -9° d=0.50m pos=(0.74,3.16) score=+42.2 [O=+1.7 U=+34.5 V=-0.0 W=-0.0 R=-9.0 F=+14.8]
+  #3 ang=  -3° d=0.50m pos=(0.69,3.18) score=+41.8 [O=+1.6 U=+34.1 V=-0.0 W=-0.0 R=-9.0 F=+15.0]
+  #4 ang= -15° d=0.50m pos=(0.79,3.14) score=+41.4 [O=+1.8 U=+34.0 V=-0.0 W=-0.0 R=-9.0 F=+14.5]
+  #5 ang= -45° d=1.50m pos=(1.83,3.51) score=+40.2 [O=+2.1 U=+28.2 V=-0.0 W=-1.0 R=-0.0 F=+10.4]
+  #6 ang= -52° d=1.50m pos=(1.91,3.37) score=+39.2 [O=+2.5 U=+28.0 V=-0.0 W=-1.0 R=-0.0 F=+9.2]
+  #7 ang= -58° d=1.50m pos=(1.97,3.22) score=+36.8 [O=+2.5 U=+26.0 V=-0.0 W=-0.0 R=-0.0 F=+7.9]
+  #8 ang= -33° d=1.00m pos=(1.27,3.40) score=+36.3 [O=+2.1 U=+22.4 V=-0.0 W=-1.0 R=-0.0 F=+12.5]
+[ 96.5s] [GOAL] Selected: (-0.20, 4.55) dist=2.00m timeout=50s angle=33° reason=reached
+[402] DRIVE goal=(-0.20,4.55) dist=2.00m front=0.97m cells=13 rms=6.8cm[403] DRIVE goal=(-0.20,4.55) dist=1.98m front=0.95m cells=14 rms=6.8cm[404] DRIVE goal=(-0.20,4.55) dist=1.96m front=0.92m cells=14 rms=6.8cm[405] DRIVE goal=(-0.20,4.55) dist=1.95m front=0.90m cells=14 rms=6.8cm[406] DRIVE goal=(-0.20,4.55) dist=1.93m front=0.89m cells=14 rms=6.8cm[407] DRIVE goal=(-0.20,4.55) dist=1.93m front=0.89m cells=14 rms=6.8cm[408] DRIVE goal=(-0.20,4.55) dist=1.93m front=0.89m cells=14 rms=6.8cm[409] DRIVE goal=(-0.20,4.55) dist=1.93m front=0.89m cells=14 rms=6.8cm[410] DRIVE goal=(-0.20,4.55) dist=1.93m front=0.89m cells=14 rms=6.8cm[411] DRIVE goal=(-0.20,4.55) dist=1.94m front=0.89m cells=14 rms=6.8cm[412] DRIVE goal=(-0.20,4.55) dist=1.94m front=0.89m cells=14 rms=6.8cm[413] DRIVE goal=(-0.20,4.55) dist=1.94m front=0.89m cells=14 rms=6.8cm[414] DRIVE goal=(-0.20,4.55) dist=1.93m front=0.88m cells=14 rms=6.8cm[415] DRIVE goal=(-0.20,4.55) dist=1.92m front=0.88m cells=14 rms=6.8cm[416] DRIVE goal=(-0.20,4.55) dist=1.91m front=0.87m cells=14 rms=6.8cm[417] DRIVE goal=(-0.20,4.55) dist=1.89m front=0.85m cells=14 rms=6.8cm[418] DRIVE goal=(-0.20,4.55) dist=1.88m front=0.84m cells=14 rms=6.8cm[419] DRIVE goal=(-0.20,4.55) dist=1.86m front=0.82m cells=14 rms=6.8cm[420] DRIVE goal=(-0.20,4.55) dist=1.83m front=0.81m cells=14 rms=6.8cm[421] DRIVE goal=(-0.20,4.55) dist=1.81m front=0.79m cells=14 rms=6.8cm[422] DRIVE goal=(-0.20,4.55) dist=1.78m front=0.78m cells=14 rms=6.8cm[423] DRIVE goal=(-0.20,4.55) dist=1.76m front=0.69m cells=14 rms=6.8cm[424] DRIVE goal=(-0.20,4.55) dist=1.75m front=0.68m cells=14 rms=6.8cm[425] DRIVE goal=(-0.20,4.55) dist=1.73m front=0.73m cells=14 rms=6.8cm[426] DRIVE goal=(-0.20,4.55) dist=1.72m front=0.73m cells=14 rms=6.8cm[427] DRIVE goal=(-0.20,4.55) dist=1.69m front=0.77m cells=14 rms=6.8cm[428] DRIVE goal=(-0.20,4.55) dist=1.68m front=0.74m cells=15 rms=6.8cm[429] DRIVE goal=(-0.20,4.55) dist=1.67m front=0.75m cells=15 rms=6.7cm[430] DRIVE goal=(-0.20,4.55) dist=1.65m front=0.75m cells=15 rms=6.7cm[431] DRIVE goal=(-0.20,4.55) dist=1.63m front=0.73m cells=15 rms=6.7cm[432] DRIVE goal=(-0.20,4.55) dist=1.61m front=0.70m cells=15 rms=6.7cm[433] DRIVE goal=(-0.20,4.55) dist=1.59m front=0.66m cells=15 rms=6.7cm[434] DRIVE goal=(-0.20,4.55) dist=1.57m front=0.62m cells=15 rms=6.7cm[435] DRIVE goal=(-0.20,4.55) dist=1.55m front=0.60m cells=15 rms=6.7cm[436] DRIVE goal=(-0.20,4.55) dist=1.54m front=0.59m cells=15 rms=6.7cm[437] DRIVE goal=(-0.20,4.55) dist=1.52m front=0.57m cells=15 rms=6.7cm[438] DRIVE goal=(-0.20,4.55) dist=1.52m front=0.59m cells=15 rms=6.7cm[439] DRIVE goal=(-0.20,4.55) dist=1.51m front=0.59m cells=15 rms=6.7cm[440] DRIVE goal=(-0.20,4.55) dist=1.51m front=0.56m cells=15 rms=6.7cm[441] DRIVE goal=(-0.20,4.55) dist=1.48m front=0.54m cells=15 rms=6.7cm[442] DRIVE goal=(-0.20,4.55) dist=1.47m front=0.53m cells=15 rms=6.7cm[443] DRIVE goal=(-0.20,4.55) dist=1.45m front=0.52m cells=15 rms=6.7cm[444] DRIVE goal=(-0.20,4.55) dist=1.43m front=0.53m cells=15 rms=6.7cm[445] DRIVE goal=(-0.20,4.55) dist=1.42m front=0.55m cells=15 rms=6.7cm[446] DRIVE goal=(-0.20,4.55) dist=1.42m front=0.54m cells=15 rms=6.7cm[447] DRIVE goal=(-0.20,4.55) dist=1.42m front=0.53m cells=15 rms=6.7cm[448] DRIVE goal=(-0.20,4.55) dist=1.40m front=0.52m cells=15 rms=6.7cm[449] DRIVE goal=(-0.20,4.55) dist=1.39m front=0.51m cells=15 rms=6.7cm[450] DRIVE goal=(-0.20,4.55) dist=1.38m front=0.50m cells=15 rms=6.7cm[451] DRIVE goal=(-0.20,4.55) dist=1.36m front=0.49m cells=16 rms=6.7cm[452] DRIVE goal=(-0.20,4.55) dist=1.37m front=0.47m cells=16 rms=6.7cm[453] DRIVE goal=(-0.20,4.55) dist=1.35m front=0.48m cells=16 rms=6.7cm[454] DRIVE goal=(-0.20,4.55) dist=1.34m front=0.59m cells=16 rms=6.7cm[455] DRIVE goal=(-0.20,4.55) dist=1.33m front=0.68m cells=16 rms=6.7cm[456] DRIVE goal=(-0.20,4.55) dist=1.33m front=0.68m cells=16 rms=6.7cm[457] DRIVE goal=(-0.20,4.55) dist=1.32m front=0.67m cells=16 rms=6.7cm[458] DRIVE goal=(-0.20,4.55) dist=1.31m front=0.59m cells=16 rms=6.7cm[459] DRIVE goal=(-0.20,4.55) dist=1.29m front=0.55m cells=16 rms=6.7cm[460] DRIVE goal=(-0.20,4.55) dist=1.28m front=0.54m cells=16 rms=6.7cm[461] DRIVE goal=(-0.20,4.55) dist=1.26m front=0.43m cells=16 rms=6.7cm[462] DRIVE goal=(-0.20,4.55) dist=1.24m front=0.52m cells=16 rms=6.7cm[463] DRIVE goal=(-0.20,4.55) dist=1.23m front=0.51m cells=16 rms=6.7cm[464] DRIVE goal=(-0.20,4.55) dist=1.23m front=0.51m cells=16 rms=6.7cm[465] DRIVE goal=(-0.20,4.55) dist=1.23m front=0.50m cells=16 rms=6.7cm[466] DRIVE goal=(-0.20,4.55) dist=1.23m front=0.50m cells=16 rms=6.7cm[467] DRIVE goal=(-0.20,4.55) dist=1.23m front=0.50m cells=16 rms=6.7cm[468] DRIVE goal=(-0.20,4.55) dist=1.21m front=0.57m cells=16 rms=6.7cm[469] DRIVE goal=(-0.20,4.55) dist=1.21m front=0.62m cells=16 rms=6.7cm[470] DRIVE goal=(-0.20,4.55) dist=1.20m front=0.63m cells=16 rms=6.7cm[471] DRIVE goal=(-0.20,4.55) dist=1.18m front=0.65m cells=16 rms=6.7cm[472] DRIVE goal=(-0.20,4.55) dist=1.16m front=0.68m cells=16 rms=6.7cm[473] DRIVE goal=(-0.20,4.55) dist=1.15m front=0.52m cells=16 rms=6.7cm[474] DRIVE goal=(-0.20,4.55) dist=1.13m front=0.51m cells=16 rms=6.7cm[475] DRIVE goal=(-0.20,4.55) dist=1.11m front=0.62m cells=16 rms=6.8cm[476] DRIVE goal=(-0.20,4.55) dist=1.10m front=0.64m cells=16 rms=6.8cm[477] DRIVE goal=(-0.20,4.55) dist=1.08m front=0.77m cells=16 rms=6.8cm[478] DRIVE goal=(-0.20,4.55) dist=1.07m front=0.76m cells=16 rms=6.8cm[479] DRIVE goal=(-0.20,4.55) dist=1.07m front=0.80m cells=17 rms=6.8cm[480] DRIVE goal=(-0.20,4.55) dist=1.04m front=0.70m cells=18 rms=6.8cm[481] DRIVE goal=(-0.20,4.55) dist=1.02m front=0.81m cells=18 rms=6.8cm[482] DRIVE goal=(-0.20,4.55) dist=1.02m front=0.66m cells=18 rms=6.8cm[483] DRIVE goal=(-0.20,4.55) dist=1.01m front=0.64m cells=18 rms=6.8cm[484] DRIVE goal=(-0.20,4.55) dist=1.01m front=0.54m cells=18 rms=6.8cm[485] DRIVE goal=(-0.20,4.55) dist=1.00m front=0.53m cells=18 rms=6.8cm[486] DRIVE goal=(-0.20,4.55) dist=1.00m front=0.51m cells=18 rms=6.9cm[487] DRIVE goal=(-0.20,4.55) dist=1.00m front=0.53m cells=18 rms=6.9cm[488] DRIVE goal=(-0.20,4.55) dist=1.00m front=0.52m cells=18 rms=6.9cm[489] DRIVE goal=(-0.20,4.55) dist=0.99m front=0.52m cells=18 rms=6.9cm[490] DRIVE goal=(-0.20,4.55) dist=1.00m front=0.52m cells=18 rms=6.9cm[491] DRIVE goal=(-0.20,4.55) dist=1.00m front=0.52m cells=18 rms=6.9cm[492] DRIVE goal=(-0.20,4.55) dist=1.00m front=0.52m cells=18 rms=6.9cm[493] DRIVE goal=(-0.20,4.55) dist=1.00m front=0.53m cells=18 rms=6.9cm[494] DRIVE goal=(-0.20,4.55) dist=0.99m front=0.53m cells=18 rms=6.9cm[495] DRIVE goal=(-0.20,4.55) dist=1.00m front=0.54m cells=18 rms=6.9cm[496] DRIVE goal=(-0.20,4.55) dist=1.00m front=0.54m cells=18 rms=6.9cm[497] DRIVE goal=(-0.20,4.55) dist=1.00m front=0.54m cells=18 rms=7.0cm[498] DRIVE goal=(-0.20,4.55) dist=1.00m front=0.54m cells=18 rms=7.0cm[499] DRIVE goal=(-0.20,4.55) dist=1.00m front=0.54m cells=18 rms=7.0cm[500] DRIVE goal=(-0.20,4.55) dist=1.00m front=0.54m cells=18 rms=7.0cm[501] DRIVE goal=(-0.20,4.55) dist=1.00m front=0.54m cells=18 rms=7.0cm[502] DRIVE goal=(-0.20,4.55) dist=0.99m front=0.53m cells=18 rms=7.0cm[503] DRIVE goal=(-0.20,4.55) dist=0.99m front=0.54m cells=18 rms=7.0cm[504] DRIVE goal=(-0.20,4.55) dist=0.99m front=0.53m cells=18 rms=7.0cm[505] DRIVE goal=(-0.20,4.55) dist=1.00m front=0.54m cells=18 rms=7.0cm[506] DRIVE goal=(-0.20,4.55) dist=1.00m front=0.53m cells=18 rms=7.0cm[507] DRIVE goal=(-0.20,4.55) dist=1.00m front=0.52m cells=18 rms=7.0cm[508] DRIVE goal=(-0.20,4.55) dist=1.00m front=0.54m cells=18 rms=7.1cm[509] DRIVE goal=(-0.20,4.55) dist=1.00m front=0.53m cells=18 rms=7.1cm[510] DRIVE goal=(-0.20,4.55) dist=1.00m front=0.54m cells=18 rms=7.1cm[511] DRIVE goal=(-0.20,4.55) dist=1.00m front=0.53m cells=18 rms=7.1cm
+[118.6s] [DRIVE STUCK] Goal distance unchanged for 6.8s
+[DRIVE STUCK] dist_oldest=1.07m, dist_now=1.00m, change=0.08m < margin=0.08m
+[DRIVE STUCK] Front sectors: s55=0.53 s56=0.60 s57=0.70 s58=0.86 s59=1.54 s0=1.60 s1=1.86 s2=2.69 s3=2.71 s4=2.77 s5=2.85 
+[DRIVE STUCK] Marked front sectors [55, 56, 57, 58, 59, 0, 1, 2, 3, 4, 5] as blocked for 30s
+
+[BACKUP CLEAR] Reversing and turning toward clearer side...
+[BACKUP CLEAR] Turning left (L_avg=2.58m R_avg=0.85m)
+
+[123.3s] [GOAL SELECT] robot@(0.33,3.54) | 7 candidates (scanned=220 walls=140 visited=18):
+  #1 ang= -45° d=1.00m pos=(0.21,4.53) score=+25.4 [O=+1.7 U=+20.0 V=-0.0 W=-3.0 R=-8.3 F=+14.7] <-- BEST
+  #2 ang= -39° d=1.00m pos=(0.11,4.51) score=-3.8 [O=+1.9 U=+16.0 V=-0.0 W=-3.0 R=-8.3 F=+14.3 B=-25.0]
+  #3 ang=+125° d=0.50m pos=(0.31,3.04) score=-35.0 [O=+1.6 U=+7.7 V=-3.4 W=-1.0 R=-1.5 F=-15.0 T=-23.5]
+  #4 ang= -27° d=2.00m pos=(-0.51,5.35) score=-53.5 [O=+1.9 U=+32.0 V=-0.0 W=-1.0 R=-0.0 F=+13.0 B=-100.0]
+  #5 ang= -27° d=1.50m pos=(-0.30,4.90) score=-62.9 [O=+2.4 U=+24.0 V=-0.0 W=-0.0 R=-2.8 F=+13.0 B=-100.0]
+  #6 ang= -21° d=2.00m pos=(-0.70,5.25) score=-78.2 [O=+1.9 U=+32.1 V=-0.0 W=-0.0 R=-0.0 F=+12.2 B=-125.0]
+  #7 ang= -21° d=1.50m pos=(-0.44,4.82) score=-88.7 [O=+2.4 U=+24.0 V=-0.0 W=-0.0 R=-2.8 F=+12.2 B=-125.0]
+[123.3s] [GOAL] Selected: (0.21, 4.53) dist=1.00m timeout=35s angle=-45° reason=no goal
+[513] DRIVE goal=(0.21,4.53) dist=1.00m front=0.49m cells=18 rms=7.1cm[514] DRIVE goal=(0.21,4.53) dist=1.00m front=0.49m cells=18 rms=7.1cm[515] DRIVE goal=(0.21,4.53) dist=1.00m front=0.49m cells=18 rms=7.1cm[516] DRIVE goal=(0.21,4.53) dist=1.00m front=0.43m cells=18 rms=7.1cm[517] DRIVE goal=(0.21,4.53) dist=1.00m front=0.45m cells=18 rms=7.0cm[518] DRIVE goal=(0.21,4.53) dist=1.01m front=0.50m cells=18 rms=7.0cm[519] DRIVE goal=(0.21,4.53) dist=1.01m front=0.50m cells=18 rms=7.0cm[520] DRIVE goal=(0.21,4.53) dist=1.01m front=0.49m cells=18 rms=7.0cm[521] DRIVE goal=(0.21,4.53) dist=1.01m front=0.49m cells=18 rms=7.0cm[522] DRIVE goal=(0.21,4.53) dist=1.01m front=0.50m cells=18 rms=7.0cm[523] DRIVE goal=(0.21,4.53) dist=1.01m front=0.51m cells=18 rms=7.0cm[524] DRIVE goal=(0.21,4.53) dist=1.01m front=0.56m cells=18 rms=7.0cm[525] DRIVE goal=(0.21,4.53) dist=1.00m front=0.57m cells=18 rms=7.0cm[526] DRIVE goal=(0.21,4.53) dist=1.01m front=0.66m cells=18 rms=7.0cm[527] DRIVE goal=(0.21,4.53) dist=1.01m front=0.70m cells=18 rms=7.0cm[528] DRIVE goal=(0.21,4.53) dist=1.00m front=0.73m cells=18 rms=7.0cm[529] DRIVE goal=(0.21,4.53) dist=1.00m front=0.75m cells=18 rms=7.0cm[530] DRIVE goal=(0.21,4.53) dist=1.00m front=0.77m cells=18 rms=7.0cm[531] DRIVE goal=(0.21,4.53) dist=1.00m front=0.78m cells=18 rms=7.0cm[532] DRIVE goal=(0.21,4.53) dist=0.99m front=0.73m cells=18 rms=6.9cm[533] DRIVE goal=(0.21,4.53) dist=0.99m front=0.69m cells=18 rms=6.9cm[534] DRIVE goal=(0.21,4.53) dist=0.98m front=0.62m cells=18 rms=6.9cm[535] DRIVE goal=(0.21,4.53) dist=0.98m front=0.60m cells=18 rms=6.9cm[536] DRIVE goal=(0.21,4.53) dist=0.98m front=0.57m cells=18 rms=6.9cm[537] DRIVE goal=(0.21,4.53) dist=0.98m front=0.55m cells=18 rms=6.9cm[538] DRIVE goal=(0.21,4.53) dist=0.98m front=0.56m cells=18 rms=6.9cm[539] DRIVE goal=(0.21,4.53) dist=0.97m front=0.58m cells=18 rms=6.9cm[540] DRIVE goal=(0.21,4.53) dist=0.94m front=0.55m cells=18 rms=6.9cm[541] DRIVE goal=(0.21,4.53) dist=0.93m front=0.53m cells=18 rms=6.9cm[542] DRIVE goal=(0.21,4.53) dist=0.92m front=0.54m cells=18 rms=6.9cm[543] DRIVE goal=(0.21,4.53) dist=0.92m front=0.53m cells=18 rms=6.9cm[544] DRIVE goal=(0.21,4.53) dist=0.91m front=0.49m cells=18 rms=6.9cm[545] DRIVE goal=(0.21,4.53) dist=0.89m front=0.50m cells=18 rms=6.9cm[546] DRIVE goal=(0.21,4.53) dist=0.86m front=0.51m cells=18 rms=6.9cm[547] DRIVE goal=(0.21,4.53) dist=0.87m front=0.52m cells=18 rms=6.9cm[548] DRIVE goal=(0.21,4.53) dist=0.87m front=0.51m cells=18 rms=6.8cm[549] DRIVE goal=(0.21,4.53) dist=0.87m front=0.51m cells=18 rms=6.8cm[550] DRIVE goal=(0.21,4.53) dist=0.87m front=0.51m cells=18 rms=6.8cm[551] DRIVE goal=(0.21,4.53) dist=0.87m front=0.51m cells=18 rms=6.8cm[552] DRIVE goal=(0.21,4.53) dist=0.87m front=0.52m cells=18 rms=6.8cm[553] DRIVE goal=(0.21,4.53) dist=0.87m front=0.51m cells=18 rms=6.8cm[554] DRIVE goal=(0.21,4.53) dist=0.87m front=0.52m cells=18 rms=6.8cm[555] DRIVE goal=(0.21,4.53) dist=0.87m front=0.52m cells=18 rms=6.8cm[556] DRIVE goal=(0.21,4.53) dist=0.87m front=0.51m cells=18 rms=6.8cm[557] DRIVE goal=(0.21,4.53) dist=0.87m front=0.51m cells=18 rms=6.8cm[558] DRIVE goal=(0.21,4.53) dist=0.87m front=0.51m cells=18 rms=6.8cm[559] DRIVE goal=(0.21,4.53) dist=0.87m front=0.51m cells=18 rms=6.8cm[560] DRIVE goal=(0.21,4.53) dist=0.87m front=0.52m cells=18 rms=6.8cm[561] DRIVE goal=(0.21,4.53) dist=0.87m front=0.51m cells=18 rms=6.8cm[562] DRIVE goal=(0.21,4.53) dist=0.88m front=0.52m cells=18 rms=6.8cm[563] DRIVE goal=(0.21,4.53) dist=0.88m front=0.52m cells=18 rms=6.8cm[564] DRIVE goal=(0.21,4.53) dist=0.87m front=0.53m cells=18 rms=6.8cm[565] DRIVE goal=(0.21,4.53) dist=0.87m front=0.52m cells=18 rms=6.7cm[566] DRIVE goal=(0.21,4.53) dist=0.88m front=0.52m cells=18 rms=6.7cm[567] DRIVE goal=(0.21,4.53) dist=0.88m front=0.53m cells=18 rms=6.7cm[568] DRIVE goal=(0.21,4.53) dist=0.88m front=0.51m cells=18 rms=6.7cm[569] DRIVE goal=(0.21,4.53) dist=0.88m front=0.51m cells=18 rms=6.7cm[570] DRIVE goal=(0.21,4.53) dist=0.88m front=0.53m cells=18 rms=6.7cm[571] DRIVE goal=(0.21,4.53) dist=0.88m front=0.52m cells=18 rms=6.7cm[572] DRIVE goal=(0.21,4.53) dist=0.89m front=0.52m cells=18 rms=6.7cm[573] DRIVE goal=(0.21,4.53) dist=0.89m front=0.52m cells=18 rms=6.7cm
+[135.7s] [DRIVE STUCK] Goal distance unchanged for 7.0s
+[DRIVE STUCK] dist_oldest=0.97m, dist_now=0.89m, change=0.08m < margin=0.08m
+[DRIVE STUCK] Front sectors: s55=0.53 s56=0.60 s57=0.72 s58=0.88 s59=1.57 s0=1.81 s1=1.83 s2=2.69 s3=2.73 s4=2.78 s5=2.86 
+[DRIVE STUCK] Marked front sectors [55, 56, 57, 58, 59, 0, 1, 2, 3, 4, 5] as blocked for 30s
+
+[BACKUP CLEAR] Reversing and turning toward clearer side...
+[BACKUP CLEAR] Turning left (L_avg=2.58m R_avg=0.86m)
+
+[140.5s] [GOAL SELECT] robot@(0.32,3.54) | 13 candidates (scanned=224 walls=144 visited=18):
+  #1 ang=-125° d=2.00m pos=(2.31,3.38) score=+32.0 [O=+2.4 U=+32.0 V=-0.0 W=-3.0 R=-0.0 F=-0.0] <-- BEST
+  #2 ang=-119° d=1.50m pos=(1.82,3.58) score=+28.9 [O=+2.5 U=+25.4 V=-0.0 W=-1.0 R=-0.0 F=+1.6]
+  #3 ang=-125° d=1.50m pos=(1.81,3.42) score=+25.9 [O=+2.5 U=+24.0 V=-0.0 W=-1.0 R=-0.0 F=-0.0]
+  #4 ang=-119° d=1.00m pos=(1.32,3.57) score=+20.8 [O=+2.5 U=+17.4 V=-0.0 W=-1.0 R=-0.0 F=+1.6]
+  #5 ang=-125° d=1.00m pos=(1.32,3.46) score=+17.9 [O=+2.5 U=+16.2 V=-0.0 W=-1.0 R=-0.0 F=-0.0]
+  #6 ang=-119° d=0.50m pos=(0.82,3.56) score=-5.2 [O=+2.5 U=+9.9 V=-0.0 W=-1.0 R=-0.0 F=+1.6 T=-18.4]
+  #7 ang=-125° d=0.50m pos=(0.82,3.50) score=-8.0 [O=+2.5 U=+8.8 V=-0.0 W=-1.0 R=-0.0 F=-0.0 T=-18.4]
+  #8 ang=  -3° d=2.00m pos=(-0.61,5.31) score=-102.7 [O=+1.8 U=+32.2 V=-0.0 W=-0.0 R=-0.0 F=+12.7 B=-150.0]
+[140.5s] [GOAL] Selected: (2.31, 3.38) dist=2.00m timeout=50s angle=-125° reason=no goal
+[575] DRIVE goal=(2.31,3.38) dist=2.00m front=0.71m cells=18 rms=6.7cm[576] DRIVE goal=(2.31,3.38) dist=2.00m front=0.68m cells=18 rms=6.7cm[577] DRIVE goal=(2.31,3.38) dist=2.00m front=0.68m cells=18 rms=6.7cm[578] DRIVE goal=(2.31,3.38) dist=2.00m front=0.68m cells=18 rms=6.7cm[579] DRIVE goal=(2.31,3.38) dist=2.00m front=0.69m cells=18 rms=6.7cm[580] DRIVE goal=(2.31,3.38) dist=2.00m front=0.68m cells=18 rms=6.7cm[581] DRIVE goal=(2.31,3.38) dist=2.00m front=0.69m cells=18 rms=6.7cm[582] DRIVE goal=(2.31,3.38) dist=2.00m front=0.68m cells=18 rms=6.7cm[583] DRIVE goal=(2.31,3.38) dist=2.00m front=0.68m cells=18 rms=6.7cm[584] DRIVE goal=(2.31,3.38) dist=2.00m front=0.69m cells=18 rms=6.6cm[585] DRIVE goal=(2.31,3.38) dist=2.00m front=0.67m cells=18 rms=6.6cm[586] DRIVE goal=(2.31,3.38) dist=2.00m front=0.68m cells=18 rms=6.6cm[587] DRIVE goal=(2.31,3.38) dist=2.00m front=0.68m cells=18 rms=6.6cm[588] DRIVE goal=(2.31,3.38) dist=2.00m front=0.69m cells=18 rms=6.6cm[589] DRIVE goal=(2.31,3.38) dist=2.00m front=0.66m cells=18 rms=6.6cm[590] DRIVE goal=(2.31,3.38) dist=2.00m front=0.68m cells=18 rms=6.6cm[591] DRIVE goal=(2.31,3.38) dist=2.00m front=0.67m cells=18 rms=6.6cm[592] DRIVE goal=(2.31,3.38) dist=2.00m front=0.68m cells=18 rms=6.6cm[593] DRIVE goal=(2.31,3.38) dist=2.00m front=0.74m cells=18 rms=6.6cm[594] DRIVE goal=(2.31,3.38) dist=2.00m front=0.74m cells=18 rms=6.6cm[595] DRIVE goal=(2.31,3.38) dist=2.00m front=0.74m cells=18 rms=6.6cm[596] DRIVE goal=(2.31,3.38) dist=1.99m front=0.76m cells=18 rms=6.6cm[597] DRIVE goal=(2.31,3.38) dist=1.99m front=0.77m cells=18 rms=6.6cm[598] DRIVE goal=(2.31,3.38) dist=1.99m front=0.77m cells=18 rms=6.6cm[599] DRIVE goal=(2.31,3.38) dist=1.99m front=0.82m cells=18 rms=6.6cm[600] DRIVE goal=(2.31,3.38) dist=2.00m front=0.74m cells=18 rms=6.6cm[601] DRIVE goal=(2.31,3.38) dist=2.00m front=0.62m cells=18 rms=6.6cm[602] DRIVE goal=(2.31,3.38) dist=1.99m front=0.56m cells=18 rms=6.5cm[603] DRIVE goal=(2.31,3.38) dist=1.99m front=0.52m cells=18 rms=6.5cm[604] DRIVE goal=(2.31,3.38) dist=1.99m front=0.50m cells=18 rms=6.5cm[605] DRIVE goal=(2.31,3.38) dist=1.99m front=0.48m cells=18 rms=6.5cm[606] DRIVE goal=(2.31,3.38) dist=1.99m front=0.48m cells=18 rms=6.5cm[607] DRIVE goal=(2.31,3.38) dist=1.99m front=0.47m cells=18 rms=6.5cm[608] DRIVE goal=(2.31,3.38) dist=1.99m front=0.44m cells=18 rms=6.5cm[609] DRIVE goal=(2.31,3.38) dist=1.99m front=0.44m cells=18 rms=6.5cm[610] DRIVE goal=(2.31,3.38) dist=1.99m front=0.41m cells=18 rms=6.5cm[611] DRIVE goal=(2.31,3.38) dist=1.99m front=0.40m cells=18 rms=6.5cm[612] DRIVE goal=(2.31,3.38) dist=1.99m front=0.38m cells=18 rms=6.5cm[613] DRIVE goal=(2.31,3.38) dist=1.99m front=0.37m cells=18 rms=6.5cm[614] DRIVE goal=(2.31,3.38) dist=1.99m front=0.38m cells=18 rms=6.5cm[615] DRIVE goal=(2.31,3.38) dist=1.99m front=0.38m cells=18 rms=6.5cm[616] DRIVE goal=(2.31,3.38) dist=1.99m front=0.38m cells=18 rms=6.5cm[617] DRIVE goal=(2.31,3.38) dist=1.99m front=0.39m cells=18 rms=6.5cm[618] DRIVE goal=(2.31,3.38) dist=2.00m front=0.39m cells=18 rms=6.5cm[619] DRIVE goal=(2.31,3.38) dist=2.00m front=0.39m cells=18 rms=6.5cm[620] DRIVE goal=(2.31,3.38) dist=2.00m front=0.40m cells=18 rms=6.5cm[621] DRIVE goal=(2.31,3.38) dist=2.01m front=0.41m cells=18 rms=6.5cm[622] DRIVE goal=(2.31,3.38) dist=2.00m front=0.41m cells=18 rms=6.5cm[623] DRIVE goal=(2.31,3.38) dist=2.00m front=0.41m cells=18 rms=6.5cm[624] DRIVE goal=(2.31,3.38) dist=2.00m front=0.41m cells=18 rms=6.5cm[625] DRIVE goal=(2.31,3.38) dist=2.00m front=0.41m cells=18 rms=6.5cm[626] DRIVE goal=(2.31,3.38) dist=2.00m front=0.41m cells=18 rms=6.5cm[627] DRIVE goal=(2.31,3.38) dist=2.01m front=0.41m cells=18 rms=6.5cm[628] DRIVE goal=(2.31,3.38) dist=2.00m front=0.41m cells=18 rms=6.5cm[629] DRIVE goal=(2.31,3.38) dist=2.00m front=0.41m cells=18 rms=6.5cm[630] DRIVE goal=(2.31,3.38) dist=2.00m front=0.41m cells=18 rms=6.5cm[631] DRIVE goal=(2.31,3.38) dist=2.00m front=0.41m cells=18 rms=6.5cm[632] DRIVE goal=(2.31,3.38) dist=2.00m front=0.41m cells=18 rms=6.5cm[633] DRIVE goal=(2.31,3.38) dist=2.00m front=0.41m cells=18 rms=6.5cm[634] DRIVE goal=(2.31,3.38) dist=2.00m front=0.41m cells=18 rms=6.6cm[635] DRIVE goal=(2.31,3.38) dist=2.00m front=0.41m cells=18 rms=6.6cm[636] DRIVE goal=(2.31,3.38) dist=2.00m front=0.41m cells=18 rms=6.6cm[637] DRIVE goal=(2.31,3.38) dist=2.00m front=0.41m cells=18 rms=6.6cm[638] DRIVE goal=(2.31,3.38) dist=2.00m front=0.41m cells=18 rms=6.6cm[639] DRIVE goal=(2.31,3.38) dist=2.00m front=0.42m cells=18 rms=6.6cm[640] DRIVE goal=(2.31,3.38) dist=2.01m front=0.42m cells=18 rms=6.6cm[641] DRIVE goal=(2.31,3.38) dist=2.01m front=0.42m cells=18 rms=6.6cm[642] DRIVE goal=(2.31,3.38) dist=2.01m front=0.42m cells=18 rms=6.6cm[643] DRIVE goal=(2.31,3.38) dist=2.01m front=0.42m cells=18 rms=6.6cm[644] DRIVE goal=(2.31,3.38) dist=2.01m front=0.43m cells=18 rms=6.6cm[645] DRIVE goal=(2.31,3.38) dist=2.01m front=0.43m cells=18 rms=6.6cm
+[154.8s] [TURN ENTER] Entering TURN mode
+
+[BLOCKED DEBUG] Goal angle: -25.7° (sector 55), goal_dist: 2.01m, goal_dir_min: 1.53m, margin: 0.15m
+[BLOCKED DEBUG] Checking 1 sectors (robot angular width at 2.0m = 5.1°): {55: 1.531}
+[BLOCKED DEBUG] Check: 1.53 < 2.01 - 0.15 = 1.86? True
+[BLOCKED DEBUG] (Full front arc for reference: {55: 1.531, 56: 2.503, 57: 3.349, 58: 3.276, 59: 2.122, 0: 2.114, 1: 0.866, 2: 0.558, 3: 0.441, 4: 0.432, 5: 0.426})
+
+[BLOCKED TURN] goal_sector=55, best_sector=55 (dist=1.53m), target_angle=-30.0°, angle_error=-30.0°, v=0.00, w=-0.50
+[646] TURN goal=(2.31,3.38) dist=2.01m front=0.43m cells=18 rms=6.6cm[647] DRIVE goal=(2.31,3.38) dist=2.01m front=0.43m cells=19 rms=6.6cm
+[155.2s] [TURN ENTER] Entering TURN mode
+
+[BLOCKED DEBUG] Goal angle: -19.7° (sector 56), goal_dist: 2.01m, goal_dir_min: 1.53m, margin: 0.15m
+[BLOCKED DEBUG] Checking 1 sectors (robot angular width at 2.0m = 5.1°): {56: 1.526}
+[BLOCKED DEBUG] Check: 1.53 < 2.01 - 0.15 = 1.86? True
+[BLOCKED DEBUG] (Full front arc for reference: {55: 1.356, 56: 1.526, 57: 2.465, 58: 3.362, 59: 3.274, 0: 2.12, 1: 2.114, 2: 2.111, 3: 0.593, 4: 0.452, 5: 0.433})
+
+[BLOCKED TURN] goal_sector=56, best_sector=56 (dist=1.53m), target_angle=-24.0°, angle_error=-24.0°, v=0.00, w=-0.50
+[648] TURN goal=(2.31,3.38) dist=2.01m front=0.43m cells=19 rms=6.6cm[649] DRIVE goal=(2.31,3.38) dist=2.01m front=0.43m cells=19 rms=6.6cm[650] DRIVE goal=(2.31,3.38) dist=2.01m front=0.44m cells=19 rms=6.6cm[651] DRIVE goal=(2.31,3.38) dist=2.00m front=0.44m cells=19 rms=6.6cm[652] DRIVE goal=(2.31,3.38) dist=2.00m front=0.51m cells=19 rms=6.6cm
+[156.2s] [TURN ENTER] Entering TURN mode
+
+[BLOCKED DEBUG] Goal angle: -8.5° (sector 58), goal_dist: 1.99m, goal_dir_min: 1.48m, margin: 0.15m
+[BLOCKED DEBUG] Checking 1 sectors (robot angular width at 2.0m = 5.2°): {58: 1.484}
+[BLOCKED DEBUG] Check: 1.48 < 1.99 - 0.15 = 1.84? True
+[BLOCKED DEBUG] (Full front arc for reference: {55: 1.043, 56: 1.136, 57: 1.286, 58: 1.484, 59: 2.439, 0: 3.319, 1: 3.245, 2: 2.1, 3: 2.09, 4: 0.973, 5: 0.584})
+
+[BLOCKED TURN] goal_sector=58, best_sector=58 (dist=1.48m), target_angle=-12.0°, angle_error=-12.0°, v=0.00, w=-0.31
+[653] TURN goal=(2.31,3.38) dist=1.99m front=0.58m cells=19 rms=6.6cm[654] TURN goal=(2.31,3.38) dist=1.98m front=0.98m cells=19 rms=6.6cm[655] TURN goal=(2.31,3.38) dist=1.97m front=1.03m cells=19 rms=6.6cm[656] TURN goal=(2.31,3.38) dist=1.97m front=1.03m cells=19 rms=6.6cm[657] DRIVE goal=(2.31,3.38) dist=1.97m front=1.02m cells=19 rms=6.6cm
+[157.2s] [TURN ENTER] Entering TURN mode
+
+[BLOCKED DEBUG] Goal angle: 5.4° (sector 0), goal_dist: 1.95m, goal_dir_min: 1.43m, margin: 0.15m
+[BLOCKED DEBUG] Checking 1 sectors (robot angular width at 2.0m = 5.3°): {0: 1.427}
+[BLOCKED DEBUG] Check: 1.43 < 1.95 - 0.15 = 1.80? True
+[BLOCKED DEBUG] (Full front arc for reference: {55: 1.172, 56: 1.015, 57: 1.015, 58: 1.102, 59: 1.243, 0: 1.427, 1: 2.367, 2: 3.327, 3: 3.25, 4: 3.184, 5: 2.064})
+
+[BLOCKED TURN] goal_sector=0, best_sector=0 (dist=1.43m), target_angle=0.0°, angle_error=0.0°, v=0.05, w=0.00
+[658] TURN goal=(2.31,3.38) dist=1.95m front=1.01m cells=19 rms=6.7cm[659] DRIVE goal=(2.31,3.38) dist=1.94m front=1.00m cells=19 rms=6.7cm
+[157.6s] [TURN ENTER] Entering TURN mode
+
+[BLOCKED DEBUG] Goal angle: 4.2° (sector 0), goal_dist: 1.93m, goal_dir_min: 1.44m, margin: 0.15m
+[BLOCKED DEBUG] Checking 1 sectors (robot angular width at 1.9m = 5.3°): {0: 1.435}
+[BLOCKED DEBUG] Check: 1.44 < 1.93 - 0.15 = 1.78? True
+[BLOCKED DEBUG] (Full front arc for reference: {55: 1.098, 56: 0.988, 57: 1.004, 58: 1.112, 59: 1.257, 0: 1.435, 1: 2.41, 2: 3.269, 3: 3.19, 4: 2.064, 5: 2.035})
+
+[BLOCKED TURN] goal_sector=0, best_sector=0 (dist=1.44m), target_angle=0.0°, angle_error=0.0°, v=0.05, w=0.00
+[660] TURN goal=(2.31,3.38) dist=1.93m front=0.99m cells=19 rms=6.7cm[661] TURN goal=(2.31,3.38) dist=1.91m front=0.98m cells=19 rms=6.7cm[662] DRIVE goal=(2.31,3.38) dist=1.89m front=0.96m cells=19 rms=6.7cm[663] DRIVE goal=(2.31,3.38) dist=1.89m front=0.95m cells=19 rms=6.7cm
+[158.4s] [TURN ENTER] Entering TURN mode
+
+[BLOCKED DEBUG] Goal angle: 4.4° (sector 0), goal_dist: 1.87m, goal_dir_min: 1.39m, margin: 0.15m
+[BLOCKED DEBUG] Checking 1 sectors (robot angular width at 1.9m = 5.5°): {0: 1.387}
+[BLOCKED DEBUG] Check: 1.39 < 1.87 - 0.15 = 1.72? True
+[BLOCKED DEBUG] (Full front arc for reference: {55: 0.974, 56: 0.935, 57: 0.98, 58: 1.07, 59: 1.207, 0: 1.387, 1: 2.317, 2: 3.199, 3: 3.134, 4: 1.989, 5: 1.981})
+
+[BLOCKED TURN] goal_sector=0, best_sector=0 (dist=1.39m), target_angle=0.0°, angle_error=0.0°, v=0.05, w=0.00
+[664] TURN goal=(2.31,3.38) dist=1.87m front=0.94m cells=19 rms=6.7cm[665] DRIVE goal=(2.31,3.38) dist=1.84m front=0.91m cells=19 rms=6.7cm[666] DRIVE goal=(2.31,3.38) dist=1.83m front=0.89m cells=19 rms=6.7cm[667] DRIVE goal=(2.31,3.38) dist=1.80m front=0.87m cells=19 rms=6.7cm[668] DRIVE goal=(2.31,3.38) dist=1.79m front=0.86m cells=19 rms=6.7cm[669] DRIVE goal=(2.31,3.38) dist=1.78m front=0.84m cells=19 rms=6.7cm[670] DRIVE goal=(2.31,3.38) dist=1.77m front=0.84m cells=19 rms=6.7cm[671] DRIVE goal=(2.31,3.38) dist=1.76m front=0.83m cells=19 rms=6.7cm
+[160.0s] [TURN ENTER] Entering TURN mode
+
+[BLOCKED DEBUG] Goal angle: 11.9° (sector 1), goal_dist: 1.76m, goal_dir_min: 1.23m, margin: 0.15m
+[BLOCKED DEBUG] Checking 1 sectors (robot angular width at 1.8m = 5.9°): {1: 1.229}
+[BLOCKED DEBUG] Check: 1.23 < 1.76 - 0.15 = 1.61? True
+[BLOCKED DEBUG] (Full front arc for reference: {55: 0.999, 56: 0.828, 57: 0.822, 58: 0.87, 59: 0.958, 0: 1.074, 1: 1.229, 2: 2.156, 3: 2.541, 4: 3.06, 5: 3.005})
+
+[BLOCKED TURN] goal_sector=1, best_sector=1 (dist=1.23m), target_angle=6.0°, angle_error=6.0°, v=0.05, w=0.16
+[672] TURN goal=(2.31,3.38) dist=1.76m front=0.82m cells=19 rms=6.7cm[673] DRIVE goal=(2.31,3.38) dist=1.75m front=0.81m cells=19 rms=6.7cm[674] DRIVE goal=(2.31,3.38) dist=1.74m front=0.80m cells=19 rms=6.7cm[675] DRIVE goal=(2.31,3.38) dist=1.73m front=0.80m cells=19 rms=6.8cm[676] DRIVE goal=(2.31,3.38) dist=1.72m front=0.79m cells=19 rms=6.8cm[677] DRIVE goal=(2.31,3.38) dist=1.70m front=0.78m cells=20 rms=6.8cm[678] DRIVE goal=(2.31,3.38) dist=1.69m front=0.79m cells=20 rms=6.8cm[679] DRIVE goal=(2.31,3.38) dist=1.69m front=0.78m cells=20 rms=6.8cm[680] DRIVE goal=(2.31,3.38) dist=1.67m front=0.75m cells=20 rms=6.8cm[681] DRIVE goal=(2.31,3.38) dist=1.65m front=0.73m cells=20 rms=6.8cm[682] DRIVE goal=(2.31,3.38) dist=1.64m front=0.72m cells=20 rms=6.8cm[683] DRIVE goal=(2.31,3.38) dist=1.61m front=0.70m cells=20 rms=6.8cm[684] DRIVE goal=(2.31,3.38) dist=1.58m front=0.69m cells=20 rms=6.8cm[685] DRIVE goal=(2.31,3.38) dist=1.57m front=0.69m cells=20 rms=6.9cm[686] DRIVE goal=(2.31,3.38) dist=1.56m front=0.68m cells=20 rms=6.9cm[687] DRIVE goal=(2.31,3.38) dist=1.54m front=0.68m cells=20 rms=6.9cm[688] DRIVE goal=(2.31,3.38) dist=1.53m front=0.71m cells=20 rms=6.9cm[689] DRIVE goal=(2.31,3.38) dist=1.50m front=0.72m cells=20 rms=6.9cm[690] DRIVE goal=(2.31,3.38) dist=1.50m front=0.73m cells=20 rms=6.9cm[691] DRIVE goal=(2.31,3.38) dist=1.47m front=0.66m cells=20 rms=6.9cm[692] DRIVE goal=(2.31,3.38) dist=1.46m front=0.66m cells=20 rms=6.9cm[693] DRIVE goal=(2.31,3.38) dist=1.45m front=0.68m cells=20 rms=6.9cm[694] DRIVE goal=(2.31,3.38) dist=1.43m front=0.68m cells=20 rms=7.0cm[695] DRIVE goal=(2.31,3.38) dist=1.41m front=0.71m cells=20 rms=7.0cm[696] DRIVE goal=(2.31,3.38) dist=1.40m front=0.70m cells=21 rms=7.0cm[697] DRIVE goal=(2.31,3.38) dist=1.37m front=0.66m cells=21 rms=7.0cm[698] DRIVE goal=(2.31,3.38) dist=1.35m front=0.63m cells=21 rms=7.0cm[699] DRIVE goal=(2.31,3.38) dist=1.34m front=0.65m cells=21 rms=7.0cm[700] DRIVE goal=(2.31,3.38) dist=1.31m front=0.67m cells=21 rms=7.0cm[701] DRIVE goal=(2.31,3.38) dist=1.30m front=0.67m cells=21 rms=7.0cm[702] DRIVE goal=(2.31,3.38) dist=1.27m front=0.64m cells=21 rms=7.0cm[703] DRIVE goal=(2.31,3.38) dist=1.25m front=0.61m cells=21 rms=7.0cm[704] DRIVE goal=(2.31,3.38) dist=1.23m front=0.56m cells=21 rms=7.1cm[705] DRIVE goal=(2.31,3.38) dist=1.21m front=0.57m cells=21 rms=7.1cm[706] DRIVE goal=(2.31,3.38) dist=1.18m front=0.58m cells=21 rms=7.1cm[707] DRIVE goal=(2.31,3.38) dist=1.16m front=0.60m cells=21 rms=7.1cm[708] DRIVE goal=(2.31,3.38) dist=1.16m front=0.60m cells=21 rms=7.1cm[709] DRIVE goal=(2.31,3.38) dist=1.14m front=0.60m cells=21 rms=7.1cm[710] DRIVE goal=(2.31,3.38) dist=1.13m front=0.60m cells=21 rms=7.1cm[711] DRIVE goal=(2.31,3.38) dist=1.10m front=0.60m cells=22 rms=7.1cm[712] DRIVE goal=(2.31,3.38) dist=1.09m front=0.59m cells=22 rms=7.1cm[713] DRIVE goal=(2.31,3.38) dist=1.07m front=0.59m cells=22 rms=7.1cm[714] DRIVE goal=(2.31,3.38) dist=1.05m front=0.59m cells=22 rms=7.2cm[715] DRIVE goal=(2.31,3.38) dist=1.03m front=0.57m cells=22 rms=7.2cm[716] DRIVE goal=(2.31,3.38) dist=1.01m front=0.57m cells=22 rms=7.2cm[717] DRIVE goal=(2.31,3.38) dist=0.99m front=0.83m cells=22 rms=7.2cm[718] DRIVE goal=(2.31,3.38) dist=0.96m front=0.81m cells=22 rms=7.2cm[719] DRIVE goal=(2.31,3.38) dist=0.95m front=0.81m cells=22 rms=7.2cm[720] DRIVE goal=(2.31,3.38) dist=0.93m front=0.79m cells=22 rms=7.2cm[721] DRIVE goal=(2.31,3.38) dist=0.93m front=0.78m cells=22 rms=7.2cm[722] DRIVE goal=(2.31,3.38) dist=0.91m front=0.77m cells=22 rms=7.2cm[723] DRIVE goal=(2.31,3.38) dist=0.89m front=0.75m cells=22 rms=7.2cm[724] DRIVE goal=(2.31,3.38) dist=0.87m front=0.74m cells=22 rms=7.2cm[725] DRIVE goal=(2.31,3.38) dist=0.84m front=1.26m cells=22 rms=7.2cm[726] DRIVE goal=(2.31,3.38) dist=0.83m front=1.01m cells=22 rms=7.2cm[727] DRIVE goal=(2.31,3.38) dist=0.81m front=0.99m cells=23 rms=7.2cm[728] DRIVE goal=(2.31,3.38) dist=0.78m front=0.97m cells=23 rms=7.2cm[729] DRIVE goal=(2.31,3.38) dist=0.78m front=0.96m cells=23 rms=7.2cm[730] DRIVE goal=(2.31,3.38) dist=0.76m front=0.93m cells=23 rms=7.2cm[731] DRIVE goal=(2.31,3.38) dist=0.72m front=0.90m cells=23 rms=7.2cm[732] DRIVE goal=(2.31,3.38) dist=0.70m front=0.91m cells=23 rms=7.2cm[733] DRIVE goal=(2.31,3.38) dist=0.69m front=0.89m cells=23 rms=7.2cm[734] DRIVE goal=(2.31,3.38) dist=0.67m front=1.10m cells=23 rms=7.2cm[735] DRIVE goal=(2.31,3.38) dist=0.65m front=1.08m cells=23 rms=7.2cm[736] DRIVE goal=(2.31,3.38) dist=0.63m front=1.07m cells=23 rms=7.2cm[737] DRIVE goal=(2.31,3.38) dist=0.61m front=1.05m cells=23 rms=7.2cm[738] DRIVE goal=(2.31,3.38) dist=0.60m front=1.03m cells=23 rms=7.2cm[739] DRIVE goal=(2.31,3.38) dist=0.58m front=1.02m cells=23 rms=7.2cm[740] DRIVE goal=(2.31,3.38) dist=0.57m front=1.01m cells=23 rms=7.2cm[741] DRIVE goal=(2.31,3.38) dist=0.55m front=0.98m cells=23 rms=7.2cm[742] DRIVE goal=(2.31,3.38) dist=0.51m front=0.97m cells=23 rms=7.2cm[743] DRIVE goal=(2.31,3.38) dist=0.50m front=0.94m cells=24 rms=7.2cm[744] DRIVE goal=(2.31,3.38) dist=0.48m front=0.93m cells=24 rms=7.2cm[745] DRIVE goal=(2.31,3.38) dist=0.46m front=0.92m cells=24 rms=7.2cm[746] DRIVE goal=(2.31,3.38) dist=0.45m front=0.90m cells=24 rms=7.2cm[747] DRIVE goal=(2.31,3.38) dist=0.44m front=0.89m cells=24 rms=7.2cm[748] DRIVE goal=(2.31,3.38) dist=0.42m front=0.88m cells=24 rms=7.2cm[749] DRIVE goal=(2.31,3.38) dist=0.41m front=0.87m cells=24 rms=7.2cm
+[175.6s] [GOAL SELECT] robot@(1.92,3.39) | 8 candidates (scanned=309 walls=190 visited=24):
+  #1 ang=  -3° d=1.00m pos=(2.92,3.39) score=+44.4 [O=+1.8 U=+40.0 V=-0.0 W=-3.0 R=-2.1 F=+7.4] <-- BEST
+  #2 ang=  +3° d=1.00m pos=(2.91,3.50) score=+43.7 [O=+1.8 U=+38.0 V=-0.0 W=-3.0 R=-2.1 F=+8.7]
+  #3 ang= +94° d=1.00m pos=(1.78,4.38) score=+31.2 [O=+2.0 U=+18.0 V=-0.0 W=-1.0 R=-0.0 F=+11.9]
+  #4 ang=+101° d=1.00m pos=(1.67,4.36) score=+30.2 [O=+2.0 U=+18.0 V=-0.0 W=-1.0 R=-0.0 F=+10.9]
+  #5 ang= +21° d=0.50m pos=(2.37,3.60) score=+23.2 [O=+2.2 U=+28.0 V=-0.0 W=-3.0 R=-6.2 F=+12.1 T=-10.0]
+  #6 ang= +15° d=0.50m pos=(2.39,3.55) score=+20.2 [O=+2.2 U=+26.0 V=-0.0 W=-3.0 R=-6.2 F=+11.1 T=-10.0]
+  #7 ang= -52° d=0.50m pos=(2.25,3.01) score=+10.6 [O=+2.5 U=+20.1 V=-0.0 W=-3.0 R=-4.2 F=-5.0]
+  #8 ang= -45° d=0.50m pos=(2.29,3.05) score=+10.1 [O=+2.5 U=+18.1 V=-0.0 W=-3.0 R=-4.2 F=-3.5]
+[175.6s] [GOAL] Selected: (2.92, 3.39) dist=1.00m timeout=35s angle=-3° reason=reached
+[750] DRIVE goal=(2.92,3.39) dist=1.00m front=0.85m cells=24 rms=7.2cm[751] DRIVE goal=(2.92,3.39) dist=0.98m front=0.84m cells=24 rms=7.2cm[752] DRIVE goal=(2.92,3.39) dist=0.95m front=0.83m cells=24 rms=7.2cm[753] DRIVE goal=(2.92,3.39) dist=0.92m front=0.79m cells=24 rms=7.2cm[754] DRIVE goal=(2.92,3.39) dist=0.90m front=0.78m cells=24 rms=7.1cm[755] DRIVE goal=(2.92,3.39) dist=0.88m front=0.77m cells=24 rms=7.1cm[756] DRIVE goal=(2.92,3.39) dist=0.85m front=0.79m cells=24 rms=7.1cm[757] DRIVE goal=(2.92,3.39) dist=0.83m front=0.79m cells=24 rms=7.1cm[758] DRIVE goal=(2.92,3.39) dist=0.81m front=0.78m cells=25 rms=7.1cm[759] DRIVE goal=(2.92,3.39) dist=0.79m front=0.77m cells=25 rms=7.1cm[760] DRIVE goal=(2.92,3.39) dist=0.77m front=0.76m cells=25 rms=7.1cm[761] DRIVE goal=(2.92,3.39) dist=0.75m front=0.75m cells=25 rms=7.1cm[762] DRIVE goal=(2.92,3.39) dist=0.73m front=0.73m cells=25 rms=7.1cm[763] DRIVE goal=(2.92,3.39) dist=0.72m front=0.65m cells=25 rms=7.1cm[764] DRIVE goal=(2.92,3.39) dist=0.70m front=0.66m cells=25 rms=7.1cm[765] DRIVE goal=(2.92,3.39) dist=0.69m front=0.69m cells=25 rms=7.1cm[766] DRIVE goal=(2.92,3.39) dist=0.67m front=0.69m cells=25 rms=7.1cm[767] DRIVE goal=(2.92,3.39) dist=0.65m front=0.69m cells=25 rms=7.1cm[768] DRIVE goal=(2.92,3.39) dist=0.62m front=0.68m cells=25 rms=7.1cm[769] DRIVE goal=(2.92,3.39) dist=0.60m front=0.68m cells=25 rms=7.1cm[770] DRIVE goal=(2.92,3.39) dist=0.57m front=0.68m cells=25 rms=7.1cm[771] DRIVE goal=(2.92,3.39) dist=0.55m front=0.66m cells=25 rms=7.1cm[772] DRIVE goal=(2.92,3.39) dist=0.54m front=0.60m cells=25 rms=7.1cm[773] DRIVE goal=(2.92,3.39) dist=0.51m front=0.56m cells=26 rms=7.1cm[774] DRIVE goal=(2.92,3.39) dist=0.49m front=0.54m cells=26 rms=7.1cm[775] DRIVE goal=(2.92,3.39) dist=0.48m front=0.51m cells=26 rms=7.1cm[776] DRIVE goal=(2.92,3.39) dist=0.47m front=0.51m cells=26 rms=7.1cm[777] DRIVE goal=(2.92,3.39) dist=0.45m front=0.49m cells=26 rms=7.0cm[778] DRIVE goal=(2.92,3.39) dist=0.45m front=0.49m cells=26 rms=7.0cm[779] DRIVE goal=(2.92,3.39) dist=0.43m front=0.49m cells=26 rms=7.0cm[780] DRIVE goal=(2.92,3.39) dist=0.42m front=0.49m cells=26 rms=7.0cm[781] DRIVE goal=(2.92,3.39) dist=0.42m front=0.50m cells=26 rms=7.0cm[782] DRIVE goal=(2.92,3.39) dist=0.40m front=0.51m cells=26 rms=7.0cm
+[182.3s] [REFINE] only 2 candidates, resampling with 150 angles (level 1)
+
+[182.3s] [GOAL SELECT] robot@(2.52,3.39) | 5 candidates (refined 1x) (scanned=333 walls=207 visited=26):
+  #1 ang= +25° d=0.50m pos=(2.99,3.57) score=+20.9 [O=+1.6 U=+34.2 V=-0.0 W=-3.0 R=-14.8 F=+12.7 T=-10.0] <-- BEST
+  #2 ang= +23° d=0.50m pos=(3.00,3.55) score=+20.6 [O=+1.6 U=+34.2 V=-0.0 W=-3.0 R=-14.8 F=+12.5 T=-10.0]
+  #3 ang= -93° d=1.00m pos=(2.40,2.39) score=+19.2 [O=+1.7 U=+33.3 V=-0.0 W=-3.0 R=-0.0 F=-13.1]
+  #4 ang= -95° d=1.00m pos=(2.36,2.40) score=+18.2 [O=+1.7 U=+32.6 V=-0.0 W=-3.0 R=-0.0 F=-13.3]
+  #5 ang= +27° d=0.50m pos=(2.98,3.59) score=+17.3 [O=+1.6 U=+30.4 V=-0.0 W=-3.0 R=-14.8 F=+13.0 T=-10.0]
+[182.3s] [GOAL] Selected: (2.99, 3.57) dist=0.50m timeout=28s angle=25° reason=reached
+[783] DRIVE goal=(2.99,3.57) dist=0.50m front=0.52m cells=26 rms=7.0cm[784] DRIVE goal=(2.99,3.57) dist=0.48m front=0.60m cells=26 rms=7.0cm[785] DRIVE goal=(2.99,3.57) dist=0.47m front=0.63m cells=26 rms=7.0cm[786] DRIVE goal=(2.99,3.57) dist=0.46m front=0.62m cells=26 rms=7.0cm[787] DRIVE goal=(2.99,3.57) dist=0.46m front=1.02m cells=26 rms=7.0cm[788] DRIVE goal=(2.99,3.57) dist=0.45m front=1.01m cells=26 rms=7.0cm[789] DRIVE goal=(2.99,3.57) dist=0.43m front=0.99m cells=26 rms=7.0cm[790] DRIVE goal=(2.99,3.57) dist=0.43m front=0.98m cells=26 rms=7.0cm[791] DRIVE goal=(2.99,3.57) dist=0.42m front=0.97m cells=26 rms=7.0cm
+[184.2s] [GOAL SELECT] robot@(2.63,3.40) | 6 candidates (scanned=338 walls=211 visited=26):
+  #1 ang=+119° d=2.00m pos=(1.28,4.88) score=+23.7 [O=+1.9 U=+21.6 V=-0.0 W=-3.0 R=-0.0 F=+2.6] <-- BEST
+  #2 ang=+119° d=1.50m pos=(1.62,4.51) score=+19.5 [O=+2.4 U=+14.0 V=-0.0 W=-0.0 R=-0.0 F=+2.6]
+  #3 ang=+125° d=1.50m pos=(1.51,4.40) score=+12.8 [O=+1.9 U=+10.4 V=-0.0 W=-1.0 R=-0.0 F=+1.0]
+  #4 ang=-119° d=1.00m pos=(2.35,2.44) score=+11.5 [O=+1.6 U=+26.6 V=-0.0 W=-3.0 R=-0.0 F=-14.0]
+  #5 ang=+119° d=1.00m pos=(1.96,4.14) score=+9.6 [O=+2.5 U=+7.2 V=-0.0 W=-3.0 R=-0.0 F=+2.6]
+  #6 ang=+125° d=1.00m pos=(1.88,4.06) score=+9.0 [O=+2.4 U=+8.3 V=-0.0 W=-3.0 R=-0.0 F=+1.0]
+[184.2s] [GOAL] Selected: (1.28, 4.88) dist=2.00m timeout=50s angle=119° reason=reached
+[792] DRIVE goal=(1.28,4.88) dist=2.00m front=0.94m cells=26 rms=7.0cm[793] DRIVE goal=(1.28,4.88) dist=2.02m front=0.91m cells=26 rms=7.0cm[794] DRIVE goal=(1.28,4.88) dist=2.03m front=0.90m cells=26 rms=7.0cm[795] DRIVE goal=(1.28,4.88) dist=2.03m front=0.90m cells=26 rms=7.0cm[796] DRIVE goal=(1.28,4.88) dist=2.03m front=0.90m cells=26 rms=7.0cm[797] DRIVE goal=(1.28,4.88) dist=2.03m front=0.90m cells=26 rms=7.0cm[798] DRIVE goal=(1.28,4.88) dist=2.03m front=0.90m cells=26 rms=7.0cm[799] DRIVE goal=(1.28,4.88) dist=2.04m front=0.89m cells=26 rms=7.0cm[800] DRIVE goal=(1.28,4.88) dist=2.04m front=0.89m cells=26 rms=7.0cm[801] DRIVE goal=(1.28,4.88) dist=2.04m front=0.89m cells=26 rms=7.0cm[802] DRIVE goal=(1.28,4.88) dist=2.03m front=0.89m cells=26 rms=7.0cm[803] DRIVE goal=(1.28,4.88) dist=2.03m front=0.89m cells=26 rms=7.0cm[804] DRIVE goal=(1.28,4.88) dist=2.04m front=0.89m cells=26 rms=7.0cm[805] DRIVE goal=(1.28,4.88) dist=2.04m front=0.89m cells=26 rms=7.0cm[806] DRIVE goal=(1.28,4.88) dist=2.04m front=0.89m cells=26 rms=7.0cm[807] DRIVE goal=(1.28,4.88) dist=2.04m front=0.90m cells=26 rms=7.0cm[808] DRIVE goal=(1.28,4.88) dist=2.04m front=0.90m cells=26 rms=6.9cm[809] DRIVE goal=(1.28,4.88) dist=2.04m front=0.66m cells=26 rms=6.9cm[810] DRIVE goal=(1.28,4.88) dist=2.04m front=0.66m cells=26 rms=6.9cm[811] DRIVE goal=(1.28,4.88) dist=2.04m front=0.66m cells=26 rms=6.9cm[812] DRIVE goal=(1.28,4.88) dist=2.04m front=0.66m cells=26 rms=6.9cm[813] DRIVE goal=(1.28,4.88) dist=2.04m front=0.66m cells=26 rms=6.9cm[814] DRIVE goal=(1.28,4.88) dist=2.04m front=0.66m cells=26 rms=6.9cm[815] DRIVE goal=(1.28,4.88) dist=2.04m front=0.67m cells=26 rms=6.9cm[816] DRIVE goal=(1.28,4.88) dist=2.04m front=0.66m cells=26 rms=6.9cm[817] DRIVE goal=(1.28,4.88) dist=2.04m front=0.66m cells=26 rms=6.9cm[818] DRIVE goal=(1.28,4.88) dist=2.04m front=0.66m cells=26 rms=6.9cm[819] DRIVE goal=(1.28,4.88) dist=2.04m front=0.67m cells=26 rms=6.9cm[820] DRIVE goal=(1.28,4.88) dist=2.04m front=0.67m cells=26 rms=6.9cm[821] DRIVE goal=(1.28,4.88) dist=2.04m front=0.66m cells=26 rms=6.9cm[822] DRIVE goal=(1.28,4.88) dist=2.04m front=0.66m cells=26 rms=6.9cm[823] DRIVE goal=(1.28,4.88) dist=2.04m front=0.66m cells=27 rms=6.9cm[824] DRIVE goal=(1.28,4.88) dist=2.04m front=0.66m cells=27 rms=6.9cm[825] DRIVE goal=(1.28,4.88) dist=2.04m front=0.66m cells=27 rms=6.9cm[826] DRIVE goal=(1.28,4.88) dist=2.04m front=0.66m cells=27 rms=6.9cm
+[191.4s] [TURN ENTER] Entering TURN mode
+
+[BLOCKED DEBUG] Goal angle: 45.3° (sector 7), goal_dist: 2.05m, goal_dir_min: 0.52m, margin: 0.15m
+[BLOCKED DEBUG] Checking 1 sectors (robot angular width at 2.1m = 5.0°): {7: 0.517}
+[BLOCKED DEBUG] Check: 0.52 < 2.05 - 0.15 = 1.90? True
+[BLOCKED DEBUG] (Full front arc for reference: {55: 1.374, 56: 2.704, 57: 0.664, 58: 0.661, 59: 0.753, 0: 0.862, 1: 0.959, 2: 0.934, 3: 0.921, 4: 0.917, 5: 0.918})
+
+[BLOCKED TURN] goal_sector=7, best_sector=7 (dist=0.52m), target_angle=42.0°, angle_error=42.0°, v=0.00, w=0.50
+[827] TURN goal=(1.28,4.88) dist=2.05m front=0.66m cells=27 rms=6.9cm[828] TURN goal=(1.28,4.88) dist=2.05m front=0.67m cells=27 rms=6.9cm[829] TURN goal=(1.28,4.88) dist=2.05m front=0.67m cells=27 rms=6.9cm[830] TURN goal=(1.28,4.88) dist=2.05m front=0.67m cells=27 rms=6.9cm[831] TURN goal=(1.28,4.88) dist=2.06m front=0.52m cells=27 rms=6.9cm[832] TURN goal=(1.28,4.88) dist=2.06m front=0.52m cells=27 rms=6.9cm[833] TURN goal=(1.28,4.88) dist=2.06m front=0.52m cells=27 rms=6.9cm[834] TURN goal=(1.28,4.88) dist=2.06m front=0.52m cells=27 rms=6.9cm[835] TURN goal=(1.28,4.88) dist=2.06m front=0.52m cells=27 rms=6.9cm[836] TURN goal=(1.28,4.88) dist=2.05m front=0.52m cells=27 rms=6.9cm[837] TURN goal=(1.28,4.88) dist=2.05m front=0.51m cells=27 rms=6.9cm[838] TURN goal=(1.28,4.88) dist=2.05m front=0.50m cells=27 rms=6.9cm[839] TURN goal=(1.28,4.88) dist=2.05m front=0.51m cells=27 rms=6.9cm[840] TURN goal=(1.28,4.88) dist=2.05m front=0.51m cells=27 rms=6.9cm[841] TURN goal=(1.28,4.88) dist=2.05m front=0.51m cells=27 rms=6.9cm[842] TURN goal=(1.28,4.88) dist=2.05m front=0.51m cells=27 rms=6.9cm[843] TURN goal=(1.28,4.88) dist=2.05m front=0.51m cells=27 rms=6.9cm[844] TURN goal=(1.28,4.88) dist=2.05m front=0.50m cells=27 rms=6.9cm[845] TURN goal=(1.28,4.88) dist=2.05m front=0.50m cells=27 rms=6.9cm[846] TURN goal=(1.28,4.88) dist=2.05m front=0.51m cells=27 rms=6.9cm[847] DRIVE goal=(1.28,4.88) dist=2.05m front=0.51m cells=27 rms=6.9cm
+[195.6s] [TURN ENTER] Entering TURN mode
+
+[BLOCKED DEBUG] Goal angle: 3.9° (sector 0), goal_dist: 2.05m, goal_dir_min: 0.51m, margin: 0.15m
+[BLOCKED DEBUG] Checking 1 sectors (robot angular width at 2.1m = 5.0°): {0: 0.507}
+[BLOCKED DEBUG] Check: 0.51 < 2.05 - 0.15 = 1.90? True
+[BLOCKED DEBUG] (Full front arc for reference: {55: 0.92, 56: 0.905, 57: 0.904, 58: 0.904, 59: 0.518, 0: 0.507, 1: 2.989, 2: 2.518, 3: 2.189, 4: 1.939, 5: 1.267})
+
+[BLOCKED TURN] goal_sector=0, best_sector=0 (dist=0.51m), target_angle=0.0°, angle_error=0.0°, v=0.05, w=0.00
+[848] TURN goal=(1.28,4.88) dist=2.05m front=0.51m cells=27 rms=6.9cm[849] TURN goal=(1.28,4.88) dist=2.04m front=0.50m cells=27 rms=6.9cm[850] TURN goal=(1.28,4.88) dist=2.00m front=0.46m cells=27 rms=6.9cm[851] TURN goal=(1.28,4.88) dist=2.00m front=0.46m cells=27 rms=6.9cm[852] TURN goal=(1.28,4.88) dist=1.99m front=0.44m cells=27 rms=6.9cm[853] DRIVE goal=(1.28,4.88) dist=1.98m front=0.43m cells=27 rms=6.9cm
+[196.8s] [TURN ENTER] Entering TURN mode
+
+[BLOCKED DEBUG] Goal angle: 4.2° (sector 0), goal_dist: 1.97m, goal_dir_min: 0.43m, margin: 0.15m
+[BLOCKED DEBUG] Checking 1 sectors (robot angular width at 2.0m = 5.2°): {0: 0.429}
+[BLOCKED DEBUG] Check: 0.43 < 1.97 - 0.15 = 1.82? True
+[BLOCKED DEBUG] (Full front arc for reference: {55: 0.845, 56: 0.833, 57: 2.099, 58: 1.002, 59: 0.418, 0: 0.429, 1: 2.803, 2: 2.37, 3: 2.066, 4: 1.839, 5: 1.189})
+
+[BLOCKED TURN] goal_sector=0, best_sector=1 (dist=2.80m), target_angle=6.0°, angle_error=6.0°, v=0.05, w=0.16
+[854] TURN goal=(1.28,4.88) dist=1.97m front=0.42m cells=27 rms=6.9cm[855] DRIVE goal=(1.28,4.88) dist=1.95m front=0.40m cells=27 rms=6.9cm[856] DRIVE goal=(1.28,4.88) dist=1.93m front=0.37m cells=27 rms=6.9cm
+[197.4s] [TURN ENTER] Entering TURN mode
+
+[BLOCKED DEBUG] Goal angle: 10.3° (sector 1), goal_dist: 1.92m, goal_dir_min: 0.37m, margin: 0.15m
+[BLOCKED DEBUG] Checking 1 sectors (robot angular width at 1.9m = 5.4°): {1: 0.37}
+[BLOCKED DEBUG] Check: 0.37 < 1.92 - 0.15 = 1.77? True
+[BLOCKED DEBUG] (Full front arc for reference: {55: 0.804, 56: 0.781, 57: 0.768, 58: 0.764, 59: 0.392, 0: 0.359, 1: 0.37, 2: 2.942, 3: 2.452, 4: 2.157, 5: 1.905})
+
+[BLOCKED TURN] goal_sector=1, best_sector=2 (dist=2.94m), target_angle=12.0°, angle_error=12.0°, v=0.00, w=0.31
+[857] TURN goal=(1.28,4.88) dist=1.92m front=0.36m cells=27 rms=6.9cm[858] TURN goal=(1.28,4.88) dist=1.90m front=0.33m cells=27 rms=6.9cm[859] TURN goal=(1.28,4.88) dist=1.89m front=0.31m cells=27 rms=6.9cm[860] TURN goal=(1.28,4.88) dist=1.88m front=0.30m cells=27 rms=6.9cm[861] TURN goal=(1.28,4.88) dist=1.87m front=0.29m cells=27 rms=6.9cm[862] DRIVE goal=(1.28,4.88) dist=1.87m front=0.29m cells=27 rms=6.9cm
+[198.6s] [TURN ENTER] Entering TURN mode
+
+[BLOCKED DEBUG] Goal angle: 11.4° (sector 1), goal_dist: 1.87m, goal_dir_min: 0.30m, margin: 0.15m
+[BLOCKED DEBUG] Checking 1 sectors (robot angular width at 1.9m = 5.5°): {1: 0.302}
+[BLOCKED DEBUG] Check: 0.30 < 1.87 - 0.15 = 1.72? True
+[BLOCKED DEBUG] (Full front arc for reference: {55: 0.764, 56: 0.731, 57: 0.719, 58: 0.712, 59: 0.838, 0: 0.297, 1: 0.302, 2: 3.108, 3: 2.548, 4: 2.181, 5: 1.913})
+
+[BLOCKED TURN] goal_sector=1, best_sector=2 (dist=3.11m), target_angle=12.0°, angle_error=12.0°, v=0.00, w=0.31
+[863] TURN goal=(1.28,4.88) dist=1.87m front=0.30m cells=27 rms=6.9cm[864] TURN goal=(1.28,4.88) dist=1.87m front=0.30m cells=27 rms=6.9cm[865] TURN goal=(1.28,4.88) dist=1.87m front=0.30m cells=27 rms=6.9cm[866] DRIVE goal=(1.28,4.88) dist=1.87m front=0.30m cells=27 rms=6.9cm
+[199.5s] [TURN ENTER] Entering TURN mode
+
+[BLOCKED DEBUG] Goal angle: 10.4° (sector 1), goal_dist: 1.87m, goal_dir_min: 0.31m, margin: 0.15m
+[BLOCKED DEBUG] Checking 1 sectors (robot angular width at 1.9m = 5.5°): {1: 0.314}
+[BLOCKED DEBUG] Check: 0.31 < 1.87 - 0.15 = 1.72? True
+[BLOCKED DEBUG] (Full front arc for reference: {55: 0.747, 56: 0.736, 57: 0.718, 58: 0.716, 59: 0.302, 0: 0.297, 1: 0.314, 2: 2.966, 3: 2.458, 4: 2.117, 5: 1.865})
+
+[BLOCKED TURN] goal_sector=1, best_sector=2 (dist=2.97m), target_angle=12.0°, angle_error=12.0°, v=0.00, w=0.31
+[867] TURN goal=(1.28,4.88) dist=1.87m front=0.30m cells=27 rms=6.9cm[868] DRIVE goal=(1.28,4.88) dist=1.87m front=0.30m cells=27 rms=6.9cm[869] DRIVE goal=(1.28,4.88) dist=1.86m front=0.29m cells=27 rms=6.9cm[870] DRIVE goal=(1.28,4.88) dist=1.86m front=0.29m cells=27 rms=6.9cm[871] DRIVE goal=(1.28,4.88) dist=1.86m front=0.29m cells=27 rms=6.9cm[872] DRIVE goal=(1.28,4.88) dist=1.83m front=0.27m cells=27 rms=6.9cm[873] DRIVE goal=(1.28,4.88) dist=1.83m front=0.27m cells=27 rms=6.9cm[874] DRIVE goal=(1.28,4.88) dist=1.81m front=0.25m cells=27 rms=6.9cm[875] DRIVE goal=(1.28,4.88) dist=1.80m front=0.25m cells=28 rms=6.9cm[876] DRIVE goal=(1.28,4.88) dist=1.79m front=0.23m cells=28 rms=6.9cm[877] DRIVE goal=(1.28,4.88) dist=1.77m front=0.22m cells=28 rms=6.9cm[878] DRIVE goal=(1.28,4.88) dist=1.75m front=0.21m cells=28 rms=6.9cm[879] DRIVE goal=(1.28,4.88) dist=1.74m front=0.20m cells=28 rms=6.9cm[880] DRIVE goal=(1.28,4.88) dist=1.73m front=0.19m cells=28 rms=6.9cm[881] DRIVE goal=(1.28,4.88) dist=1.72m front=0.18m cells=28 rms=6.9cm[882] DRIVE goal=(1.28,4.88) dist=1.71m front=0.17m cells=28 rms=6.9cm[883] DRIVE goal=(1.28,4.88) dist=1.71m front=0.16m cells=28 rms=6.9cm[884] DRIVE goal=(1.28,4.88) dist=1.70m front=0.15m cells=28 rms=6.9cm
+[203.1s] [BACKUP] front=0.14m
+
+[BACKUP] Reversing...
+[BACKUP] Turning right (L_openings=6 R_openings=6)
+
+[206.6s] [GOAL SELECT] robot@(2.54,3.60) | 14 candidates (scanned=344 walls=229 visited=28):
+  #1 ang= +64° d=2.00m pos=(0.60,3.10) score=+24.1 [O=+1.7 U=+38.6 V=-0.0 W=-0.0 R=-0.0 F=-11.4 T=-5.4] <-- BEST
+  #2 ang=  +3° d=1.50m pos=(1.51,4.70) score=+23.1 [O=+2.5 U=+20.2 V=-0.0 W=-0.0 R=-3.1 F=+3.0]
+  #3 ang=+131° d=1.00m pos=(2.40,2.61) score=+18.7 [O=+1.6 U=+33.2 V=-0.0 W=-3.0 R=-0.0 F=-13.4]
+  #4 ang=  +9° d=1.00m pos=(1.78,4.26) score=+14.2 [O=+2.5 U=+10.9 V=-0.0 W=-1.0 R=-0.0 F=+1.5]
+  #5 ang=  +9° d=1.50m pos=(1.40,4.58) score=+12.4 [O=+2.3 U=+15.5 V=-0.0 W=-1.0 R=-6.3 F=+1.5]
+  #6 ang= +15° d=1.50m pos=(1.30,4.45) score=+11.3 [O=+1.8 U=+15.3 V=-0.0 W=-3.0 R=-3.1 F=-0.1]
+  #7 ang= +64° d=1.50m pos=(1.09,3.23) score=+8.3 [O=+2.2 U=+30.6 V=-0.0 W=-3.0 R=-0.0 F=-11.4 T=-10.5]
+  #8 ang= +64° d=1.00m pos=(1.57,3.35) score=-3.6 [O=+2.5 U=+23.2 V=-1.6 W=-3.0 R=-0.0 F=-11.4 T=-13.7]
+[206.6s] [GOAL] Selected: (0.60, 3.10) dist=2.00m timeout=50s angle=64° reason=no goal
+[886] DRIVE goal=(0.60,3.10) dist=2.00m front=0.21m cells=28 rms=6.9cm[887] DRIVE goal=(0.60,3.10) dist=2.00m front=0.21m cells=28 rms=6.9cm[888] DRIVE goal=(0.60,3.10) dist=2.00m front=0.21m cells=28 rms=6.9cm[889] DRIVE goal=(0.60,3.10) dist=2.00m front=0.22m cells=28 rms=6.9cm[890] DRIVE goal=(0.60,3.10) dist=2.00m front=0.22m cells=28 rms=6.8cm[891] DRIVE goal=(0.60,3.10) dist=2.01m front=0.22m cells=28 rms=6.8cm[892] DRIVE goal=(0.60,3.10) dist=2.01m front=0.23m cells=28 rms=6.8cm[893] DRIVE goal=(0.60,3.10) dist=2.01m front=0.23m cells=28 rms=6.8cm[894] DRIVE goal=(0.60,3.10) dist=2.01m front=0.23m cells=28 rms=6.8cm[895] DRIVE goal=(0.60,3.10) dist=2.01m front=0.23m cells=28 rms=6.8cm[896] DRIVE goal=(0.60,3.10) dist=2.02m front=0.24m cells=28 rms=6.8cm[897] DRIVE goal=(0.60,3.10) dist=2.02m front=0.24m cells=28 rms=6.8cm[898] DRIVE goal=(0.60,3.10) dist=2.02m front=0.25m cells=28 rms=6.8cm[899] DRIVE goal=(0.60,3.10) dist=2.03m front=0.26m cells=28 rms=6.8cm[900] DRIVE goal=(0.60,3.10) dist=2.03m front=0.26m cells=28 rms=6.8cm[901] DRIVE goal=(0.60,3.10) dist=2.03m front=0.26m cells=28 rms=6.8cm[902] DRIVE goal=(0.60,3.10) dist=2.04m front=0.27m cells=28 rms=6.8cm[903] DRIVE goal=(0.60,3.10) dist=2.05m front=1.00m cells=28 rms=6.8cm
+[210.3s] [TURN ENTER] Entering TURN mode
+
+[BLOCKED DEBUG] Goal angle: 34.3° (sector 5), goal_dist: 2.05m, goal_dir_min: 1.43m, margin: 0.15m
+[BLOCKED DEBUG] Checking 1 sectors (robot angular width at 2.0m = 5.0°): {5: 1.425}
+[BLOCKED DEBUG] Check: 1.43 < 2.05 - 0.15 = 1.90? True
+[BLOCKED DEBUG] (Full front arc for reference: {55: 5.252, 56: 2.978, 57: 2.456, 58: 2.11, 59: 1.881, 0: 1.683, 1: 1.064, 2: 1.002, 3: 1.003, 4: 1.176, 5: 1.425})
+
+[BLOCKED TURN] goal_sector=5, best_sector=5 (dist=1.43m), target_angle=30.0°, angle_error=30.0°, v=0.00, w=0.50
+[904] TURN goal=(0.60,3.10) dist=2.05m front=1.00m cells=28 rms=6.8cm[905] DRIVE goal=(0.60,3.10) dist=2.05m front=1.00m cells=28 rms=6.8cm[906] DRIVE goal=(0.60,3.10) dist=2.05m front=1.00m cells=28 rms=6.8cm[907] DRIVE goal=(0.60,3.10) dist=2.05m front=1.00m cells=28 rms=6.8cm[908] DRIVE goal=(0.60,3.10) dist=2.05m front=1.00m cells=28 rms=6.8cm[909] DRIVE goal=(0.60,3.10) dist=2.06m front=1.00m cells=28 rms=6.8cm[910] DRIVE goal=(0.60,3.10) dist=2.06m front=1.01m cells=28 rms=6.8cm[911] DRIVE goal=(0.60,3.10) dist=2.05m front=1.00m cells=28 rms=6.8cm[912] DRIVE goal=(0.60,3.10) dist=2.06m front=1.01m cells=28 rms=6.8cm[913] DRIVE goal=(0.60,3.10) dist=2.06m front=1.01m cells=28 rms=6.8cm
+[212.3s] [TURN ENTER] Entering TURN mode
+
+[BLOCKED DEBUG] Goal angle: 16.7° (sector 2), goal_dist: 2.05m, goal_dir_min: 1.49m, margin: 0.15m
+[BLOCKED DEBUG] Checking 1 sectors (robot angular width at 2.1m = 5.0°): {2: 1.494}
+[BLOCKED DEBUG] Check: 1.49 < 2.05 - 0.15 = 1.90? True
+[BLOCKED DEBUG] (Full front arc for reference: {55: 2.095, 56: 1.87, 57: 1.679, 58: 1.048, 59: 1.004, 0: 1.027, 1: 1.23, 2: 1.494, 3: 2.621, 4: 2.582, 5: 2.559})
+
+[BLOCKED TURN] goal_sector=2, best_sector=2 (dist=1.49m), target_angle=12.0°, angle_error=12.0°, v=0.00, w=0.31
+[914] TURN goal=(0.60,3.10) dist=2.05m front=1.00m cells=28 rms=6.8cm[915] DRIVE goal=(0.60,3.10) dist=2.06m front=1.00m cells=28 rms=6.8cm[916] DRIVE goal=(0.60,3.10) dist=2.05m front=1.00m cells=28 rms=6.8cm[917] DRIVE goal=(0.60,3.10) dist=2.05m front=1.00m cells=28 rms=6.8cm[918] DRIVE goal=(0.60,3.10) dist=2.05m front=0.99m cells=28 rms=6.8cm[919] DRIVE goal=(0.60,3.10) dist=2.03m front=0.98m cells=28 rms=6.8cm[920] DRIVE goal=(0.60,3.10) dist=2.03m front=0.98m cells=28 rms=6.8cm[921] DRIVE goal=(0.60,3.10) dist=2.01m front=0.97m cells=28 rms=6.8cm[922] DRIVE goal=(0.60,3.10) dist=2.01m front=0.96m cells=28 rms=6.8cm[923] DRIVE goal=(0.60,3.10) dist=2.01m front=0.93m cells=28 rms=6.8cm[924] DRIVE goal=(0.60,3.10) dist=1.98m front=0.92m cells=28 rms=6.8cm[925] DRIVE goal=(0.60,3.10) dist=1.96m front=0.90m cells=28 rms=6.8cm[926] DRIVE goal=(0.60,3.10) dist=1.95m front=0.88m cells=28 rms=6.8cm[927] DRIVE goal=(0.60,3.10) dist=1.93m front=0.87m cells=28 rms=6.8cm[928] DRIVE goal=(0.60,3.10) dist=1.92m front=0.85m cells=28 rms=6.8cm[929] DRIVE goal=(0.60,3.10) dist=1.90m front=0.85m cells=28 rms=6.8cm[930] DRIVE goal=(0.60,3.10) dist=1.89m front=0.84m cells=28 rms=6.8cm[931] DRIVE goal=(0.60,3.10) dist=1.89m front=0.83m cells=28 rms=6.8cm[932] DRIVE goal=(0.60,3.10) dist=1.89m front=0.83m cells=28 rms=6.8cm[933] DRIVE goal=(0.60,3.10) dist=1.89m front=0.83m cells=28 rms=6.8cm[934] DRIVE goal=(0.60,3.10) dist=1.89m front=0.84m cells=28 rms=6.8cm[935] DRIVE goal=(0.60,3.10) dist=1.89m front=0.84m cells=28 rms=6.7cm[936] DRIVE goal=(0.60,3.10) dist=1.90m front=0.84m cells=28 rms=6.7cm[937] DRIVE goal=(0.60,3.10) dist=1.89m front=0.84m cells=28 rms=6.7cm[938] DRIVE goal=(0.60,3.10) dist=1.89m front=0.84m cells=28 rms=6.7cm[939] DRIVE goal=(0.60,3.10) dist=1.89m front=0.84m cells=28 rms=6.7cm[940] DRIVE goal=(0.60,3.10) dist=1.88m front=0.83m cells=28 rms=6.7cm[941] DRIVE goal=(0.60,3.10) dist=1.87m front=0.83m cells=28 rms=6.7cm[942] DRIVE goal=(0.60,3.10) dist=1.87m front=0.82m cells=28 rms=6.7cm[943] DRIVE goal=(0.60,3.10) dist=1.85m front=0.81m cells=28 rms=6.7cm[944] DRIVE goal=(0.60,3.10) dist=1.85m front=0.80m cells=28 rms=6.7cm[945] DRIVE goal=(0.60,3.10) dist=1.83m front=0.78m cells=28 rms=6.7cm[946] DRIVE goal=(0.60,3.10) dist=1.81m front=0.78m cells=28 rms=6.7cm[947] DRIVE goal=(0.60,3.10) dist=1.79m front=0.78m cells=28 rms=6.7cm[948] DRIVE goal=(0.60,3.10) dist=1.78m front=0.86m cells=28 rms=6.7cm[949] DRIVE goal=(0.60,3.10) dist=1.76m front=0.86m cells=28 rms=6.7cm[950] DRIVE goal=(0.60,3.10) dist=1.73m front=0.87m cells=28 rms=6.7cm[951] DRIVE goal=(0.60,3.10) dist=1.72m front=0.80m cells=28 rms=6.7cm[952] DRIVE goal=(0.60,3.10) dist=1.69m front=0.73m cells=28 rms=6.7cm[953] DRIVE goal=(0.60,3.10) dist=1.69m front=0.70m cells=28 rms=6.7cm[954] DRIVE goal=(0.60,3.10) dist=1.66m front=0.66m cells=28 rms=6.7cm[955] DRIVE goal=(0.60,3.10) dist=1.63m front=0.64m cells=28 rms=6.7cm[956] DRIVE goal=(0.60,3.10) dist=1.60m front=0.63m cells=28 rms=6.7cm[957] DRIVE goal=(0.60,3.10) dist=1.58m front=0.66m cells=28 rms=6.7cm[958] DRIVE goal=(0.60,3.10) dist=1.58m front=0.67m cells=28 rms=6.7cm[959] DRIVE goal=(0.60,3.10) dist=1.57m front=0.68m cells=28 rms=6.7cm[960] DRIVE goal=(0.60,3.10) dist=1.56m front=0.69m cells=28 rms=6.7cm[961] DRIVE goal=(0.60,3.10) dist=1.55m front=0.69m cells=28 rms=6.7cm[962] DRIVE goal=(0.60,3.10) dist=1.53m front=0.68m cells=28 rms=6.7cm[963] DRIVE goal=(0.60,3.10) dist=1.50m front=0.66m cells=28 rms=6.6cm[964] DRIVE goal=(0.60,3.10) dist=1.47m front=0.63m cells=28 rms=6.6cm[965] DRIVE goal=(0.60,3.10) dist=1.46m front=0.63m cells=28 rms=6.6cm[966] DRIVE goal=(0.60,3.10) dist=1.44m front=0.72m cells=28 rms=6.6cm[967] DRIVE goal=(0.60,3.10) dist=1.43m front=0.75m cells=28 rms=6.6cm[968] DRIVE goal=(0.60,3.10) dist=1.41m front=0.68m cells=28 rms=6.6cm[969] DRIVE goal=(0.60,3.10) dist=1.38m front=0.68m cells=28 rms=6.6cm[970] DRIVE goal=(0.60,3.10) dist=1.36m front=0.64m cells=28 rms=6.6cm[971] DRIVE goal=(0.60,3.10) dist=1.34m front=0.63m cells=28 rms=6.6cm[972] DRIVE goal=(0.60,3.10) dist=1.32m front=0.62m cells=28 rms=6.6cm[973] DRIVE goal=(0.60,3.10) dist=1.32m front=0.68m cells=28 rms=6.6cm[974] DRIVE goal=(0.60,3.10) dist=1.30m front=0.68m cells=28 rms=6.6cm[975] DRIVE goal=(0.60,3.10) dist=1.28m front=0.65m cells=28 rms=6.6cm[976] DRIVE goal=(0.60,3.10) dist=1.27m front=0.62m cells=28 rms=6.6cm[977] DRIVE goal=(0.60,3.10) dist=1.27m front=0.61m cells=28 rms=6.6cm
+
+=======================================================
+[225.0s] RETURNING TO ORIGIN
+=======================================================
+Time elapsed: 225.0s / 300.0s (75%)
+Origin: (0.04, 0.03)
+Current: (1.81, 3.44)
+Distance to origin: 3.84m
+=======================================================
+
+[A* DEBUG] Planning from (6, 11) to (0, 0)
+[A* DEBUG] World coords: (1.81,3.44) -> (0.04,0.03)
+[A* DEBUG] Map stats: 234 walls, 344 scanned, 28 visited
+[A* DEBUG] Inflated obstacles: 554 cells (inflation=2, unreachable=0)
+[A* DEBUG] Cleared 28 visited cells from obstacles
+[A* DEBUG] Cleared 41 cells around goal (radius=3)
+[A* DEBUG] Start in obstacles: False, Goal in obstacles: False
+[A* DEBUG] Path found! 16 cells, 36 iterations
+[A* DEBUG] 15/15 segments blocked, using unsimplified A* path
+[A* DEBUG] Simplified to 16 waypoints
+[A*] Planned path with 16 waypoints
+  WP0: (1.95, 3.45)
+  WP1: (1.65, 3.45)
+  WP2: (1.35, 3.45)
+  WP3: (1.05, 3.45)
+  WP4: (0.75, 3.45)
+  WP5: (0.45, 3.15)
+  WP6: (0.45, 2.85)
+  WP7: (0.45, 2.55)
+  WP8: (0.45, 2.25)
+  WP9: (0.45, 1.95)
+  WP10: (0.15, 1.65)
+  WP11: (0.15, 1.35)
+  WP12: (0.15, 1.05)
+  WP13: (0.15, 0.75)
+  WP14: (0.15, 0.45)
+  WP15: (0.15, 0.15)
+[225.0s] [A*] No clear LOS to WP0 (1.95,3.45), finding intermediate...
+[225.0s] [A*] Using very close intermediate at 5% (1.82,3.44)
+[225.0s] [A*] No clear LOS to WP1 (1.95,3.45), finding intermediate...
+[225.0s] [A*] Using very close intermediate at 5% (1.82,3.44)
+
+[225.0s] [A*] Reached WP0, heading to WP1 (1.82, 3.44)
+[978] RETURN DRIVE WP1/18 goal=(1.82,3.44) origin_dist=3.84m front=0.61m[225.2s] [A*] No clear LOS to WP2 (1.95,3.45), finding intermediate...
+[225.2s] [A*] Using very close intermediate at 5% (1.80,3.44)
+
+[225.2s] [A*] Reached WP1, heading to WP2 (1.80, 3.44)
+[979] RETURN DRIVE WP2/19 goal=(1.80,3.44) origin_dist=3.83m front=0.65m[225.4s] [A*] No clear LOS to WP3 (1.95,3.45), finding intermediate...
+[225.4s] [A*] Using very close intermediate at 5% (1.78,3.43)
+
+[225.4s] [A*] Reached WP2, heading to WP3 (1.78, 3.43)
+[980] RETURN DRIVE WP3/20 goal=(1.78,3.43) origin_dist=3.82m front=0.66m[225.7s] [A*] No clear LOS to WP4 (1.95,3.45), finding intermediate...
+[225.7s] [A*] Using very close intermediate at 5% (1.77,3.43)
+
+[225.7s] [A*] Reached WP3, heading to WP4 (1.77, 3.43)
+[981] RETURN DRIVE WP4/21 goal=(1.77,3.43) origin_dist=3.81m front=0.62m[225.9s] [A*] No clear LOS to WP5 (1.95,3.45), finding intermediate...
+[225.9s] [A*] Using very close intermediate at 5% (1.77,3.43)
+
+[225.9s] [A*] Reached WP4, heading to WP5 (1.77, 3.43)
+[982] RETURN DRIVE WP5/22 goal=(1.77,3.43) origin_dist=3.81m front=0.62m[226.1s] [A*] No clear LOS to WP6 (1.95,3.45), finding intermediate...
+[226.1s] [A*] Using very close intermediate at 5% (1.77,3.43)
+
+[226.1s] [A*] Reached WP5, heading to WP6 (1.77, 3.43)
+[983] RETURN DRIVE WP6/23 goal=(1.77,3.43) origin_dist=3.81m front=0.65m[226.2s] [A*] No clear LOS to WP7 (1.95,3.45), finding intermediate...
+[226.2s] [A*] Using very close intermediate at 5% (1.76,3.43)
+
+[226.2s] [A*] Reached WP6, heading to WP7 (1.76, 3.43)
+[984] RETURN DRIVE WP7/24 goal=(1.76,3.43) origin_dist=3.80m front=0.71m[226.4s] [A*] No clear LOS to WP8 (1.95,3.45), finding intermediate...
+[226.4s] [A*] Using very close intermediate at 5% (1.77,3.43)
+
+[226.4s] [A*] Reached WP7, heading to WP8 (1.77, 3.43)
+[985] RETURN DRIVE WP8/25 goal=(1.77,3.43) origin_dist=3.81m front=0.75m[226.7s] [A*] No clear LOS to WP9 (1.95,3.45), finding intermediate...
+[226.7s] [A*] Using very close intermediate at 5% (1.77,3.43)
+
+[226.7s] [A*] Reached WP8, heading to WP9 (1.77, 3.43)
+[986] RETURN DRIVE WP9/26 goal=(1.77,3.43) origin_dist=3.81m front=0.77m[226.9s] [A*] No clear LOS to WP10 (1.95,3.45), finding intermediate...
+[226.9s] [A*] Using very close intermediate at 5% (1.77,3.43)
+
+[226.9s] [A*] Reached WP9, heading to WP10 (1.77, 3.43)
+[987] RETURN DRIVE WP10/27 goal=(1.77,3.43) origin_dist=3.81m front=0.87m[227.1s] [A*] No clear LOS to WP11 (1.95,3.45), finding intermediate...
+[227.1s] [A*] Using very close intermediate at 5% (1.76,3.43)
+
+[227.1s] [A*] Reached WP10, heading to WP11 (1.76, 3.43)
+[988] RETURN DRIVE WP11/28 goal=(1.76,3.43) origin_dist=3.80m front=1.70m[227.2s] [A*] No clear LOS to WP12 (1.95,3.45), finding intermediate...
+[227.2s] [A*] Using very close intermediate at 5% (1.77,3.43)
+
+[227.3s] [A*] Reached WP11, heading to WP12 (1.77, 3.43)
+[989] RETURN DRIVE WP12/29 goal=(1.77,3.43) origin_dist=3.81m front=1.70m[227.4s] [A*] No clear LOS to WP13 (1.95,3.45), finding intermediate...
+[227.4s] [A*] Using very close intermediate at 5% (1.77,3.43)
+
+[227.4s] [A*] Reached WP12, heading to WP13 (1.77, 3.43)
+[990] RETURN DRIVE WP13/30 goal=(1.77,3.43) origin_dist=3.81m front=0.75m[227.7s] [A*] No clear LOS to WP14 (1.95,3.45), finding intermediate...
+[227.7s] [A*] Using very close intermediate at 5% (1.76,3.43)
+
+[227.7s] [A*] Reached WP13, heading to WP14 (1.76, 3.43)
+[991] RETURN DRIVE WP14/31 goal=(1.76,3.43) origin_dist=3.81m front=0.48m[227.8s] [A*] No clear LOS to WP15 (1.95,3.45), finding intermediate...
+[227.8s] [A*] WARNING: No clear LOS path found to WP15
+
+[227.8s] [A*] No safe path to next WP, replanning...
+[A* DEBUG] Planning from (5, 11) to (0, 0)
+[A* DEBUG] World coords: (1.75,3.43) -> (0.04,0.03)
+[A* DEBUG] Map stats: 235 walls, 344 scanned, 28 visited
+[A* DEBUG] Inflated obstacles: 555 cells (inflation=2, unreachable=0)
+[A* DEBUG] Cleared 28 visited cells from obstacles
+[A* DEBUG] Cleared 41 cells around goal (radius=3)
+[A* DEBUG] Start in obstacles: False, Goal in obstacles: False
+[A* DEBUG] Path found! 15 cells, 36 iterations
+[A* DEBUG] 14/14 segments blocked, using unsimplified A* path
+[A* DEBUG] Simplified to 15 waypoints
+[992] RETURN DRIVE WP0/15 goal=(1.65,3.45) origin_dist=3.80m front=0.45m[228.1s] [A*] No clear LOS to WP1 (1.35,3.45), finding intermediate...
+[228.1s] [A*] WARNING: No clear LOS path found to WP1
+
+[228.1s] [A*] No safe path to next WP, replanning...
+[A* DEBUG] Planning from (5, 11) to (0, 0)
+[A* DEBUG] World coords: (1.76,3.43) -> (0.04,0.03)
+[A* DEBUG] Map stats: 236 walls, 345 scanned, 28 visited
+[A* DEBUG] Inflated obstacles: 559 cells (inflation=2, unreachable=0)
+[A* DEBUG] Cleared 28 visited cells from obstacles
+[A* DEBUG] Cleared 41 cells around goal (radius=3)
+[A* DEBUG] Start in obstacles: False, Goal in obstacles: False
+[A* DEBUG] Path found! 15 cells, 36 iterations
+[A* DEBUG] 14/14 segments blocked, using unsimplified A* path
+[A* DEBUG] Simplified to 15 waypoints
+[993] RETURN DRIVE WP0/15 goal=(1.65,3.45) origin_dist=3.81m front=0.45m[228.3s] [A*] No clear LOS to WP1 (1.35,3.45), finding intermediate...
+[228.3s] [A*] WARNING: No clear LOS path found to WP1
+
+[228.3s] [A*] No safe path to next WP, replanning...
+[A* DEBUG] Planning from (5, 11) to (0, 0)
+[A* DEBUG] World coords: (1.75,3.43) -> (0.04,0.03)
+[A* DEBUG] Map stats: 236 walls, 345 scanned, 28 visited
+[A* DEBUG] Inflated obstacles: 559 cells (inflation=2, unreachable=0)
+[A* DEBUG] Cleared 28 visited cells from obstacles
+[A* DEBUG] Cleared 41 cells around goal (radius=3)
+[A* DEBUG] Start in obstacles: False, Goal in obstacles: False
+[A* DEBUG] Path found! 15 cells, 36 iterations
+[A* DEBUG] 14/14 segments blocked, using unsimplified A* path
+[A* DEBUG] Simplified to 15 waypoints
+[994] RETURN DRIVE WP0/15 goal=(1.65,3.45) origin_dist=3.81m front=0.44m[228.5s] [A*] No clear LOS to WP1 (1.35,3.45), finding intermediate...
+[228.5s] [A*] WARNING: No clear LOS path found to WP1
+
+[228.5s] [A*] No safe path to next WP, replanning...
+[A* DEBUG] Planning from (5, 11) to (0, 0)
+[A* DEBUG] World coords: (1.75,3.43) -> (0.04,0.03)
+[A* DEBUG] Map stats: 236 walls, 345 scanned, 28 visited
+[A* DEBUG] Inflated obstacles: 559 cells (inflation=2, unreachable=0)
+[A* DEBUG] Cleared 28 visited cells from obstacles
+[A* DEBUG] Cleared 41 cells around goal (radius=3)
+[A* DEBUG] Start in obstacles: False, Goal in obstacles: False
+[A* DEBUG] Path found! 15 cells, 36 iterations
+[A* DEBUG] 14/14 segments blocked, using unsimplified A* path
+[A* DEBUG] Simplified to 15 waypoints
+[995] RETURN DRIVE WP0/15 goal=(1.65,3.45) origin_dist=3.81m front=0.44m[228.7s] [A*] No clear LOS to WP1 (1.35,3.45), finding intermediate...
+[228.7s] [A*] WARNING: No clear LOS path found to WP1
+
+[228.7s] [A*] No safe path to next WP, replanning...
+[A* DEBUG] Planning from (5, 11) to (0, 0)
+[A* DEBUG] World coords: (1.75,3.43) -> (0.04,0.03)
+[A* DEBUG] Map stats: 236 walls, 345 scanned, 28 visited
+[A* DEBUG] Inflated obstacles: 559 cells (inflation=2, unreachable=0)
+[A* DEBUG] Cleared 28 visited cells from obstacles
+[A* DEBUG] Cleared 41 cells around goal (radius=3)
+[A* DEBUG] Start in obstacles: False, Goal in obstacles: False
+[A* DEBUG] Path found! 15 cells, 36 iterations
+[A* DEBUG] 14/14 segments blocked, using unsimplified A* path
+[A* DEBUG] Simplified to 15 waypoints
+[996] RETURN DRIVE WP0/15 goal=(1.65,3.45) origin_dist=3.81m front=0.44m[228.9s] [A*] No clear LOS to WP1 (1.35,3.45), finding intermediate...
+[228.9s] [A*] WARNING: No clear LOS path found to WP1
+
+[228.9s] [A*] No safe path to next WP, replanning...
+[A* DEBUG] Planning from (5, 11) to (0, 0)
+[A* DEBUG] World coords: (1.75,3.43) -> (0.04,0.03)
+[A* DEBUG] Map stats: 236 walls, 345 scanned, 28 visited
+[A* DEBUG] Inflated obstacles: 559 cells (inflation=2, unreachable=0)
+[A* DEBUG] Cleared 28 visited cells from obstacles
+[A* DEBUG] Cleared 41 cells around goal (radius=3)
+[A* DEBUG] Start in obstacles: False, Goal in obstacles: False
+[A* DEBUG] Path found! 15 cells, 36 iterations
+[A* DEBUG] 14/14 segments blocked, using unsimplified A* path
+[A* DEBUG] Simplified to 15 waypoints
+[997] RETURN DRIVE WP0/15 goal=(1.65,3.45) origin_dist=3.81m front=0.44m[229.2s] [A*] No clear LOS to WP1 (1.35,3.45), finding intermediate...
+[229.2s] [A*] WARNING: No clear LOS path found to WP1
+
+[229.2s] [A*] No safe path to next WP, replanning...
+[A* DEBUG] Planning from (5, 11) to (0, 0)
+[A* DEBUG] World coords: (1.75,3.44) -> (0.04,0.03)
+[A* DEBUG] Map stats: 236 walls, 345 scanned, 28 visited
+[A* DEBUG] Inflated obstacles: 559 cells (inflation=2, unreachable=0)
+[A* DEBUG] Cleared 28 visited cells from obstacles
+[A* DEBUG] Cleared 41 cells around goal (radius=3)
+[A* DEBUG] Start in obstacles: False, Goal in obstacles: False
+[A* DEBUG] Path found! 15 cells, 36 iterations
+[A* DEBUG] 14/14 segments blocked, using unsimplified A* path
+[A* DEBUG] Simplified to 15 waypoints
+[998] RETURN DRIVE WP0/15 goal=(1.65,3.45) origin_dist=3.81m front=0.45m[229.4s] [A*] No clear LOS to WP1 (1.35,3.45), finding intermediate...
+[229.4s] [A*] WARNING: No clear LOS path found to WP1
+
+[229.4s] [A*] No safe path to next WP, replanning...
+[A* DEBUG] Planning from (5, 11) to (0, 0)
+[A* DEBUG] World coords: (1.75,3.44) -> (0.04,0.03)
+[A* DEBUG] Map stats: 236 walls, 345 scanned, 28 visited
+[A* DEBUG] Inflated obstacles: 559 cells (inflation=2, unreachable=0)
+[A* DEBUG] Cleared 28 visited cells from obstacles
+[A* DEBUG] Cleared 41 cells around goal (radius=3)
+[A* DEBUG] Start in obstacles: False, Goal in obstacles: False
+[A* DEBUG] Path found! 15 cells, 36 iterations
+[A* DEBUG] 14/14 segments blocked, using unsimplified A* path
+[A* DEBUG] Simplified to 15 waypoints
+[999] RETURN DRIVE WP0/15 goal=(1.65,3.45) origin_dist=3.81m front=0.45m[229.6s] [A*] No clear LOS to WP1 (1.35,3.45), finding intermediate...
+[229.6s] [A*] WARNING: No clear LOS path found to WP1
+
+[229.6s] [A*] No safe path to next WP, replanning...
+[A* DEBUG] Planning from (5, 11) to (0, 0)
+[A* DEBUG] World coords: (1.75,3.44) -> (0.04,0.03)
+[A* DEBUG] Map stats: 236 walls, 345 scanned, 28 visited
+[A* DEBUG] Inflated obstacles: 559 cells (inflation=2, unreachable=0)
+[A* DEBUG] Cleared 28 visited cells from obstacles
+[A* DEBUG] Cleared 41 cells around goal (radius=3)
+[A* DEBUG] Start in obstacles: False, Goal in obstacles: False
+[A* DEBUG] Path found! 15 cells, 36 iterations
+[A* DEBUG] 14/14 segments blocked, using unsimplified A* path
+[A* DEBUG] Simplified to 15 waypoints
+[1000] RETURN DRIVE WP0/15 goal=(1.65,3.45) origin_dist=3.81m front=0.45m[229.8s] [A*] No clear LOS to WP1 (1.35,3.45), finding intermediate...
+[229.8s] [A*] WARNING: No clear LOS path found to WP1
+
+[229.8s] [A*] No safe path to next WP, replanning...
+[A* DEBUG] Planning from (5, 11) to (0, 0)
+[A* DEBUG] World coords: (1.76,3.44) -> (0.04,0.03)
+[A* DEBUG] Map stats: 236 walls, 345 scanned, 28 visited
+[A* DEBUG] Inflated obstacles: 559 cells (inflation=2, unreachable=0)
+[A* DEBUG] Cleared 28 visited cells from obstacles
+[A* DEBUG] Cleared 41 cells around goal (radius=3)
+[A* DEBUG] Start in obstacles: False, Goal in obstacles: False
+[A* DEBUG] Path found! 15 cells, 36 iterations
+[A* DEBUG] 14/14 segments blocked, using unsimplified A* path
+[A* DEBUG] Simplified to 15 waypoints
+[1001] RETURN DRIVE WP0/15 goal=(1.65,3.45) origin_dist=3.81m front=0.45m[230.0s] [A*] No clear LOS to WP1 (1.35,3.45), finding intermediate...
+[230.0s] [A*] WARNING: No clear LOS path found to WP1
+
+[230.0s] [A*] No safe path to next WP, replanning...
+[A* DEBUG] Planning from (5, 11) to (0, 0)
+[A* DEBUG] World coords: (1.75,3.43) -> (0.04,0.03)
+[A* DEBUG] Map stats: 236 walls, 345 scanned, 28 visited
+[A* DEBUG] Inflated obstacles: 559 cells (inflation=2, unreachable=0)
+[A* DEBUG] Cleared 28 visited cells from obstacles
+[A* DEBUG] Cleared 41 cells around goal (radius=3)
+[A* DEBUG] Start in obstacles: False, Goal in obstacles: False
+[A* DEBUG] Path found! 15 cells, 36 iterations
+[A* DEBUG] 14/14 segments blocked, using unsimplified A* path
+[A* DEBUG] Simplified to 15 waypoints
+[1002] RETURN DRIVE WP0/15 goal=(1.65,3.45) origin_dist=3.81m front=0.45m[230.2s] [A*] No clear LOS to WP1 (1.35,3.45), finding intermediate...
+[230.2s] [A*] WARNING: No clear LOS path found to WP1
+
+[230.2s] [A*] No safe path to next WP, replanning...
+[A* DEBUG] Planning from (5, 11) to (0, 0)
+[A* DEBUG] World coords: (1.76,3.43) -> (0.04,0.03)
+[A* DEBUG] Map stats: 236 walls, 345 scanned, 28 visited
+[A* DEBUG] Inflated obstacles: 559 cells (inflation=2, unreachable=0)
+[A* DEBUG] Cleared 28 visited cells from obstacles
+[A* DEBUG] Cleared 41 cells around goal (radius=3)
+[A* DEBUG] Start in obstacles: False, Goal in obstacles: False
+[A* DEBUG] Path found! 15 cells, 36 iterations
+[A* DEBUG] 14/14 segments blocked, using unsimplified A* path
+[A* DEBUG] Simplified to 15 waypoints
+[1003] RETURN DRIVE WP0/15 goal=(1.65,3.45) origin_dist=3.81m front=0.45m[230.4s] [A*] No clear LOS to WP1 (1.35,3.45), finding intermediate...
+[230.4s] [A*] WARNING: No clear LOS path found to WP1
+
+[230.4s] [A*] No safe path to next WP, replanning...
+[A* DEBUG] Planning from (5, 11) to (0, 0)
+[A* DEBUG] World coords: (1.76,3.43) -> (0.04,0.03)
+[A* DEBUG] Map stats: 236 walls, 345 scanned, 28 visited
+[A* DEBUG] Inflated obstacles: 559 cells (inflation=2, unreachable=0)
+[A* DEBUG] Cleared 28 visited cells from obstacles
+[A* DEBUG] Cleared 41 cells around goal (radius=3)
+[A* DEBUG] Start in obstacles: False, Goal in obstacles: False
+[A* DEBUG] Path found! 15 cells, 36 iterations
+[A* DEBUG] 14/14 segments blocked, using unsimplified A* path
+[A* DEBUG] Simplified to 15 waypoints
+[1004] RETURN DRIVE WP0/15 goal=(1.65,3.45) origin_dist=3.81m front=0.45m[230.6s] [A*] No clear LOS to WP1 (1.35,3.45), finding intermediate...
+[230.6s] [A*] WARNING: No clear LOS path found to WP1
+
+[230.6s] [A*] No safe path to next WP, replanning...
+[A* DEBUG] Planning from (5, 11) to (0, 0)
+[A* DEBUG] World coords: (1.76,3.43) -> (0.04,0.03)
+[A* DEBUG] Map stats: 237 walls, 346 scanned, 28 visited
+[A* DEBUG] Inflated obstacles: 559 cells (inflation=2, unreachable=0)
+[A* DEBUG] Cleared 28 visited cells from obstacles
+[A* DEBUG] Cleared 41 cells around goal (radius=3)
+[A* DEBUG] Start in obstacles: False, Goal in obstacles: False
+[A* DEBUG] Path found! 15 cells, 36 iterations
+[A* DEBUG] 14/14 segments blocked, using unsimplified A* path
+[A* DEBUG] Simplified to 15 waypoints
+[1005] RETURN DRIVE WP0/15 goal=(1.65,3.45) origin_dist=3.81m front=0.45m[230.8s] [A*] No clear LOS to WP1 (1.35,3.45), finding intermediate...
+[230.8s] [A*] WARNING: No clear LOS path found to WP1
+
+[230.8s] [A*] No safe path to next WP, replanning...
+[A* DEBUG] Planning from (5, 11) to (0, 0)
+[A* DEBUG] World coords: (1.76,3.43) -> (0.04,0.03)
+[A* DEBUG] Map stats: 237 walls, 346 scanned, 28 visited
+[A* DEBUG] Inflated obstacles: 559 cells (inflation=2, unreachable=0)
+[A* DEBUG] Cleared 28 visited cells from obstacles
+[A* DEBUG] Cleared 41 cells around goal (radius=3)
+[A* DEBUG] Start in obstacles: False, Goal in obstacles: False
+[A* DEBUG] Path found! 15 cells, 36 iterations
+[A* DEBUG] 14/14 segments blocked, using unsimplified A* path
+[A* DEBUG] Simplified to 15 waypoints
+[1006] RETURN DRIVE WP0/15 goal=(1.65,3.45) origin_dist=3.81m front=0.45m[231.0s] [A*] No clear LOS to WP1 (1.35,3.45), finding intermediate...
+[231.0s] [A*] WARNING: No clear LOS path found to WP1
+
+[231.0s] [A*] No safe path to next WP, replanning...
+[A* DEBUG] Planning from (5, 11) to (0, 0)
+[A* DEBUG] World coords: (1.76,3.43) -> (0.04,0.03)
+[A* DEBUG] Map stats: 237 walls, 346 scanned, 28 visited
+[A* DEBUG] Inflated obstacles: 559 cells (inflation=2, unreachable=0)
+[A* DEBUG] Cleared 28 visited cells from obstacles
+[A* DEBUG] Cleared 41 cells around goal (radius=3)
+[A* DEBUG] Start in obstacles: False, Goal in obstacles: False
+[A* DEBUG] Path found! 15 cells, 36 iterations
+[A* DEBUG] 14/14 segments blocked, using unsimplified A* path
+[A* DEBUG] Simplified to 15 waypoints
+[1007] RETURN DRIVE WP0/15 goal=(1.65,3.45) origin_dist=3.81m front=0.47m[231.2s] [A*] No clear LOS to WP1 (1.35,3.45), finding intermediate...
+[231.2s] [A*] WARNING: No clear LOS path found to WP1
+
+[231.2s] [A*] No safe path to next WP, replanning...
+[A* DEBUG] Planning from (5, 11) to (0, 0)
+[A* DEBUG] World coords: (1.76,3.43) -> (0.04,0.03)
+[A* DEBUG] Map stats: 237 walls, 346 scanned, 28 visited
+[A* DEBUG] Inflated obstacles: 559 cells (inflation=2, unreachable=0)
+[A* DEBUG] Cleared 28 visited cells from obstacles
+[A* DEBUG] Cleared 41 cells around goal (radius=3)
+[A* DEBUG] Start in obstacles: False, Goal in obstacles: False
+[A* DEBUG] Path found! 15 cells, 36 iterations
+[A* DEBUG] 14/14 segments blocked, using unsimplified A* path
+[A* DEBUG] Simplified to 15 waypoints
+[1008] RETURN DRIVE WP0/15 goal=(1.65,3.45) origin_dist=3.81m front=0.47m[231.4s] [A*] No clear LOS to WP1 (1.35,3.45), finding intermediate...
+[231.4s] [A*] WARNING: No clear LOS path found to WP1
+
+[231.4s] [A*] No safe path to next WP, replanning...
+[A* DEBUG] Planning from (5, 11) to (0, 0)
+[A* DEBUG] World coords: (1.76,3.43) -> (0.04,0.03)
+[A* DEBUG] Map stats: 237 walls, 346 scanned, 28 visited
+[A* DEBUG] Inflated obstacles: 559 cells (inflation=2, unreachable=0)
+[A* DEBUG] Cleared 28 visited cells from obstacles
+[A* DEBUG] Cleared 41 cells around goal (radius=3)
+[A* DEBUG] Start in obstacles: False, Goal in obstacles: False
+[A* DEBUG] Path found! 15 cells, 36 iterations
+[A* DEBUG] 14/14 segments blocked, using unsimplified A* path
+[A* DEBUG] Simplified to 15 waypoints
+[1009] RETURN DRIVE WP0/15 goal=(1.65,3.45) origin_dist=3.81m front=0.46m[231.6s] [A*] No clear LOS to WP1 (1.35,3.45), finding intermediate...
+[231.6s] [A*] WARNING: No clear LOS path found to WP1
+
+[231.6s] [A*] No safe path to next WP, replanning...
+[A* DEBUG] Planning from (5, 11) to (0, 0)
+[A* DEBUG] World coords: (1.76,3.44) -> (0.04,0.03)
+[A* DEBUG] Map stats: 237 walls, 346 scanned, 28 visited
+[A* DEBUG] Inflated obstacles: 559 cells (inflation=2, unreachable=0)
+[A* DEBUG] Cleared 28 visited cells from obstacles
+[A* DEBUG] Cleared 41 cells around goal (radius=3)
+[A* DEBUG] Start in obstacles: False, Goal in obstacles: False
+[A* DEBUG] Path found! 15 cells, 36 iterations
+[A* DEBUG] 14/14 segments blocked, using unsimplified A* path
+[A* DEBUG] Simplified to 15 waypoints
+[1010] RETURN DRIVE WP0/15 goal=(1.65,3.45) origin_dist=3.82m front=0.47m[231.8s] [A*] No clear LOS to WP1 (1.35,3.45), finding intermediate...
+[231.8s] [A*] WARNING: No clear LOS path found to WP1
+
+[231.8s] [A*] No safe path to next WP, replanning...
+[A* DEBUG] Planning from (5, 11) to (0, 0)
+[A* DEBUG] World coords: (1.76,3.43) -> (0.04,0.03)
+[A* DEBUG] Map stats: 237 walls, 346 scanned, 28 visited
+[A* DEBUG] Inflated obstacles: 559 cells (inflation=2, unreachable=0)
+[A* DEBUG] Cleared 28 visited cells from obstacles
+[A* DEBUG] Cleared 41 cells around goal (radius=3)
+[A* DEBUG] Start in obstacles: False, Goal in obstacles: False
+[A* DEBUG] Path found! 15 cells, 36 iterations
+[A* DEBUG] 14/14 segments blocked, using unsimplified A* path
+[A* DEBUG] Simplified to 15 waypoints
+[1011] RETURN DRIVE WP0/15 goal=(1.65,3.45) origin_dist=3.82m front=0.47m[232.0s] [A*] No clear LOS to WP1 (1.35,3.45), finding intermediate...
+[232.0s] [A*] WARNING: No clear LOS path found to WP1
+
+[232.0s] [A*] No safe path to next WP, replanning...
+[A* DEBUG] Planning from (5, 11) to (0, 0)
+[A* DEBUG] World coords: (1.76,3.43) -> (0.04,0.03)
+[A* DEBUG] Map stats: 237 walls, 346 scanned, 28 visited
+[A* DEBUG] Inflated obstacles: 559 cells (inflation=2, unreachable=0)
+[A* DEBUG] Cleared 28 visited cells from obstacles
+[A* DEBUG] Cleared 41 cells around goal (radius=3)
+[A* DEBUG] Start in obstacles: False, Goal in obstacles: False
+[A* DEBUG] Path found! 15 cells, 36 iterations
+[A* DEBUG] 14/14 segments blocked, using unsimplified A* path
+[A* DEBUG] Simplified to 15 waypoints
+[1012] RETURN DRIVE WP0/15 goal=(1.65,3.45) origin_dist=3.82m front=0.47m[232.2s] [A*] No clear LOS to WP1 (1.35,3.45), finding intermediate...
+[232.2s] [A*] WARNING: No clear LOS path found to WP1
+
+[232.2s] [A*] No safe path to next WP, replanning...
+[A* DEBUG] Planning from (5, 11) to (0, 0)
+[A* DEBUG] World coords: (1.76,3.43) -> (0.04,0.03)
+[A* DEBUG] Map stats: 237 walls, 346 scanned, 28 visited
+[A* DEBUG] Inflated obstacles: 559 cells (inflation=2, unreachable=0)
+[A* DEBUG] Cleared 28 visited cells from obstacles
+[A* DEBUG] Cleared 41 cells around goal (radius=3)
+[A* DEBUG] Start in obstacles: False, Goal in obstacles: False
+[A* DEBUG] Path found! 15 cells, 36 iterations
+[A* DEBUG] 14/14 segments blocked, using unsimplified A* path
+[A* DEBUG] Simplified to 15 waypoints
+[1013] RETURN DRIVE WP0/15 goal=(1.65,3.45) origin_dist=3.81m front=0.47m[232.4s] [A*] No clear LOS to WP1 (1.35,3.45), finding intermediate...
+[232.4s] [A*] WARNING: No clear LOS path found to WP1
+
+[232.4s] [A*] No safe path to next WP, replanning...
+[A* DEBUG] Planning from (5, 11) to (0, 0)
+[A* DEBUG] World coords: (1.76,3.43) -> (0.04,0.03)
+[A* DEBUG] Map stats: 237 walls, 346 scanned, 28 visited
+[A* DEBUG] Inflated obstacles: 559 cells (inflation=2, unreachable=0)
+[A* DEBUG] Cleared 28 visited cells from obstacles
+[A* DEBUG] Cleared 41 cells around goal (radius=3)
+[A* DEBUG] Start in obstacles: False, Goal in obstacles: False
+[A* DEBUG] Path found! 15 cells, 36 iterations
+[A* DEBUG] 14/14 segments blocked, using unsimplified A* path
+[A* DEBUG] Simplified to 15 waypoints
+[1014] RETURN DRIVE WP0/15 goal=(1.65,3.45) origin_dist=3.81m front=0.70m[232.6s] [A*] No clear LOS to WP1 (1.35,3.45), finding intermediate...
+[232.6s] [A*] WARNING: No clear LOS path found to WP1
+
+[232.6s] [A*] No safe path to next WP, replanning...
+[A* DEBUG] Planning from (5, 11) to (0, 0)
+[A* DEBUG] World coords: (1.76,3.43) -> (0.04,0.03)
+[A* DEBUG] Map stats: 237 walls, 346 scanned, 28 visited
+[A* DEBUG] Inflated obstacles: 559 cells (inflation=2, unreachable=0)
+[A* DEBUG] Cleared 28 visited cells from obstacles
+[A* DEBUG] Cleared 41 cells around goal (radius=3)
+[A* DEBUG] Start in obstacles: False, Goal in obstacles: False
+[A* DEBUG] Path found! 15 cells, 36 iterations
+[A* DEBUG] 14/14 segments blocked, using unsimplified A* path
+[A* DEBUG] Simplified to 15 waypoints
+[1015] RETURN DRIVE WP0/15 goal=(1.65,3.45) origin_dist=3.82m front=0.68m[232.8s] [A*] No clear LOS to WP1 (1.35,3.45), finding intermediate...
+[232.8s] [A*] WARNING: No clear LOS path found to WP1
+
+[232.8s] [A*] No safe path to next WP, replanning...
+[A* DEBUG] Planning from (5, 11) to (0, 0)
+[A* DEBUG] World coords: (1.77,3.43) -> (0.04,0.03)
+[A* DEBUG] Map stats: 237 walls, 346 scanned, 28 visited
+[A* DEBUG] Inflated obstacles: 559 cells (inflation=2, unreachable=0)
+[A* DEBUG] Cleared 28 visited cells from obstacles
+[A* DEBUG] Cleared 41 cells around goal (radius=3)
+[A* DEBUG] Start in obstacles: False, Goal in obstacles: False
+[A* DEBUG] Path found! 15 cells, 36 iterations
+[A* DEBUG] 14/14 segments blocked, using unsimplified A* path
+[A* DEBUG] Simplified to 15 waypoints
+[1016] RETURN DRIVE WP0/15 goal=(1.65,3.45) origin_dist=3.82m front=0.70m[233.0s] [A*] No clear LOS to WP1 (1.35,3.45), finding intermediate...
+[233.0s] [A*] WARNING: No clear LOS path found to WP1
+
+[233.0s] [A*] No safe path to next WP, replanning...
+[A* DEBUG] Planning from (5, 11) to (0, 0)
+[A* DEBUG] World coords: (1.76,3.43) -> (0.04,0.03)
+[A* DEBUG] Map stats: 237 walls, 346 scanned, 28 visited
+[A* DEBUG] Inflated obstacles: 559 cells (inflation=2, unreachable=0)
+[A* DEBUG] Cleared 28 visited cells from obstacles
+[A* DEBUG] Cleared 41 cells around goal (radius=3)
+[A* DEBUG] Start in obstacles: False, Goal in obstacles: False
+[A* DEBUG] Path found! 15 cells, 36 iterations
+[A* DEBUG] 14/14 segments blocked, using unsimplified A* path
+[A* DEBUG] Simplified to 15 waypoints
+[1017] RETURN DRIVE WP0/15 goal=(1.65,3.45) origin_dist=3.81m front=0.73m[233.2s] [A*] No clear LOS to WP1 (1.35,3.45), finding intermediate...
+[233.2s] [A*] WARNING: No clear LOS path found to WP1
+
+[233.2s] [A*] No safe path to next WP, replanning...
+[A* DEBUG] Planning from (5, 11) to (0, 0)
+[A* DEBUG] World coords: (1.77,3.43) -> (0.04,0.03)
+[A* DEBUG] Map stats: 237 walls, 346 scanned, 28 visited
+[A* DEBUG] Inflated obstacles: 559 cells (inflation=2, unreachable=0)
+[A* DEBUG] Cleared 28 visited cells from obstacles
+[A* DEBUG] Cleared 41 cells around goal (radius=3)
+[A* DEBUG] Start in obstacles: False, Goal in obstacles: False
+[A* DEBUG] Path found! 15 cells, 36 iterations
+[A* DEBUG] 14/14 segments blocked, using unsimplified A* path
+[A* DEBUG] Simplified to 15 waypoints
+[1018] RETURN DRIVE WP0/15 goal=(1.65,3.45) origin_dist=3.82m front=0.88m[233.4s] [A*] No clear LOS to WP1 (1.35,3.45), finding intermediate...
+[233.4s] [A*] WARNING: No clear LOS path found to WP1
+
+[233.4s] [A*] No safe path to next WP, replanning...
+[A* DEBUG] Planning from (5, 11) to (0, 0)
+[A* DEBUG] World coords: (1.78,3.43) -> (0.04,0.03)
+[A* DEBUG] Map stats: 237 walls, 346 scanned, 28 visited
+[A* DEBUG] Inflated obstacles: 559 cells (inflation=2, unreachable=0)
+[A* DEBUG] Cleared 28 visited cells from obstacles
+[A* DEBUG] Cleared 41 cells around goal (radius=3)
+[A* DEBUG] Start in obstacles: False, Goal in obstacles: False
+[A* DEBUG] Path found! 15 cells, 36 iterations
+[A* DEBUG] 14/14 segments blocked, using unsimplified A* path
+[A* DEBUG] Simplified to 15 waypoints
+[1019] RETURN DRIVE WP0/15 goal=(1.65,3.45) origin_dist=3.82m front=0.76m[233.6s] [A*] No clear LOS to WP1 (1.35,3.45), finding intermediate...
+[233.6s] [A*] WARNING: No clear LOS path found to WP1
+
+[233.6s] [A*] No safe path to next WP, replanning...
+[A* DEBUG] Planning from (5, 11) to (0, 0)
+[A* DEBUG] World coords: (1.78,3.43) -> (0.04,0.03)
+[A* DEBUG] Map stats: 237 walls, 346 scanned, 28 visited
+[A* DEBUG] Inflated obstacles: 559 cells (inflation=2, unreachable=0)
+[A* DEBUG] Cleared 28 visited cells from obstacles
+[A* DEBUG] Cleared 41 cells around goal (radius=3)
+[A* DEBUG] Start in obstacles: False, Goal in obstacles: False
+[A* DEBUG] Path found! 15 cells, 36 iterations
+[A* DEBUG] 14/14 segments blocked, using unsimplified A* path
+[A* DEBUG] Simplified to 15 waypoints
+[1020] RETURN DRIVE WP0/15 goal=(1.65,3.45) origin_dist=3.82m front=0.75m[233.8s] [A*] No clear LOS to WP1 (1.35,3.45), finding intermediate...
+[233.8s] [A*] WARNING: No clear LOS path found to WP1
+
+[233.8s] [A*] No safe path to next WP, replanning...
+[A* DEBUG] Planning from (5, 11) to (0, 0)
+[A* DEBUG] World coords: (1.78,3.43) -> (0.04,0.03)
+[A* DEBUG] Map stats: 237 walls, 346 scanned, 28 visited
+[A* DEBUG] Inflated obstacles: 559 cells (inflation=2, unreachable=0)
+[A* DEBUG] Cleared 28 visited cells from obstacles
+[A* DEBUG] Cleared 41 cells around goal (radius=3)
+[A* DEBUG] Start in obstacles: False, Goal in obstacles: False
+[A* DEBUG] Path found! 15 cells, 36 iterations
+[A* DEBUG] 14/14 segments blocked, using unsimplified A* path
+[A* DEBUG] Simplified to 15 waypoints
+[1021] RETURN DRIVE WP0/15 goal=(1.65,3.45) origin_dist=3.82m front=0.68m[234.1s] [A*] No clear LOS to WP1 (1.35,3.45), finding intermediate...
+[234.1s] [A*] WARNING: No clear LOS path found to WP1
+
+[234.1s] [A*] No safe path to next WP, replanning...
+[A* DEBUG] Planning from (5, 11) to (0, 0)
+[A* DEBUG] World coords: (1.78,3.43) -> (0.04,0.03)
+[A* DEBUG] Map stats: 237 walls, 346 scanned, 28 visited
+[A* DEBUG] Inflated obstacles: 559 cells (inflation=2, unreachable=0)
+[A* DEBUG] Cleared 28 visited cells from obstacles
+[A* DEBUG] Cleared 41 cells around goal (radius=3)
+[A* DEBUG] Start in obstacles: False, Goal in obstacles: False
+[A* DEBUG] Path found! 15 cells, 36 iterations
+[A* DEBUG] 14/14 segments blocked, using unsimplified A* path
+[A* DEBUG] Simplified to 15 waypoints
+[1022] RETURN DRIVE WP0/15 goal=(1.65,3.45) origin_dist=3.82m front=0.61m[234.3s] [A*] No clear LOS to WP1 (1.35,3.45), finding intermediate...
+[234.3s] [A*] WARNING: No clear LOS path found to WP1
+
+[234.3s] [A*] No safe path to next WP, replanning...
+[A* DEBUG] Planning from (5, 11) to (0, 0)
+[A* DEBUG] World coords: (1.77,3.43) -> (0.04,0.03)
+[A* DEBUG] Map stats: 237 walls, 346 scanned, 28 visited
+[A* DEBUG] Inflated obstacles: 559 cells (inflation=2, unreachable=0)
+[A* DEBUG] Cleared 28 visited cells from obstacles
+[A* DEBUG] Cleared 41 cells around goal (radius=3)
+[A* DEBUG] Start in obstacles: False, Goal in obstacles: False
+[A* DEBUG] Path found! 15 cells, 36 iterations
+[A* DEBUG] 14/14 segments blocked, using unsimplified A* path
+[A* DEBUG] Simplified to 15 waypoints
+[1023] RETURN DRIVE WP0/15 goal=(1.65,3.45) origin_dist=3.82m front=0.60m[234.5s] [A*] No clear LOS to WP1 (1.35,3.45), finding intermediate...
+[234.5s] [A*] WARNING: No clear LOS path found to WP1
+
+[234.5s] [A*] No safe path to next WP, replanning...
+[A* DEBUG] Planning from (5, 11) to (0, 0)
+[A* DEBUG] World coords: (1.77,3.43) -> (0.04,0.03)
+[A* DEBUG] Map stats: 237 walls, 346 scanned, 28 visited
+[A* DEBUG] Inflated obstacles: 559 cells (inflation=2, unreachable=0)
+[A* DEBUG] Cleared 28 visited cells from obstacles
+[A* DEBUG] Cleared 41 cells around goal (radius=3)
+[A* DEBUG] Start in obstacles: False, Goal in obstacles: False
+[A* DEBUG] Path found! 15 cells, 36 iterations
+[A* DEBUG] 14/14 segments blocked, using unsimplified A* path
+[A* DEBUG] Simplified to 15 waypoints
+[1024] RETURN DRIVE WP0/15 goal=(1.65,3.45) origin_dist=3.81m front=0.56m[234.7s] [A*] No clear LOS to WP1 (1.35,3.45), finding intermediate...
+[234.7s] [A*] WARNING: No clear LOS path found to WP1
+
+[234.7s] [A*] No safe path to next WP, replanning...
+[A* DEBUG] Planning from (5, 11) to (0, 0)
+[A* DEBUG] World coords: (1.76,3.43) -> (0.04,0.03)
+[A* DEBUG] Map stats: 237 walls, 346 scanned, 28 visited
+[A* DEBUG] Inflated obstacles: 559 cells (inflation=2, unreachable=0)
+[A* DEBUG] Cleared 28 visited cells from obstacles
+[A* DEBUG] Cleared 41 cells around goal (radius=3)
+[A* DEBUG] Start in obstacles: False, Goal in obstacles: False
+[A* DEBUG] Path found! 15 cells, 36 iterations
+[A* DEBUG] 14/14 segments blocked, using unsimplified A* path
+[A* DEBUG] Simplified to 15 waypoints
+[1025] RETURN DRIVE WP0/15 goal=(1.65,3.45) origin_dist=3.81m front=0.55m[234.9s] [A*] No clear LOS to WP1 (1.35,3.45), finding intermediate...
+[234.9s] [A*] WARNING: No clear LOS path found to WP1
+
+[234.9s] [A*] No safe path to next WP, replanning...
+[A* DEBUG] Planning from (5, 11) to (0, 0)
+[A* DEBUG] World coords: (1.75,3.43) -> (0.04,0.03)
+[A* DEBUG] Map stats: 237 walls, 346 scanned, 28 visited
+[A* DEBUG] Inflated obstacles: 559 cells (inflation=2, unreachable=0)
+[A* DEBUG] Cleared 28 visited cells from obstacles
+[A* DEBUG] Cleared 41 cells around goal (radius=3)
+[A* DEBUG] Start in obstacles: False, Goal in obstacles: False
+[A* DEBUG] Path found! 15 cells, 36 iterations
+[A* DEBUG] 14/14 segments blocked, using unsimplified A* path
+[A* DEBUG] Simplified to 15 waypoints
+[1026] RETURN DRIVE WP0/15 goal=(1.65,3.45) origin_dist=3.81m front=0.55m[235.1s] [A*] No clear LOS to WP1 (1.35,3.45), finding intermediate...
+[235.1s] [A*] WARNING: No clear LOS path found to WP1
+
+[235.1s] [A*] No safe path to next WP, replanning...
+[A* DEBUG] Planning from (5, 11) to (0, 0)
+[A* DEBUG] World coords: (1.75,3.43) -> (0.04,0.03)
+[A* DEBUG] Map stats: 237 walls, 346 scanned, 28 visited
+[A* DEBUG] Inflated obstacles: 559 cells (inflation=2, unreachable=0)
+[A* DEBUG] Cleared 28 visited cells from obstacles
+[A* DEBUG] Cleared 41 cells around goal (radius=3)
+[A* DEBUG] Start in obstacles: False, Goal in obstacles: False
+[A* DEBUG] Path found! 15 cells, 36 iterations
+[A* DEBUG] 14/14 segments blocked, using unsimplified A* path
+[A* DEBUG] Simplified to 15 waypoints
+[1027] RETURN DRIVE WP0/15 goal=(1.65,3.45) origin_dist=3.80m front=0.52m[235.3s] [A*] No clear LOS to WP1 (1.35,3.45), finding intermediate...
+[235.3s] [A*] WARNING: No clear LOS path found to WP1
+
+[235.3s] [A*] No safe path to next WP, replanning...
+[A* DEBUG] Planning from (5, 11) to (0, 0)
+[A* DEBUG] World coords: (1.73,3.43) -> (0.04,0.03)
+[A* DEBUG] Map stats: 237 walls, 346 scanned, 28 visited
+[A* DEBUG] Inflated obstacles: 559 cells (inflation=2, unreachable=0)
+[A* DEBUG] Cleared 28 visited cells from obstacles
+[A* DEBUG] Cleared 41 cells around goal (radius=3)
+[A* DEBUG] Start in obstacles: False, Goal in obstacles: False
+[A* DEBUG] Path found! 15 cells, 36 iterations
+[A* DEBUG] 14/14 segments blocked, using unsimplified A* path
+[A* DEBUG] Simplified to 15 waypoints
+[1028] RETURN DRIVE WP0/15 goal=(1.65,3.45) origin_dist=3.80m front=0.51m[235.5s] [A*] No clear LOS to WP1 (1.35,3.45), finding intermediate...
+[235.5s] [A*] WARNING: No clear LOS path found to WP1
+
+[235.5s] [A*] No safe path to next WP, replanning...
+[A* DEBUG] Planning from (5, 11) to (0, 0)
+[A* DEBUG] World coords: (1.72,3.43) -> (0.04,0.03)
+[A* DEBUG] Map stats: 237 walls, 346 scanned, 28 visited
+[A* DEBUG] Inflated obstacles: 559 cells (inflation=2, unreachable=0)
+[A* DEBUG] Cleared 28 visited cells from obstacles
+[A* DEBUG] Cleared 41 cells around goal (radius=3)
+[A* DEBUG] Start in obstacles: False, Goal in obstacles: False
+[A* DEBUG] Path found! 15 cells, 36 iterations
+[A* DEBUG] 14/14 segments blocked, using unsimplified A* path
+[A* DEBUG] Simplified to 15 waypoints
+[1029] RETURN DRIVE WP0/15 goal=(1.65,3.45) origin_dist=3.80m front=0.50m[235.7s] [A*] No clear LOS to WP1 (1.35,3.45), finding intermediate...
+[235.7s] [A*] WARNING: No clear LOS path found to WP1
+
+[235.7s] [A*] No safe path to next WP, replanning...
+[A* DEBUG] Planning from (5, 11) to (0, 0)
+[A* DEBUG] World coords: (1.71,3.43) -> (0.04,0.03)
+[A* DEBUG] Map stats: 237 walls, 346 scanned, 28 visited
+[A* DEBUG] Inflated obstacles: 559 cells (inflation=2, unreachable=0)
+[A* DEBUG] Cleared 28 visited cells from obstacles
+[A* DEBUG] Cleared 41 cells around goal (radius=3)
+[A* DEBUG] Start in obstacles: False, Goal in obstacles: False
+[A* DEBUG] Path found! 15 cells, 36 iterations
+[A* DEBUG] 14/14 segments blocked, using unsimplified A* path
+[A* DEBUG] Simplified to 15 waypoints
+[1030] RETURN DRIVE WP0/15 goal=(1.65,3.45) origin_dist=3.79m front=0.46m[235.9s] [A*] No clear LOS to WP1 (1.35,3.45), finding intermediate...
+[235.9s] [A*] WARNING: No clear LOS path found to WP1
+
+[235.9s] [A*] No safe path to next WP, replanning...
+[A* DEBUG] Planning from (5, 11) to (0, 0)
+[A* DEBUG] World coords: (1.70,3.43) -> (0.04,0.03)
+[A* DEBUG] Map stats: 237 walls, 346 scanned, 28 visited
+[A* DEBUG] Inflated obstacles: 559 cells (inflation=2, unreachable=0)
+[A* DEBUG] Cleared 28 visited cells from obstacles
+[A* DEBUG] Cleared 41 cells around goal (radius=3)
+[A* DEBUG] Start in obstacles: False, Goal in obstacles: False
+[A* DEBUG] Path found! 15 cells, 36 iterations
+[A* DEBUG] 14/14 segments blocked, using unsimplified A* path
+[A* DEBUG] Simplified to 15 waypoints
+[1031] RETURN DRIVE WP0/15 goal=(1.65,3.45) origin_dist=3.79m front=0.45m[236.1s] [A*] No clear LOS to WP1 (1.35,3.45), finding intermediate...
+[236.1s] [A*] WARNING: No clear LOS path found to WP1
+
+[236.1s] [A*] No safe path to next WP, replanning...
+[A* DEBUG] Planning from (5, 11) to (0, 0)
+[A* DEBUG] World coords: (1.69,3.43) -> (0.04,0.03)
+[A* DEBUG] Map stats: 237 walls, 346 scanned, 28 visited
+[A* DEBUG] Inflated obstacles: 559 cells (inflation=2, unreachable=0)
+[A* DEBUG] Cleared 28 visited cells from obstacles
+[A* DEBUG] Cleared 41 cells around goal (radius=3)
+[A* DEBUG] Start in obstacles: False, Goal in obstacles: False
+[A* DEBUG] Path found! 15 cells, 36 iterations
+[A* DEBUG] 14/14 segments blocked, using unsimplified A* path
+[A* DEBUG] Simplified to 15 waypoints
+[1032] RETURN DRIVE WP0/15 goal=(1.65,3.45) origin_dist=3.78m front=0.44m[236.3s] [A*] No clear LOS to WP1 (1.35,3.45), finding intermediate...
+[236.3s] [A*] WARNING: No clear LOS path found to WP1
+
+[236.3s] [A*] No safe path to next WP, replanning...
+[A* DEBUG] Planning from (5, 11) to (0, 0)
+[A* DEBUG] World coords: (1.68,3.44) -> (0.04,0.03)
+[A* DEBUG] Map stats: 237 walls, 346 scanned, 28 visited
+[A* DEBUG] Inflated obstacles: 559 cells (inflation=2, unreachable=0)
+[A* DEBUG] Cleared 28 visited cells from obstacles
+[A* DEBUG] Cleared 41 cells around goal (radius=3)
+[A* DEBUG] Start in obstacles: False, Goal in obstacles: False
+[A* DEBUG] Path found! 15 cells, 36 iterations
+[A* DEBUG] 14/14 segments blocked, using unsimplified A* path
+[A* DEBUG] Simplified to 15 waypoints
+[1033] RETURN DRIVE WP0/15 goal=(1.65,3.45) origin_dist=3.78m front=0.43m[236.5s] [A*] No clear LOS to WP1 (1.35,3.45), finding intermediate...
+[236.5s] [A*] WARNING: No clear LOS path found to WP1
+
+[236.5s] [A*] No safe path to next WP, replanning...
+[A* DEBUG] Planning from (5, 11) to (0, 0)
+[A* DEBUG] World coords: (1.66,3.44) -> (0.04,0.03)
+[A* DEBUG] Map stats: 238 walls, 346 scanned, 28 visited
+[A* DEBUG] Inflated obstacles: 559 cells (inflation=2, unreachable=0)
+[A* DEBUG] Cleared 28 visited cells from obstacles
+[A* DEBUG] Cleared 41 cells around goal (radius=3)
+[A* DEBUG] Start in obstacles: False, Goal in obstacles: False
+[A* DEBUG] Path found! 15 cells, 36 iterations
+[A* DEBUG] 14/14 segments blocked, using unsimplified A* path
+[A* DEBUG] Simplified to 15 waypoints
+[1034] RETURN DRIVE WP0/15 goal=(1.65,3.45) origin_dist=3.78m front=0.43m[236.7s] [A*] No clear LOS to WP1 (1.35,3.45), finding intermediate...
+[236.7s] [A*] WARNING: No clear LOS path found to WP1
+
+[236.7s] [A*] No safe path to next WP, replanning...
+[A* DEBUG] Planning from (5, 11) to (0, 0)
+[A* DEBUG] World coords: (1.66,3.44) -> (0.04,0.03)
+[A* DEBUG] Map stats: 238 walls, 346 scanned, 28 visited
+[A* DEBUG] Inflated obstacles: 559 cells (inflation=2, unreachable=0)
+[A* DEBUG] Cleared 28 visited cells from obstacles
+[A* DEBUG] Cleared 41 cells around goal (radius=3)
+[A* DEBUG] Start in obstacles: False, Goal in obstacles: False
+[A* DEBUG] Path found! 15 cells, 36 iterations
+[A* DEBUG] 14/14 segments blocked, using unsimplified A* path
+[A* DEBUG] Simplified to 15 waypoints
+[1035] RETURN DRIVE WP0/15 goal=(1.65,3.45) origin_dist=3.78m front=0.42m[236.9s] [A*] No clear LOS to WP1 (1.35,3.45), finding intermediate...
+[236.9s] [A*] WARNING: No clear LOS path found to WP1
+
+[236.9s] [A*] No safe path to next WP, replanning...
+[A* DEBUG] Planning from (5, 11) to (0, 0)
+[A* DEBUG] World coords: (1.65,3.44) -> (0.04,0.03)
+[A* DEBUG] Map stats: 238 walls, 346 scanned, 28 visited
+[A* DEBUG] Inflated obstacles: 559 cells (inflation=2, unreachable=0)
+[A* DEBUG] Cleared 28 visited cells from obstacles
+[A* DEBUG] Cleared 41 cells around goal (radius=3)
+[A* DEBUG] Start in obstacles: False, Goal in obstacles: False
+[A* DEBUG] Path found! 15 cells, 36 iterations
+[A* DEBUG] 14/14 segments blocked, using unsimplified A* path
+[A* DEBUG] Simplified to 15 waypoints
+[1036] RETURN DRIVE WP0/15 goal=(1.65,3.45) origin_dist=3.77m front=0.40m[237.1s] [A*] No clear LOS to WP1 (1.35,3.45), finding intermediate...
+[237.1s] [A*] WARNING: No clear LOS path found to WP1
+
+[237.1s] [A*] No safe path to next WP, replanning...
+[A* DEBUG] Planning from (5, 11) to (0, 0)
+[A* DEBUG] World coords: (1.64,3.44) -> (0.04,0.03)
+[A* DEBUG] Map stats: 238 walls, 346 scanned, 28 visited
+[A* DEBUG] Inflated obstacles: 559 cells (inflation=2, unreachable=0)
+[A* DEBUG] Cleared 28 visited cells from obstacles
+[A* DEBUG] Cleared 41 cells around goal (radius=3)
+[A* DEBUG] Start in obstacles: False, Goal in obstacles: False
+[A* DEBUG] Path found! 15 cells, 36 iterations
+[A* DEBUG] 14/14 segments blocked, using unsimplified A* path
+[A* DEBUG] Simplified to 15 waypoints
+[1037] RETURN DRIVE WP0/15 goal=(1.65,3.45) origin_dist=3.77m front=0.40m[237.3s] [A*] No clear LOS to WP1 (1.35,3.45), finding intermediate...
+[237.3s] [A*] WARNING: No clear LOS path found to WP1
+
+[237.3s] [A*] No safe path to next WP, replanning...
+[A* DEBUG] Planning from (5, 11) to (0, 0)
+[A* DEBUG] World coords: (1.65,3.44) -> (0.04,0.03)
+[A* DEBUG] Map stats: 238 walls, 346 scanned, 28 visited
+[A* DEBUG] Inflated obstacles: 559 cells (inflation=2, unreachable=0)
+[A* DEBUG] Cleared 28 visited cells from obstacles
+[A* DEBUG] Cleared 41 cells around goal (radius=3)
+[A* DEBUG] Start in obstacles: False, Goal in obstacles: False
+[A* DEBUG] Path found! 15 cells, 36 iterations
+[A* DEBUG] 14/14 segments blocked, using unsimplified A* path
+[A* DEBUG] Simplified to 15 waypoints
+[1038] RETURN DRIVE WP0/15 goal=(1.65,3.45) origin_dist=3.77m front=0.40m[237.5s] [A*] No clear LOS to WP1 (1.35,3.45), finding intermediate...
+[237.5s] [A*] WARNING: No clear LOS path found to WP1
+
+[237.5s] [A*] No safe path to next WP, replanning...
+[A* DEBUG] Planning from (5, 11) to (0, 0)
+[A* DEBUG] World coords: (1.66,3.44) -> (0.04,0.03)
+[A* DEBUG] Map stats: 238 walls, 346 scanned, 28 visited
+[A* DEBUG] Inflated obstacles: 559 cells (inflation=2, unreachable=0)
+[A* DEBUG] Cleared 28 visited cells from obstacles
+[A* DEBUG] Cleared 41 cells around goal (radius=3)
+[A* DEBUG] Start in obstacles: False, Goal in obstacles: False
+[A* DEBUG] Path found! 15 cells, 36 iterations
+[A* DEBUG] 14/14 segments blocked, using unsimplified A* path
+[A* DEBUG] Simplified to 15 waypoints
+[1039] RETURN DRIVE WP0/15 goal=(1.65,3.45) origin_dist=3.77m front=0.40m[237.7s] [A*] No clear LOS to WP1 (1.35,3.45), finding intermediate...
+[237.7s] [A*] WARNING: No clear LOS path found to WP1
+
+[237.7s] [A*] No safe path to next WP, replanning...
+[A* DEBUG] Planning from (5, 11) to (0, 0)
+[A* DEBUG] World coords: (1.66,3.44) -> (0.04,0.03)
+[A* DEBUG] Map stats: 238 walls, 346 scanned, 28 visited
+[A* DEBUG] Inflated obstacles: 559 cells (inflation=2, unreachable=0)
+[A* DEBUG] Cleared 28 visited cells from obstacles
+[A* DEBUG] Cleared 41 cells around goal (radius=3)
+[A* DEBUG] Start in obstacles: False, Goal in obstacles: False
+[A* DEBUG] Path found! 15 cells, 36 iterations
+[A* DEBUG] 14/14 segments blocked, using unsimplified A* path
+[A* DEBUG] Simplified to 15 waypoints
+[1040] RETURN DRIVE WP0/15 goal=(1.65,3.45) origin_dist=3.77m front=0.40m[238.0s] [A*] No clear LOS to WP1 (1.35,3.45), finding intermediate...
+[238.0s] [A*] WARNING: No clear LOS path found to WP1
+
+[238.0s] [A*] No safe path to next WP, replanning...
+[A* DEBUG] Planning from (5, 11) to (0, 0)
+[A* DEBUG] World coords: (1.66,3.44) -> (0.04,0.03)
+[A* DEBUG] Map stats: 238 walls, 346 scanned, 28 visited
+[A* DEBUG] Inflated obstacles: 559 cells (inflation=2, unreachable=0)
+[A* DEBUG] Cleared 28 visited cells from obstacles
+[A* DEBUG] Cleared 41 cells around goal (radius=3)
+[A* DEBUG] Start in obstacles: False, Goal in obstacles: False
+[A* DEBUG] Path found! 15 cells, 36 iterations
+[A* DEBUG] 14/14 segments blocked, using unsimplified A* path
+[A* DEBUG] Simplified to 15 waypoints
+[1041] RETURN DRIVE WP0/15 goal=(1.65,3.45) origin_dist=3.77m front=0.40m[238.2s] [A*] No clear LOS to WP1 (1.35,3.45), finding intermediate...
+[238.2s] [A*] WARNING: No clear LOS path found to WP1
+
+[238.2s] [A*] No safe path to next WP, replanning...
+[A* DEBUG] Planning from (5, 11) to (0, 0)
+[A* DEBUG] World coords: (1.67,3.43) -> (0.04,0.03)
+[A* DEBUG] Map stats: 238 walls, 346 scanned, 28 visited
+[A* DEBUG] Inflated obstacles: 559 cells (inflation=2, unreachable=0)
+[A* DEBUG] Cleared 28 visited cells from obstacles
+[A* DEBUG] Cleared 41 cells around goal (radius=3)
+[A* DEBUG] Start in obstacles: False, Goal in obstacles: False
+[A* DEBUG] Path found! 15 cells, 36 iterations
+[A* DEBUG] 14/14 segments blocked, using unsimplified A* path
+[A* DEBUG] Simplified to 15 waypoints
+[1042] RETURN DRIVE WP0/15 goal=(1.65,3.45) origin_dist=3.77m front=0.40m[238.4s] [A*] No clear LOS to WP1 (1.35,3.45), finding intermediate...
+[238.4s] [A*] WARNING: No clear LOS path found to WP1
+
+[238.4s] [A*] No safe path to next WP, replanning...
+[A* DEBUG] Planning from (5, 11) to (0, 0)
+[A* DEBUG] World coords: (1.67,3.43) -> (0.04,0.03)
+[A* DEBUG] Map stats: 239 walls, 346 scanned, 28 visited
+[A* DEBUG] Inflated obstacles: 561 cells (inflation=2, unreachable=0)
+[A* DEBUG] Cleared 28 visited cells from obstacles
+[A* DEBUG] Cleared 41 cells around goal (radius=3)
+[A* DEBUG] Start in obstacles: False, Goal in obstacles: False
+[A* DEBUG] Path found! 15 cells, 36 iterations
+[A* DEBUG] 14/14 segments blocked, using unsimplified A* path
+[A* DEBUG] Simplified to 15 waypoints
+[1043] RETURN DRIVE WP0/15 goal=(1.65,3.45) origin_dist=3.77m front=0.39m[238.6s] [A*] No clear LOS to WP1 (1.35,3.45), finding intermediate...
+[238.6s] [A*] WARNING: No clear LOS path found to WP1
+
+[238.6s] [A*] No safe path to next WP, replanning...
+[A* DEBUG] Planning from (5, 11) to (0, 0)
+[A* DEBUG] World coords: (1.66,3.44) -> (0.04,0.03)
+[A* DEBUG] Map stats: 239 walls, 346 scanned, 28 visited
+[A* DEBUG] Inflated obstacles: 561 cells (inflation=2, unreachable=0)
+[A* DEBUG] Cleared 28 visited cells from obstacles
+[A* DEBUG] Cleared 41 cells around goal (radius=3)
+[A* DEBUG] Start in obstacles: False, Goal in obstacles: False
+[A* DEBUG] Path found! 15 cells, 36 iterations
+[A* DEBUG] 14/14 segments blocked, using unsimplified A* path
+[A* DEBUG] Simplified to 15 waypoints
+[1044] RETURN DRIVE WP0/15 goal=(1.65,3.45) origin_dist=3.77m front=0.38m[238.8s] [A*] No clear LOS to WP1 (1.35,3.45), finding intermediate...
+[238.8s] [A*] WARNING: No clear LOS path found to WP1
+
+[238.8s] [A*] No safe path to next WP, replanning...
+[A* DEBUG] Planning from (5, 11) to (0, 0)
+[A* DEBUG] World coords: (1.65,3.44) -> (0.04,0.03)
+[A* DEBUG] Map stats: 239 walls, 346 scanned, 28 visited
+[A* DEBUG] Inflated obstacles: 561 cells (inflation=2, unreachable=0)
+[A* DEBUG] Cleared 28 visited cells from obstacles
+[A* DEBUG] Cleared 41 cells around goal (radius=3)
+[A* DEBUG] Start in obstacles: False, Goal in obstacles: False
+[A* DEBUG] Path found! 15 cells, 36 iterations
+[A* DEBUG] 14/14 segments blocked, using unsimplified A* path
+[A* DEBUG] Simplified to 15 waypoints
+[1045] RETURN DRIVE WP0/15 goal=(1.65,3.45) origin_dist=3.77m front=0.37m[239.0s] [A*] No clear LOS to WP1 (1.35,3.45), finding intermediate...
+[239.0s] [A*] WARNING: No clear LOS path found to WP1
+
+[239.0s] [A*] No safe path to next WP, replanning...
+[A* DEBUG] Planning from (5, 11) to (0, 0)
+[A* DEBUG] World coords: (1.64,3.45) -> (0.04,0.03)
+[A* DEBUG] Map stats: 239 walls, 346 scanned, 28 visited
+[A* DEBUG] Inflated obstacles: 561 cells (inflation=2, unreachable=0)
+[A* DEBUG] Cleared 28 visited cells from obstacles
+[A* DEBUG] Cleared 41 cells around goal (radius=3)
+[A* DEBUG] Start in obstacles: False, Goal in obstacles: False
+[A* DEBUG] Path found! 15 cells, 36 iterations
+[A* DEBUG] 14/14 segments blocked, using unsimplified A* path
+[A* DEBUG] Simplified to 15 waypoints
+[1046] RETURN DRIVE WP0/15 goal=(1.65,3.45) origin_dist=3.77m front=0.36m[239.2s] [A*] No clear LOS to WP1 (1.35,3.45), finding intermediate...
+[239.2s] [A*] WARNING: No clear LOS path found to WP1
+
+[239.2s] [A*] No safe path to next WP, replanning...
+[A* DEBUG] Planning from (5, 11) to (0, 0)
+[A* DEBUG] World coords: (1.63,3.45) -> (0.04,0.03)
+[A* DEBUG] Map stats: 239 walls, 346 scanned, 28 visited
+[A* DEBUG] Inflated obstacles: 561 cells (inflation=2, unreachable=0)
+[A* DEBUG] Cleared 28 visited cells from obstacles
+[A* DEBUG] Cleared 41 cells around goal (radius=3)
+[A* DEBUG] Start in obstacles: False, Goal in obstacles: False
+[A* DEBUG] Path found! 15 cells, 36 iterations
+[A* DEBUG] 14/14 segments blocked, using unsimplified A* path
+[A* DEBUG] Simplified to 15 waypoints
+[1047] RETURN DRIVE WP0/15 goal=(1.65,3.45) origin_dist=3.77m front=0.35m[239.4s] [A*] No clear LOS to WP1 (1.35,3.45), finding intermediate...
+[239.4s] [A*] WARNING: No clear LOS path found to WP1
+
+[239.4s] [A*] No safe path to next WP, replanning...
+[A* DEBUG] Planning from (5, 11) to (0, 0)
+[A* DEBUG] World coords: (1.63,3.45) -> (0.04,0.03)
+[A* DEBUG] Map stats: 239 walls, 346 scanned, 28 visited
+[A* DEBUG] Inflated obstacles: 561 cells (inflation=2, unreachable=0)
+[A* DEBUG] Cleared 28 visited cells from obstacles
+[A* DEBUG] Cleared 41 cells around goal (radius=3)
+[A* DEBUG] Start in obstacles: False, Goal in obstacles: False
+[A* DEBUG] Path found! 15 cells, 36 iterations
+[A* DEBUG] 14/14 segments blocked, using unsimplified A* path
+[A* DEBUG] Simplified to 15 waypoints
+[1048] RETURN DRIVE WP0/15 goal=(1.65,3.45) origin_dist=3.77m front=0.36m[239.6s] [A*] No clear LOS to WP1 (1.35,3.45), finding intermediate...
+[239.6s] [A*] WARNING: No clear LOS path found to WP1
+
+[239.7s] [A*] No safe path to next WP, replanning...
+[A* DEBUG] Planning from (5, 11) to (0, 0)
+[A* DEBUG] World coords: (1.64,3.44) -> (0.04,0.03)
+[A* DEBUG] Map stats: 239 walls, 346 scanned, 28 visited
+[A* DEBUG] Inflated obstacles: 561 cells (inflation=2, unreachable=0)
+[A* DEBUG] Cleared 28 visited cells from obstacles
+[A* DEBUG] Cleared 41 cells around goal (radius=3)
+[A* DEBUG] Start in obstacles: False, Goal in obstacles: False
+[A* DEBUG] Path found! 15 cells, 36 iterations
+[A* DEBUG] 14/14 segments blocked, using unsimplified A* path
+[A* DEBUG] Simplified to 15 waypoints
+[1049] RETURN DRIVE WP0/15 goal=(1.65,3.45) origin_dist=3.77m front=0.36m[239.9s] [A*] No clear LOS to WP1 (1.35,3.45), finding intermediate...
+[239.9s] [A*] WARNING: No clear LOS path found to WP1
+
+[239.9s] [A*] No safe path to next WP, replanning...
+[A* DEBUG] Planning from (5, 11) to (0, 0)
+[A* DEBUG] World coords: (1.65,3.43) -> (0.04,0.03)
+[A* DEBUG] Map stats: 239 walls, 346 scanned, 28 visited
+[A* DEBUG] Inflated obstacles: 561 cells (inflation=2, unreachable=0)
+[A* DEBUG] Cleared 28 visited cells from obstacles
+[A* DEBUG] Cleared 41 cells around goal (radius=3)
+[A* DEBUG] Start in obstacles: False, Goal in obstacles: False
+[A* DEBUG] Path found! 15 cells, 36 iterations
+[A* DEBUG] 14/14 segments blocked, using unsimplified A* path
+[A* DEBUG] Simplified to 15 waypoints
+[1050] RETURN DRIVE WP0/15 goal=(1.65,3.45) origin_dist=3.76m front=0.37m[240.1s] [A*] No clear LOS to WP1 (1.35,3.45), finding intermediate...
+[240.1s] [A*] WARNING: No clear LOS path found to WP1
+
+[240.1s] [A*] No safe path to next WP, replanning...
+[A* DEBUG] Planning from (5, 11) to (0, 0)
+[A* DEBUG] World coords: (1.65,3.43) -> (0.04,0.03)
+[A* DEBUG] Map stats: 240 walls, 347 scanned, 28 visited
+[A* DEBUG] Inflated obstacles: 561 cells (inflation=2, unreachable=0)
+[A* DEBUG] Cleared 28 visited cells from obstacles
+[A* DEBUG] Cleared 41 cells around goal (radius=3)
+[A* DEBUG] Start in obstacles: False, Goal in obstacles: False
+[A* DEBUG] Path found! 15 cells, 36 iterations
+[A* DEBUG] 14/14 segments blocked, using unsimplified A* path
+[A* DEBUG] Simplified to 15 waypoints
+
+[240.1s] [A*] No progress in 15.0s (stayed within 0.5m), replanning...
+[A*] Area center: (1.81,3.44), best_dist=3.84m, current_dist=3.76m
+[A*] Marked waypoint (1.65,3.45) cell (5, 11) as UNREACHABLE
+
+[BACKUP] Reversing...
+[BACKUP] Turning left (L_openings=7 R_openings=2)
+[A* DEBUG] Planning from (5, 11) to (0, 0)
+[A* DEBUG] World coords: (1.65,3.43) -> (0.04,0.03)
+[A* DEBUG] Map stats: 240 walls, 347 scanned, 28 visited
+[A* DEBUG] Inflated obstacles: 561 cells (inflation=2, unreachable=1)
+[A* DEBUG] Cleared 28 visited cells from obstacles
+[A* DEBUG] Cleared 41 cells around goal (radius=3)
+[A* DEBUG] Start in obstacles: False, Goal in obstacles: False
+[A* DEBUG] Path found! 15 cells, 36 iterations
+[A* DEBUG] 14/14 segments blocked, using unsimplified A* path
+[A* DEBUG] Simplified to 15 waypoints
+[A*] Replanned with 15 waypoints
+[243.6s] [A*] No clear LOS to WP0 (1.65,3.45), finding intermediate...
+[243.6s] [A*] No clear LOS to WP1 (1.35,3.45), finding intermediate...
+[243.6s] [A*] WARNING: No clear LOS path found to WP1
+
+[243.6s] [A*] No safe path to next WP, replanning...
+[A* DEBUG] Planning from (5, 11) to (0, 0)
+[A* DEBUG] World coords: (1.73,3.36) -> (0.04,0.03)
+[A* DEBUG] Map stats: 240 walls, 347 scanned, 28 visited
+[A* DEBUG] Inflated obstacles: 561 cells (inflation=2, unreachable=1)
+[A* DEBUG] Cleared 28 visited cells from obstacles
+[A* DEBUG] Cleared 41 cells around goal (radius=3)
+[A* DEBUG] Start in obstacles: False, Goal in obstacles: False
+[A* DEBUG] Path found! 15 cells, 36 iterations
+[A* DEBUG] 14/14 segments blocked, using unsimplified A* path
+[A* DEBUG] Simplified to 15 waypoints
+[1052] RETURN DRIVE WP0/15 goal=(1.65,3.45) origin_dist=3.73m front=0.48m[243.8s] [A*] No clear LOS to WP1 (1.35,3.45), finding intermediate...
+[243.8s] [A*] WARNING: No clear LOS path found to WP1
+
+[243.8s] [A*] No safe path to next WP, replanning...
+[A* DEBUG] Planning from (5, 11) to (0, 0)
+[A* DEBUG] World coords: (1.73,3.36) -> (0.04,0.03)
+[A* DEBUG] Map stats: 240 walls, 347 scanned, 28 visited
+[A* DEBUG] Inflated obstacles: 561 cells (inflation=2, unreachable=1)
+[A* DEBUG] Cleared 28 visited cells from obstacles
+[A* DEBUG] Cleared 41 cells around goal (radius=3)
+[A* DEBUG] Start in obstacles: False, Goal in obstacles: False
+[A* DEBUG] Path found! 15 cells, 36 iterations
+[A* DEBUG] 14/14 segments blocked, using unsimplified A* path
+[A* DEBUG] Simplified to 15 waypoints
+[1053] RETURN DRIVE WP0/15 goal=(1.65,3.45) origin_dist=3.73m front=0.48m[244.0s] [A*] No clear LOS to WP1 (1.35,3.45), finding intermediate...
+[244.0s] [A*] WARNING: No clear LOS path found to WP1
+
+[244.0s] [A*] No safe path to next WP, replanning...
+[A* DEBUG] Planning from (5, 11) to (0, 0)
+[A* DEBUG] World coords: (1.73,3.36) -> (0.04,0.03)
+[A* DEBUG] Map stats: 240 walls, 347 scanned, 28 visited
+[A* DEBUG] Inflated obstacles: 561 cells (inflation=2, unreachable=1)
+[A* DEBUG] Cleared 28 visited cells from obstacles
+[A* DEBUG] Cleared 41 cells around goal (radius=3)
+[A* DEBUG] Start in obstacles: False, Goal in obstacles: False
+[A* DEBUG] Path found! 15 cells, 36 iterations
+[A* DEBUG] 14/14 segments blocked, using unsimplified A* path
+[A* DEBUG] Simplified to 15 waypoints
+[1054] RETURN DRIVE WP0/15 goal=(1.65,3.45) origin_dist=3.73m front=0.48m[244.2s] [A*] No clear LOS to WP1 (1.35,3.45), finding intermediate...
+[244.2s] [A*] WARNING: No clear LOS path found to WP1
+
+[244.3s] [A*] No safe path to next WP, replanning...
+[A* DEBUG] Planning from (5, 11) to (0, 0)
+[A* DEBUG] World coords: (1.73,3.36) -> (0.04,0.03)
+[A* DEBUG] Map stats: 240 walls, 347 scanned, 28 visited
+[A* DEBUG] Inflated obstacles: 561 cells (inflation=2, unreachable=1)
+[A* DEBUG] Cleared 28 visited cells from obstacles
+[A* DEBUG] Cleared 41 cells around goal (radius=3)
+[A* DEBUG] Start in obstacles: False, Goal in obstacles: False
+[A* DEBUG] Path found! 15 cells, 36 iterations
+[A* DEBUG] 14/14 segments blocked, using unsimplified A* path
+[A* DEBUG] Simplified to 15 waypoints
+[1055] RETURN DRIVE WP0/15 goal=(1.65,3.45) origin_dist=3.73m front=0.48m[244.5s] [A*] No clear LOS to WP1 (1.35,3.45), finding intermediate...
+[244.5s] [A*] WARNING: No clear LOS path found to WP1
+
+[244.5s] [A*] No safe path to next WP, replanning...
+[A* DEBUG] Planning from (5, 11) to (0, 0)
+[A* DEBUG] World coords: (1.73,3.36) -> (0.04,0.03)
+[A* DEBUG] Map stats: 240 walls, 347 scanned, 28 visited
+[A* DEBUG] Inflated obstacles: 561 cells (inflation=2, unreachable=1)
+[A* DEBUG] Cleared 28 visited cells from obstacles
+[A* DEBUG] Cleared 41 cells around goal (radius=3)
+[A* DEBUG] Start in obstacles: False, Goal in obstacles: False
+[A* DEBUG] Path found! 15 cells, 36 iterations
+[A* DEBUG] 14/14 segments blocked, using unsimplified A* path
+[A* DEBUG] Simplified to 15 waypoints
+[1056] RETURN DRIVE WP0/15 goal=(1.65,3.45) origin_dist=3.74m front=0.48m[244.7s] [A*] No clear LOS to WP1 (1.35,3.45), finding intermediate...
+[244.7s] [A*] WARNING: No clear LOS path found to WP1
+
+[244.7s] [A*] No safe path to next WP, replanning...
+[A* DEBUG] Planning from (5, 11) to (0, 0)
+[A* DEBUG] World coords: (1.73,3.36) -> (0.04,0.03)
+[A* DEBUG] Map stats: 240 walls, 347 scanned, 28 visited
+[A* DEBUG] Inflated obstacles: 561 cells (inflation=2, unreachable=1)
+[A* DEBUG] Cleared 28 visited cells from obstacles
+[A* DEBUG] Cleared 41 cells around goal (radius=3)
+[A* DEBUG] Start in obstacles: False, Goal in obstacles: False
+[A* DEBUG] Path found! 15 cells, 36 iterations
+[A* DEBUG] 14/14 segments blocked, using unsimplified A* path
+[A* DEBUG] Simplified to 15 waypoints
+[1057] RETURN DRIVE WP0/15 goal=(1.65,3.45) origin_dist=3.73m front=0.48m[244.9s] [A*] No clear LOS to WP1 (1.35,3.45), finding intermediate...
+[244.9s] [A*] WARNING: No clear LOS path found to WP1
+
+[244.9s] [A*] No safe path to next WP, replanning...
+[A* DEBUG] Planning from (5, 11) to (0, 0)
+[A* DEBUG] World coords: (1.73,3.36) -> (0.04,0.03)
+[A* DEBUG] Map stats: 240 walls, 347 scanned, 28 visited
+[A* DEBUG] Inflated obstacles: 561 cells (inflation=2, unreachable=1)
+[A* DEBUG] Cleared 28 visited cells from obstacles
+[A* DEBUG] Cleared 41 cells around goal (radius=3)
+[A* DEBUG] Start in obstacles: False, Goal in obstacles: False
+[A* DEBUG] Path found! 15 cells, 36 iterations
+[A* DEBUG] 14/14 segments blocked, using unsimplified A* path
+[A* DEBUG] Simplified to 15 waypoints
+[1058] RETURN DRIVE WP0/15 goal=(1.65,3.45) origin_dist=3.73m front=0.47m[245.1s] [A*] No clear LOS to WP1 (1.35,3.45), finding intermediate...
+[245.1s] [A*] WARNING: No clear LOS path found to WP1
+
+[245.1s] [A*] No safe path to next WP, replanning...
+[A* DEBUG] Planning from (5, 11) to (0, 0)
+[A* DEBUG] World coords: (1.72,3.36) -> (0.04,0.03)
+[A* DEBUG] Map stats: 240 walls, 347 scanned, 28 visited
+[A* DEBUG] Inflated obstacles: 561 cells (inflation=2, unreachable=1)
+[A* DEBUG] Cleared 28 visited cells from obstacles
+[A* DEBUG] Cleared 41 cells around goal (radius=3)
+[A* DEBUG] Start in obstacles: False, Goal in obstacles: False
+[A* DEBUG] Path found! 15 cells, 36 iterations
+[A* DEBUG] 14/14 segments blocked, using unsimplified A* path
+[A* DEBUG] Simplified to 15 waypoints
+[1059] RETURN DRIVE WP0/15 goal=(1.65,3.45) origin_dist=3.73m front=0.47m[245.3s] [A*] No clear LOS to WP1 (1.35,3.45), finding intermediate...
+[245.3s] [A*] WARNING: No clear LOS path found to WP1
+
+[245.3s] [A*] No safe path to next WP, replanning...
+[A* DEBUG] Planning from (5, 11) to (0, 0)
+[A* DEBUG] World coords: (1.72,3.36) -> (0.04,0.03)
+[A* DEBUG] Map stats: 240 walls, 347 scanned, 28 visited
+[A* DEBUG] Inflated obstacles: 561 cells (inflation=2, unreachable=1)
+[A* DEBUG] Cleared 28 visited cells from obstacles
+[A* DEBUG] Cleared 41 cells around goal (radius=3)
+[A* DEBUG] Start in obstacles: False, Goal in obstacles: False
+[A* DEBUG] Path found! 15 cells, 36 iterations
+[A* DEBUG] 14/14 segments blocked, using unsimplified A* path
+[A* DEBUG] Simplified to 15 waypoints
+[1060] RETURN DRIVE WP0/15 goal=(1.65,3.45) origin_dist=3.73m front=0.47m[245.5s] [A*] No clear LOS to WP1 (1.35,3.45), finding intermediate...
+[245.5s] [A*] WARNING: No clear LOS path found to WP1
+
+[245.5s] [A*] No safe path to next WP, replanning...
+[A* DEBUG] Planning from (5, 11) to (0, 0)
+[A* DEBUG] World coords: (1.72,3.36) -> (0.04,0.03)
+[A* DEBUG] Map stats: 240 walls, 347 scanned, 28 visited
+[A* DEBUG] Inflated obstacles: 561 cells (inflation=2, unreachable=1)
+[A* DEBUG] Cleared 28 visited cells from obstacles
+[A* DEBUG] Cleared 41 cells around goal (radius=3)
+[A* DEBUG] Start in obstacles: False, Goal in obstacles: False
+[A* DEBUG] Path found! 15 cells, 36 iterations
+[A* DEBUG] 14/14 segments blocked, using unsimplified A* path
+[A* DEBUG] Simplified to 15 waypoints
+[1061] RETURN DRIVE WP0/15 goal=(1.65,3.45) origin_dist=3.73m front=0.47m[245.7s] [A*] No clear LOS to WP1 (1.35,3.45), finding intermediate...
+[245.7s] [A*] WARNING: No clear LOS path found to WP1
+
+[245.7s] [A*] No safe path to next WP, replanning...
+[A* DEBUG] Planning from (5, 11) to (0, 0)
+[A* DEBUG] World coords: (1.72,3.36) -> (0.04,0.03)
+[A* DEBUG] Map stats: 241 walls, 347 scanned, 28 visited
+[A* DEBUG] Inflated obstacles: 561 cells (inflation=2, unreachable=1)
+[A* DEBUG] Cleared 28 visited cells from obstacles
+[A* DEBUG] Cleared 41 cells around goal (radius=3)
+[A* DEBUG] Start in obstacles: False, Goal in obstacles: False
+[A* DEBUG] Path found! 15 cells, 36 iterations
+[A* DEBUG] 14/14 segments blocked, using unsimplified A* path
+[A* DEBUG] Simplified to 15 waypoints
+[1062] RETURN DRIVE WP0/15 goal=(1.65,3.45) origin_dist=3.73m front=0.46m[245.9s] [A*] No clear LOS to WP1 (1.35,3.45), finding intermediate...
+[245.9s] [A*] WARNING: No clear LOS path found to WP1
+
+[245.9s] [A*] No safe path to next WP, replanning...
+[A* DEBUG] Planning from (5, 11) to (0, 0)
+[A* DEBUG] World coords: (1.72,3.37) -> (0.04,0.03)
+[A* DEBUG] Map stats: 241 walls, 347 scanned, 28 visited
+[A* DEBUG] Inflated obstacles: 561 cells (inflation=2, unreachable=1)
+[A* DEBUG] Cleared 28 visited cells from obstacles
+[A* DEBUG] Cleared 41 cells around goal (radius=3)
+[A* DEBUG] Start in obstacles: False, Goal in obstacles: False
+[A* DEBUG] Path found! 15 cells, 36 iterations
+[A* DEBUG] 14/14 segments blocked, using unsimplified A* path
+[A* DEBUG] Simplified to 15 waypoints
+[1063] RETURN DRIVE WP0/15 goal=(1.65,3.45) origin_dist=3.73m front=0.46m[246.1s] [A*] No clear LOS to WP1 (1.35,3.45), finding intermediate...
+[246.1s] [A*] WARNING: No clear LOS path found to WP1
+
+[246.1s] [A*] No safe path to next WP, replanning...
+[A* DEBUG] Planning from (5, 11) to (0, 0)
+[A* DEBUG] World coords: (1.71,3.37) -> (0.04,0.03)
+[A* DEBUG] Map stats: 242 walls, 347 scanned, 28 visited
+[A* DEBUG] Inflated obstacles: 561 cells (inflation=2, unreachable=1)
+[A* DEBUG] Cleared 28 visited cells from obstacles
+[A* DEBUG] Cleared 41 cells around goal (radius=3)
+[A* DEBUG] Start in obstacles: False, Goal in obstacles: False
+[A* DEBUG] Path found! 15 cells, 36 iterations
+[A* DEBUG] 14/14 segments blocked, using unsimplified A* path
+[A* DEBUG] Simplified to 15 waypoints
+[1064] RETURN DRIVE WP0/15 goal=(1.65,3.45) origin_dist=3.74m front=0.45m[246.3s] [A*] No clear LOS to WP1 (1.35,3.45), finding intermediate...
+[246.3s] [A*] WARNING: No clear LOS path found to WP1
+
+[246.3s] [A*] No safe path to next WP, replanning...
+[A* DEBUG] Planning from (5, 11) to (0, 0)
+[A* DEBUG] World coords: (1.71,3.37) -> (0.04,0.03)
+[A* DEBUG] Map stats: 242 walls, 347 scanned, 28 visited
+[A* DEBUG] Inflated obstacles: 561 cells (inflation=2, unreachable=1)
+[A* DEBUG] Cleared 28 visited cells from obstacles
+[A* DEBUG] Cleared 41 cells around goal (radius=3)
+[A* DEBUG] Start in obstacles: False, Goal in obstacles: False
+[A* DEBUG] Path found! 15 cells, 36 iterations
+[A* DEBUG] 14/14 segments blocked, using unsimplified A* path
+[A* DEBUG] Simplified to 15 waypoints
+[1065] RETURN DRIVE WP0/15 goal=(1.65,3.45) origin_dist=3.74m front=0.45m[246.5s] [A*] No clear LOS to WP1 (1.35,3.45), finding intermediate...
+[246.5s] [A*] WARNING: No clear LOS path found to WP1
+
+[246.5s] [A*] No safe path to next WP, replanning...
+[A* DEBUG] Planning from (5, 11) to (0, 0)
+[A* DEBUG] World coords: (1.71,3.38) -> (0.04,0.03)
+[A* DEBUG] Map stats: 242 walls, 347 scanned, 28 visited
+[A* DEBUG] Inflated obstacles: 561 cells (inflation=2, unreachable=1)
+[A* DEBUG] Cleared 28 visited cells from obstacles
+[A* DEBUG] Cleared 41 cells around goal (radius=3)
+[A* DEBUG] Start in obstacles: False, Goal in obstacles: False
+[A* DEBUG] Path found! 15 cells, 36 iterations
+[A* DEBUG] 14/14 segments blocked, using unsimplified A* path
+[A* DEBUG] Simplified to 15 waypoints
+[1066] RETURN DRIVE WP0/15 goal=(1.65,3.45) origin_dist=3.74m front=0.44m[246.7s] [A*] No clear LOS to WP1 (1.35,3.45), finding intermediate...
+[246.7s] [A*] WARNING: No clear LOS path found to WP1
+
+[246.7s] [A*] No safe path to next WP, replanning...
+[A* DEBUG] Planning from (5, 11) to (0, 0)
+[A* DEBUG] World coords: (1.70,3.38) -> (0.04,0.03)
+[A* DEBUG] Map stats: 242 walls, 347 scanned, 28 visited
+[A* DEBUG] Inflated obstacles: 561 cells (inflation=2, unreachable=1)
+[A* DEBUG] Cleared 28 visited cells from obstacles
+[A* DEBUG] Cleared 41 cells around goal (radius=3)
+[A* DEBUG] Start in obstacles: False, Goal in obstacles: False
+[A* DEBUG] Path found! 15 cells, 36 iterations
+[A* DEBUG] 14/14 segments blocked, using unsimplified A* path
+[A* DEBUG] Simplified to 15 waypoints
+[1067] RETURN DRIVE WP0/15 goal=(1.65,3.45) origin_dist=3.74m front=0.43m[246.9s] [A*] No clear LOS to WP1 (1.35,3.45), finding intermediate...
+[246.9s] [A*] WARNING: No clear LOS path found to WP1
+
+[246.9s] [A*] No safe path to next WP, replanning...
+[A* DEBUG] Planning from (5, 11) to (0, 0)
+[A* DEBUG] World coords: (1.68,3.40) -> (0.04,0.03)
+[A* DEBUG] Map stats: 242 walls, 347 scanned, 28 visited
+[A* DEBUG] Inflated obstacles: 561 cells (inflation=2, unreachable=1)
+[A* DEBUG] Cleared 28 visited cells from obstacles
+[A* DEBUG] Cleared 41 cells around goal (radius=3)
+[A* DEBUG] Start in obstacles: False, Goal in obstacles: False
+[A* DEBUG] Path found! 15 cells, 36 iterations
+[A* DEBUG] 14/14 segments blocked, using unsimplified A* path
+[A* DEBUG] Simplified to 15 waypoints
+[1068] RETURN DRIVE WP0/15 goal=(1.65,3.45) origin_dist=3.75m front=0.42m[247.1s] [A*] No clear LOS to WP1 (1.35,3.45), finding intermediate...
+[247.1s] [A*] WARNING: No clear LOS path found to WP1
+
+[247.1s] [A*] No safe path to next WP, replanning...
+[A* DEBUG] Planning from (5, 11) to (0, 0)
+[A* DEBUG] World coords: (1.67,3.40) -> (0.04,0.03)
+[A* DEBUG] Map stats: 242 walls, 347 scanned, 28 visited
+[A* DEBUG] Inflated obstacles: 561 cells (inflation=2, unreachable=1)
+[A* DEBUG] Cleared 28 visited cells from obstacles
+[A* DEBUG] Cleared 41 cells around goal (radius=3)
+[A* DEBUG] Start in obstacles: False, Goal in obstacles: False
+[A* DEBUG] Path found! 15 cells, 36 iterations
+[A* DEBUG] 14/14 segments blocked, using unsimplified A* path
+[A* DEBUG] Simplified to 15 waypoints
+[1069] RETURN DRIVE WP0/15 goal=(1.65,3.45) origin_dist=3.75m front=0.41m[247.3s] [A*] No clear LOS to WP1 (1.35,3.45), finding intermediate...
+[247.3s] [A*] WARNING: No clear LOS path found to WP1
+
+[247.3s] [A*] No safe path to next WP, replanning...
+[A* DEBUG] Planning from (5, 11) to (0, 0)
+[A* DEBUG] World coords: (1.67,3.41) -> (0.04,0.03)
+[A* DEBUG] Map stats: 242 walls, 347 scanned, 28 visited
+[A* DEBUG] Inflated obstacles: 561 cells (inflation=2, unreachable=1)
+[A* DEBUG] Cleared 28 visited cells from obstacles
+[A* DEBUG] Cleared 41 cells around goal (radius=3)
+[A* DEBUG] Start in obstacles: False, Goal in obstacles: False
+[A* DEBUG] Path found! 15 cells, 36 iterations
+[A* DEBUG] 14/14 segments blocked, using unsimplified A* path
+[A* DEBUG] Simplified to 15 waypoints
+[1070] RETURN DRIVE WP0/15 goal=(1.65,3.45) origin_dist=3.75m front=0.40m[247.5s] [A*] No clear LOS to WP1 (1.35,3.45), finding intermediate...
+[247.5s] [A*] WARNING: No clear LOS path found to WP1
+
+[247.5s] [A*] No safe path to next WP, replanning...
+[A* DEBUG] Planning from (5, 11) to (0, 0)
+[A* DEBUG] World coords: (1.67,3.42) -> (0.04,0.03)
+[A* DEBUG] Map stats: 242 walls, 347 scanned, 28 visited
+[A* DEBUG] Inflated obstacles: 561 cells (inflation=2, unreachable=1)
+[A* DEBUG] Cleared 28 visited cells from obstacles
+[A* DEBUG] Cleared 41 cells around goal (radius=3)
+[A* DEBUG] Start in obstacles: False, Goal in obstacles: False
+[A* DEBUG] Path found! 15 cells, 36 iterations
+[A* DEBUG] 14/14 segments blocked, using unsimplified A* path
+[A* DEBUG] Simplified to 15 waypoints
+[1071] RETURN DRIVE WP0/15 goal=(1.65,3.45) origin_dist=3.76m front=0.40m[247.7s] [A*] No clear LOS to WP1 (1.35,3.45), finding intermediate...
+[247.7s] [A*] WARNING: No clear LOS path found to WP1
+
+[247.7s] [A*] No safe path to next WP, replanning...
+[A* DEBUG] Planning from (5, 11) to (0, 0)
+[A* DEBUG] World coords: (1.67,3.42) -> (0.04,0.03)
+[A* DEBUG] Map stats: 242 walls, 347 scanned, 28 visited
+[A* DEBUG] Inflated obstacles: 561 cells (inflation=2, unreachable=1)
+[A* DEBUG] Cleared 28 visited cells from obstacles
+[A* DEBUG] Cleared 41 cells around goal (radius=3)
+[A* DEBUG] Start in obstacles: False, Goal in obstacles: False
+[A* DEBUG] Path found! 15 cells, 36 iterations
+[A* DEBUG] 14/14 segments blocked, using unsimplified A* path
+[A* DEBUG] Simplified to 15 waypoints
+[1072] RETURN DRIVE WP0/15 goal=(1.65,3.45) origin_dist=3.76m front=0.40m[247.9s] [A*] No clear LOS to WP1 (1.35,3.45), finding intermediate...
+[247.9s] [A*] WARNING: No clear LOS path found to WP1
+
+[247.9s] [A*] No safe path to next WP, replanning...
+[A* DEBUG] Planning from (5, 11) to (0, 0)
+[A* DEBUG] World coords: (1.66,3.42) -> (0.04,0.03)
+[A* DEBUG] Map stats: 242 walls, 347 scanned, 28 visited
+[A* DEBUG] Inflated obstacles: 561 cells (inflation=2, unreachable=1)
+[A* DEBUG] Cleared 28 visited cells from obstacles
+[A* DEBUG] Cleared 41 cells around goal (radius=3)
+[A* DEBUG] Start in obstacles: False, Goal in obstacles: False
+[A* DEBUG] Path found! 15 cells, 36 iterations
+[A* DEBUG] 14/14 segments blocked, using unsimplified A* path
+[A* DEBUG] Simplified to 15 waypoints
+[1073] RETURN DRIVE WP0/15 goal=(1.65,3.45) origin_dist=3.76m front=0.40m[248.1s] [A*] No clear LOS to WP1 (1.35,3.45), finding intermediate...
+[248.1s] [A*] WARNING: No clear LOS path found to WP1
+
+[248.1s] [A*] No safe path to next WP, replanning...
+[A* DEBUG] Planning from (5, 11) to (0, 0)
+[A* DEBUG] World coords: (1.67,3.41) -> (0.04,0.03)
+[A* DEBUG] Map stats: 242 walls, 347 scanned, 28 visited
+[A* DEBUG] Inflated obstacles: 561 cells (inflation=2, unreachable=1)
+[A* DEBUG] Cleared 28 visited cells from obstacles
+[A* DEBUG] Cleared 41 cells around goal (radius=3)
+[A* DEBUG] Start in obstacles: False, Goal in obstacles: False
+[A* DEBUG] Path found! 15 cells, 36 iterations
+[A* DEBUG] 14/14 segments blocked, using unsimplified A* path
+[A* DEBUG] Simplified to 15 waypoints
+[1074] RETURN DRIVE WP0/15 goal=(1.65,3.45) origin_dist=3.75m front=0.40mWaiting for LiDAR...
+
+
+Stopping (Ctrl+C)...
+[MARKER] Publisher stopped
+
+=======================================================
+NBV NAVIGATION COMPLETE
+=======================================================
+Final state: returning
+Duration: 249.7s
+Iterations: 1075
+Goals reached: 9
+Backups: 7
+Unique cells visited: 28
+Cells scanned by LiDAR: 347
+Walls detected: 242
+
+--- Drive Accuracy ---
+Cross-track RMS error: 6.6cm
+Total distance traveled: 10.78m
+Ideal distance (sum of goals): 16.50m
+Drive efficiency: 153.1%
+
+--- Return Phase ---
+Return phase duration: 24.7s
+Final distance to origin: 3.75m
+Revisit rate: 100.0%
+
+--- Map Accuracy Suggestions ---
+To measure map accuracy, consider:
+1. Ground truth comparison: Place markers at known positions,
+   compare measured vs actual distances between them
+2. Loop closure error: After returning to origin, check
+   odometry drift (final_dist to origin should be ~0)
+3. Feature alignment: Compare map walls to actual room layout
+4. Consistency check: Run multiple times, overlay maps
+5. Tape measure validation: Measure actual room dimensions,
+   compare to map scale (resolution * pixels)
+[OUTPUT] Map saved to: /home/ws/ugv_cont/mission/outputs/20251222_201841/maps

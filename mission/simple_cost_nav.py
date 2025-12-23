@@ -567,10 +567,10 @@ rclpy.shutdown()
                     if abs(wall_dx) <= 3 and abs(wall_dy) <= 3:
                         wall_dist = math.sqrt(wall_dx*wall_dx + wall_dy*wall_dy)
                         if wall_dist < 3:  # Within 3 cells (~0.9m)
-                            # STRONG penalty: closer = MUCH higher cost
-                            # wall_dist=1 -> penalty=8.0, wall_dist=2 -> penalty=3.2
-                            # This ensures A* routes AROUND walls, not along them
-                            wall_penalty = max(wall_penalty, 8.0 / (wall_dist + 0.5))
+                            # Moderate penalty: prefer clearance but don't create huge detours
+                            # wall_dist=1 -> penalty=2.0, wall_dist=2 -> penalty=0.8
+                            # NOTE: 8.0 was causing 2x path length detours - way too strong!
+                            wall_penalty = max(wall_penalty, 2.0 / (wall_dist + 0.5))
 
                 tentative_g = g_score[current] + move_cost + wall_penalty
 

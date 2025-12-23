@@ -1,0 +1,194 @@
+[OUTPUT] Logging to: /home/ws/ugv_cont/mission/outputs/20251222_212347
+[OUTPUT] Log file: /home/ws/ugv_cont/mission/outputs/20251222_212347/logs/navigation.log
+=======================================================
+NEXT-BEST-VIEW (NBV) NAVIGATION
+=======================================================
+Speed: 0.08 m/s
+Goal distance: 0.5-2.0m
+Press Ctrl+C to stop
+
+[DEBUG] Marker publishing enabled - check /nav_goal in RViz
+[MARKER] Persistent marker publisher started - add /nav_goal in RViz
+[START] Initial position: (0.57, 0.34)
+[MARKER] Origin marker (blue) started at (0.57, 0.34) - add /nav_origin in RViz
+
+[  2.2s] [GOAL SELECT] robot@(0.57,0.34) | 17 candidates (scanned=48 walls=16 visited=1):
+  #1 ang=-107° d=2.00m pos=(-1.41,0.61) score=+34.1 [O=+2.5 U=+32.0 V=-0.0 W=-1.0 R=-0.0 F=+0.0] <-- BEST
+  #2 ang= -94° d=1.50m pos=(-0.92,0.22) score=+32.4 [O=+2.5 U=+30.4 V=-0.0 W=-1.0 R=-0.0 F=+0.0]
+  #3 ang= -82° d=1.00m pos=(-0.39,0.05) score=+30.3 [O=+1.8 U=+31.2 V=-0.0 W=-3.0 R=-0.0 F=+0.0]
+  #4 ang=-113° d=1.50m pos=(-0.89,0.70) score=+30.0 [O=+1.5 U=+28.0 V=-0.0 W=-0.0 R=-0.0 F=+0.0]
+  #5 ang=-101° d=1.50m pos=(-0.93,0.38) score=+28.0 [O=+2.5 U=+26.0 V=-0.0 W=-1.0 R=-0.0 F=+0.0]
+  #6 ang=-107° d=1.50m pos=(-0.92,0.54) score=+26.0 [O=+2.5 U=+24.0 V=-0.0 W=-1.0 R=-0.0 F=+0.0]
+  #7 ang=-119° d=1.00m pos=(-0.37,0.68) score=+25.3 [O=+1.8 U=+23.2 V=-0.0 W=-0.0 R=-0.0 F=+0.0]
+  #8 ang=-113° d=1.00m pos=(-0.40,0.58) score=+23.3 [O=+2.0 U=+22.0 V=-0.0 W=-1.0 R=-0.0 F=+0.0]
+[  2.2s] [GOAL] Selected: (-1.41, 0.61) dist=2.00m timeout=50s angle=-107° reason=no goal
+[  1] DRIVE goal=(-1.41,0.61) dist=2.00m front=0.43m cells=1 rms=0.0cm
+[  2.4s] [TURN ENTER] Entering TURN mode
+
+[BLOCKED DEBUG] Goal angle: -8.8° (sector 58), goal_dist: 2.08m, goal_dir_min: 0.56m, margin: 0.15m
+[BLOCKED DEBUG] Checking 1 sectors (robot angular width at 2.1m = 5.0°): {58: 0.565}
+[BLOCKED DEBUG] Check: 0.56 < 2.08 - 0.15 = 1.93? True
+[BLOCKED DEBUG] (Full front arc for reference: {55: 0.67, 56: 0.625, 57: 0.589, 58: 0.565, 59: 0.546, 0: 0.534, 1: 0.527, 2: 0.527, 3: 1.343, 4: 0.506, 5: 0.443})
+
+[BLOCKED TURN] goal_sector=58, best_sector=58 (dist=0.56m), target_angle=-12.0°, angle_error=-12.0°, v=0.00, w=-0.31
+[  2] TURN goal=(-1.41,0.61) dist=2.08m front=0.44m cells=2 rms=24.4cm[  3] DRIVE goal=(-1.41,0.61) dist=1.84m front=0.43m cells=2 rms=29.7cm[  4] DRIVE goal=(-1.41,0.61) dist=1.69m front=0.43m cells=3 rms=26.9cm[  5] DRIVE goal=(-1.41,0.61) dist=1.87m front=0.45m cells=3 rms=24.1cm[  6] DRIVE goal=(-1.41,0.61) dist=2.10m front=0.44m cells=4 rms=22.3cm
+[  3.5s] [TURN ENTER] Entering TURN mode
+
+[BLOCKED DEBUG] Goal angle: -8.8° (sector 58), goal_dist: 2.07m, goal_dir_min: 0.56m, margin: 0.15m
+[BLOCKED DEBUG] Checking 1 sectors (robot angular width at 2.1m = 5.0°): {58: 0.559}
+[BLOCKED DEBUG] Check: 0.56 < 2.07 - 0.15 = 1.92? True
+[BLOCKED DEBUG] (Full front arc for reference: {55: 0.669, 56: 0.623, 57: 0.586, 58: 0.559, 59: 0.541, 0: 0.529, 1: 0.523, 2: 0.523, 3: 0.55, 4: 0.497, 5: 0.434})
+
+[BLOCKED TURN] goal_sector=58, best_sector=58 (dist=0.56m), target_angle=-12.0°, angle_error=-12.0°, v=0.00, w=-0.31
+[  7] TURN goal=(-1.41,0.61) dist=2.07m front=0.43m cells=4 rms=24.4cm[  8] DRIVE goal=(-1.41,0.61) dist=1.83m front=0.44m cells=4 rms=26.5cm[  9] DRIVE goal=(-1.41,0.61) dist=1.69m front=0.44m cells=4 rms=25.5cm[ 10] DRIVE goal=(-1.41,0.61) dist=1.87m front=0.45m cells=4 rms=24.2cm[ 11] DRIVE goal=(-1.41,0.61) dist=2.13m front=0.44m cells=4 rms=23.1cm
+[  4.4s] [TURN ENTER] Entering TURN mode
+
+[BLOCKED DEBUG] Goal angle: -6.5° (sector 58), goal_dist: 2.09m, goal_dir_min: 0.56m, margin: 0.15m
+[BLOCKED DEBUG] Checking 1 sectors (robot angular width at 2.1m = 4.9°): {58: 0.559}
+[BLOCKED DEBUG] Check: 0.56 < 2.09 - 0.15 = 1.94? True
+[BLOCKED DEBUG] (Full front arc for reference: {55: 0.663, 56: 0.619, 57: 0.581, 58: 0.559, 59: 0.541, 0: 0.527, 1: 0.521, 2: 0.521, 3: 0.535, 4: 0.503, 5: 0.439})
+
+[BLOCKED TURN] goal_sector=58, best_sector=58 (dist=0.56m), target_angle=-12.0°, angle_error=-12.0°, v=0.00, w=-0.31
+[ 12] TURN goal=(-1.41,0.61) dist=2.09m front=0.44m cells=4 rms=23.6cm[ 13] DRIVE goal=(-1.41,0.61) dist=1.97m front=0.45m cells=4 rms=23.9cm[ 14] DRIVE goal=(-1.41,0.61) dist=1.92m front=0.45m cells=4 rms=23.5cm[ 15] DRIVE goal=(-1.41,0.61) dist=2.01m front=0.45m cells=4 rms=22.8cm[ 16] DRIVE goal=(-1.41,0.61) dist=2.11m front=0.45m cells=4 rms=22.5cm
+[  5.4s] [TURN ENTER] Entering TURN mode
+
+[BLOCKED DEBUG] Goal angle: -5.0° (sector 59), goal_dist: 2.09m, goal_dir_min: 0.54m, margin: 0.15m
+[BLOCKED DEBUG] Checking 1 sectors (robot angular width at 2.1m = 4.9°): {59: 0.544}
+[BLOCKED DEBUG] Check: 0.54 < 2.09 - 0.15 = 1.94? True
+[BLOCKED DEBUG] (Full front arc for reference: {55: 0.68, 56: 0.629, 57: 0.59, 58: 0.562, 59: 0.544, 0: 0.53, 1: 0.522, 2: 0.521, 3: 0.524, 4: 0.523, 5: 0.457})
+
+[BLOCKED TURN] goal_sector=59, best_sector=59 (dist=0.54m), target_angle=-6.0°, angle_error=-6.0°, v=0.05, w=-0.16
+[ 17] TURN goal=(-1.41,0.61) dist=2.09m front=0.46m cells=4 rms=22.8cm[ 18] DRIVE goal=(-1.41,0.61) dist=1.97m front=0.45m cells=4 rms=23.1cm[ 19] DRIVE goal=(-1.41,0.61) dist=1.93m front=0.45m cells=4 rms=22.8cm[ 20] DRIVE goal=(-1.41,0.61) dist=2.08m front=0.51m cells=4 rms=22.4cm
+[  6.3s] [TURN ENTER] Entering TURN mode
+
+[BLOCKED DEBUG] Goal angle: -35.4° (sector 54), goal_dist: 2.11m, goal_dir_min: 0.70m, margin: 0.15m
+[BLOCKED DEBUG] Checking 1 sectors (robot angular width at 2.1m = 4.9°): {54: 0.696}
+[BLOCKED DEBUG] Check: 0.70 < 2.11 - 0.15 = 1.96? True
+[BLOCKED DEBUG] (Full front arc for reference: {55: 0.684, 56: 0.652, 57: 0.609, 58: 0.572, 59: 0.55, 0: 0.531, 1: 0.519, 2: 0.514, 3: 0.514, 4: 0.526, 5: 0.509})
+
+[BLOCKED TURN] goal_sector=54, best_sector=54 (dist=0.70m), target_angle=-36.0°, angle_error=-36.0°, v=0.00, w=-0.50
+[ 21] TURN goal=(-1.41,0.61) dist=2.11m front=0.51m cells=4 rms=22.4cm[ 22] TURN goal=(-1.41,0.61) dist=2.08m front=0.50m cells=4 rms=22.7cm[ 23] DRIVE goal=(-1.41,0.61) dist=1.96m front=0.50m cells=4 rms=22.8cm[ 24] DRIVE goal=(-1.41,0.61) dist=1.94m front=0.51m cells=4 rms=22.6cm[ 25] DRIVE goal=(-1.41,0.61) dist=2.04m front=0.51m cells=4 rms=22.2cm[ 26] DRIVE goal=(-1.41,0.61) dist=2.12m front=0.51m cells=4 rms=22.1cm
+[  7.4s] [TURN ENTER] Entering TURN mode
+
+[BLOCKED DEBUG] Goal angle: -0.9° (sector 59), goal_dist: 2.07m, goal_dir_min: 0.55m, margin: 0.15m
+[BLOCKED DEBUG] Checking 1 sectors (robot angular width at 2.1m = 5.0°): {59: 0.547}
+[BLOCKED DEBUG] Check: 0.55 < 2.07 - 0.15 = 1.92? True
+[BLOCKED DEBUG] (Full front arc for reference: {55: 0.681, 56: 0.647, 57: 0.604, 58: 0.567, 59: 0.547, 0: 0.526, 1: 0.514, 2: 0.51, 3: 0.51, 4: 0.53, 5: 0.502})
+
+[BLOCKED TURN] goal_sector=59, best_sector=59 (dist=0.55m), target_angle=-6.0°, angle_error=-6.0°, v=0.05, w=-0.16
+[ 27] TURN goal=(-1.41,0.61) dist=2.07m front=0.50m cells=4 rms=22.3cm[ 28] DRIVE goal=(-1.41,0.61) dist=1.96m front=0.49m cells=4 rms=22.4cm[ 29] DRIVE goal=(-1.41,0.61) dist=1.94m front=0.50m cells=4 rms=22.2cm[ 30] DRIVE goal=(-1.41,0.61) dist=1.98m front=0.50m cells=4 rms=21.9cm[ 31] DRIVE goal=(-1.41,0.61) dist=2.09m front=0.48m cells=4 rms=21.7cm
+[  8.4s] [TURN ENTER] Entering TURN mode
+
+[BLOCKED DEBUG] Goal angle: -37.0° (sector 53), goal_dist: 2.10m, goal_dir_min: 0.70m, margin: 0.15m
+[BLOCKED DEBUG] Checking 1 sectors (robot angular width at 2.1m = 4.9°): {53: 0.697}
+[BLOCKED DEBUG] Check: 0.70 < 2.10 - 0.15 = 1.95? True
+[BLOCKED DEBUG] (Full front arc for reference: {55: 0.674, 56: 0.629, 57: 0.588, 58: 0.555, 59: 0.537, 0: 0.517, 1: 0.506, 2: 0.504, 3: 0.504, 4: 1.31, 5: 0.487})
+
+[BLOCKED TURN] goal_sector=53, best_sector=53 (dist=0.70m), target_angle=-42.0°, angle_error=-42.0°, v=0.00, w=-0.50
+[ 32] TURN goal=(-1.41,0.61) dist=2.10m front=0.49m cells=4 rms=21.8cm[ 33] TURN goal=(-1.41,0.61) dist=2.01m front=0.48m cells=4 rms=22.0cm[ 34] DRIVE goal=(-1.41,0.61) dist=1.94m front=0.49m cells=4 rms=22.0cm[ 35] DRIVE goal=(-1.41,0.61) dist=1.99m front=0.48m cells=4 rms=21.7cm[ 36] DRIVE goal=(-1.41,0.61) dist=2.09m front=0.49m cells=4 rms=21.6cm
+[  9.4s] [TURN ENTER] Entering TURN mode
+
+[BLOCKED DEBUG] Goal angle: -35.8° (sector 54), goal_dist: 2.10m, goal_dir_min: 0.68m, margin: 0.15m
+[BLOCKED DEBUG] Checking 1 sectors (robot angular width at 2.1m = 4.9°): {54: 0.684}
+[BLOCKED DEBUG] Check: 0.68 < 2.10 - 0.15 = 1.95? True
+[BLOCKED DEBUG] (Full front arc for reference: {55: 0.675, 56: 0.631, 57: 0.586, 58: 0.556, 59: 0.538, 0: 0.518, 1: 0.508, 2: 0.504, 3: 0.504, 4: 0.525, 5: 0.5})
+
+[BLOCKED TURN] goal_sector=54, best_sector=54 (dist=0.68m), target_angle=-36.0°, angle_error=-36.0°, v=0.00, w=-0.50
+[ 37] TURN goal=(-1.41,0.61) dist=2.10m front=0.50m cells=4 rms=21.6cm[ 38] TURN goal=(-1.41,0.61) dist=2.01m front=0.49m cells=4 rms=21.8cm[ 39] DRIVE goal=(-1.41,0.61) dist=1.94m front=0.48m cells=4 rms=21.8cm[ 40] DRIVE goal=(-1.41,0.61) dist=1.99m front=0.49m cells=4 rms=21.6cm[ 41] DRIVE goal=(-1.41,0.61) dist=2.09m front=0.47m cells=4 rms=21.4cm
+[ 10.4s] [TURN ENTER] Entering TURN mode
+
+[BLOCKED DEBUG] Goal angle: -35.8° (sector 54), goal_dist: 2.11m, goal_dir_min: 0.68m, margin: 0.15m
+[BLOCKED DEBUG] Checking 1 sectors (robot angular width at 2.1m = 4.9°): {54: 0.683}
+[BLOCKED DEBUG] Check: 0.68 < 2.11 - 0.15 = 1.96? True
+[BLOCKED DEBUG] (Full front arc for reference: {55: 0.675, 56: 0.634, 57: 0.591, 58: 0.557, 59: 0.538, 0: 0.517, 1: 0.507, 2: 0.503, 3: 0.503, 4: 0.52, 5: 0.495})
+
+[BLOCKED TURN] goal_sector=54, best_sector=54 (dist=0.68m), target_angle=-36.0°, angle_error=-36.0°, v=0.00, w=-0.50
+[ 42] TURN goal=(-1.41,0.61) dist=2.11m front=0.49m cells=4 rms=21.5cm[ 43] TURN goal=(-1.41,0.61) dist=2.01m front=0.48m cells=4 rms=21.6cm[ 44] DRIVE goal=(-1.41,0.61) dist=1.95m front=0.50m cells=4 rms=21.6cm[ 45] DRIVE goal=(-1.41,0.61) dist=2.00m front=0.51m cells=4 rms=21.4cm[ 46] DRIVE goal=(-1.41,0.61) dist=2.09m front=0.51m cells=4 rms=21.3cm
+[ 11.3s] [TURN ENTER] Entering TURN mode
+
+[BLOCKED DEBUG] Goal angle: -26.6° (sector 55), goal_dist: 2.12m, goal_dir_min: 0.70m, margin: 0.15m
+[BLOCKED DEBUG] Checking 1 sectors (robot angular width at 2.1m = 4.9°): {55: 0.698}
+[BLOCKED DEBUG] Check: 0.70 < 2.12 - 0.15 = 1.97? True
+[BLOCKED DEBUG] (Full front arc for reference: {55: 0.698, 56: 0.684, 57: 0.683, 58: 0.628, 59: 0.587, 0: 0.559, 1: 0.54, 2: 0.524, 3: 0.516, 4: 0.515, 5: 0.516})
+
+[BLOCKED TURN] goal_sector=55, best_sector=55 (dist=0.70m), target_angle=-30.0°, angle_error=-30.0°, v=0.00, w=-0.50
+[ 47] TURN goal=(-1.41,0.61) dist=2.12m front=0.52m cells=4 rms=21.4cm[ 48] TURN goal=(-1.41,0.61) dist=2.02m front=0.52m cells=4 rms=21.5cm[ 49] DRIVE goal=(-1.41,0.61) dist=1.96m front=0.52m cells=4 rms=21.4cm[ 50] DRIVE goal=(-1.41,0.61) dist=2.02m front=0.52m cells=4 rms=21.2cm[ 51] DRIVE goal=(-1.41,0.61) dist=2.12m front=0.52m cells=4 rms=21.1cm
+[ 12.3s] [TURN ENTER] Entering TURN mode
+
+[BLOCKED DEBUG] Goal angle: -23.6° (sector 56), goal_dist: 2.12m, goal_dir_min: 0.69m, margin: 0.15m
+[BLOCKED DEBUG] Checking 1 sectors (robot angular width at 2.1m = 4.9°): {56: 0.694}
+[BLOCKED DEBUG] Check: 0.69 < 2.12 - 0.15 = 1.97? True
+[BLOCKED DEBUG] (Full front arc for reference: {55: 0.717, 56: 0.694, 57: 0.682, 58: 0.656, 59: 0.613, 0: 0.577, 1: 0.554, 2: 0.535, 3: 0.523, 4: 0.517, 5: 0.517})
+
+[BLOCKED TURN] goal_sector=56, best_sector=56 (dist=0.69m), target_angle=-24.0°, angle_error=-24.0°, v=0.00, w=-0.50
+[ 52] TURN goal=(-1.41,0.61) dist=2.12m front=0.52m cells=4 rms=21.2cm[ 53] DRIVE goal=(-1.41,0.61) dist=2.03m front=0.52m cells=4 rms=21.3cm[ 54] DRIVE goal=(-1.41,0.61) dist=1.98m front=0.52m cells=4 rms=21.2cm[ 55] DRIVE goal=(-1.41,0.61) dist=2.03m front=0.52m cells=4 rms=21.1cm[ 56] DRIVE goal=(-1.41,0.61) dist=2.12m front=0.52m cells=4 rms=21.0cm
+[ 13.3s] [TURN ENTER] Entering TURN mode
+
+[BLOCKED DEBUG] Goal angle: -20.0° (sector 56), goal_dist: 2.12m, goal_dir_min: 0.70m, margin: 0.15m
+[BLOCKED DEBUG] Checking 1 sectors (robot angular width at 2.1m = 4.9°): {56: 0.697}
+[BLOCKED DEBUG] Check: 0.70 < 2.12 - 0.15 = 1.97? True
+[BLOCKED DEBUG] (Full front arc for reference: {55: 0.811, 56: 0.697, 57: 0.684, 58: 0.681, 59: 0.626, 0: 0.586, 1: 0.561, 2: 0.543, 3: 0.525, 4: 0.516, 5: 0.516})
+
+[BLOCKED TURN] goal_sector=56, best_sector=56 (dist=0.70m), target_angle=-24.0°, angle_error=-24.0°, v=0.00, w=-0.50
+[ 57] TURN goal=(-1.41,0.61) dist=2.12m front=0.52m cells=4 rms=21.1cm[ 58] DRIVE goal=(-1.41,0.61) dist=2.03m front=0.52m cells=4 rms=21.2cm[ 59] DRIVE goal=(-1.41,0.61) dist=1.98m front=0.52m cells=4 rms=21.1cm[ 60] DRIVE goal=(-1.41,0.61) dist=2.00m front=0.52m cells=4 rms=21.0cm[ 61] DRIVE goal=(-1.41,0.61) dist=2.08m front=0.52m cells=4 rms=20.9cm[ 62] DRIVE goal=(-1.41,0.61) dist=2.13m front=0.52m cells=4 rms=20.9cm
+[ 14.5s] [TURN ENTER] Entering TURN mode
+
+[BLOCKED DEBUG] Goal angle: 18.4° (sector 3), goal_dist: 2.08m, goal_dir_min: 0.53m, margin: 0.15m
+[BLOCKED DEBUG] Checking 1 sectors (robot angular width at 2.1m = 5.0°): {3: 0.534}
+[BLOCKED DEBUG] Check: 0.53 < 2.08 - 0.15 = 1.93? True
+[BLOCKED DEBUG] (Full front arc for reference: {55: 0.81, 56: 0.719, 57: 0.691, 58: 0.679, 59: 0.658, 0: 0.613, 1: 0.575, 2: 0.552, 3: 0.534, 4: 0.519, 5: 0.515})
+
+[BLOCKED TURN] goal_sector=3, best_sector=3 (dist=0.53m), target_angle=18.0°, angle_error=18.0°, v=0.00, w=0.47
+[ 63] TURN goal=(-1.41,0.61) dist=2.08m front=0.52m cells=4 rms=21.0cm[ 64] DRIVE goal=(-1.41,0.61) dist=2.00m front=0.52m cells=4 rms=21.0cm[ 65] DRIVE goal=(-1.41,0.61) dist=2.01m front=0.51m cells=4 rms=20.9cm[ 66] DRIVE goal=(-1.41,0.61) dist=2.09m front=0.51m cells=4 rms=20.8cm[ 67] DRIVE goal=(-1.41,0.61) dist=2.13m front=0.51m cells=4 rms=20.8cm
+[ 15.5s] [TURN ENTER] Entering TURN mode
+
+[BLOCKED DEBUG] Goal angle: 19.9° (sector 3), goal_dist: 2.08m, goal_dir_min: 0.54m, margin: 0.15m
+[BLOCKED DEBUG] Checking 1 sectors (robot angular width at 2.1m = 5.0°): {3: 0.535}
+[BLOCKED DEBUG] Check: 0.54 < 2.08 - 0.15 = 1.93? True
+[BLOCKED DEBUG] (Full front arc for reference: {55: 0.814, 56: 0.766, 57: 0.689, 58: 0.676, 59: 0.668, 0: 0.618, 1: 0.579, 2: 0.552, 3: 0.535, 4: 0.52, 5: 0.513})
+
+[BLOCKED TURN] goal_sector=3, best_sector=3 (dist=0.54m), target_angle=18.0°, angle_error=18.0°, v=0.00, w=0.47
+[ 68] TURN goal=(-1.41,0.61) dist=2.08m front=0.51m cells=4 rms=20.9cm[ 69] DRIVE goal=(-1.41,0.61) dist=2.00m front=0.51m cells=4 rms=20.9cm[ 70] DRIVE goal=(-1.41,0.61) dist=2.01m front=0.51m cells=4 rms=20.9cmWaiting for LiDAR...
+
+[ 24.2s] [TURN ENTER] Entering TURN mode
+
+[BLOCKED DEBUG] Goal angle: -23.3° (sector 56), goal_dist: 1.54m, goal_dir_min: 0.38m, margin: 0.15m
+[BLOCKED DEBUG] Checking 1 sectors (robot angular width at 1.5m = 6.7°): {56: 0.375}
+[BLOCKED DEBUG] Check: 0.38 < 1.54 - 0.15 = 1.39? True
+[BLOCKED DEBUG] (Full front arc for reference: {55: 0.43, 56: 0.375, 57: 0.334, 58: 0.332, 59: 0.36, 0: 0.411, 1: 0.48, 2: 0.564, 3: 0.539, 4: 0.517, 5: 0.501})
+
+[BLOCKED TURN] goal_sector=56, best_sector=53 (dist=0.53m), target_angle=-42.0°, angle_error=-42.0°, v=0.00, w=-0.50
+[ 72] TURN goal=(-1.41,0.61) dist=1.54m front=0.33m cells=4 rms=21.3cm[ 73] TURN goal=(-1.41,0.61) dist=1.54m front=0.34m cells=4 rms=21.7cm[ 74] TURN goal=(-1.41,0.61) dist=1.53m front=0.33m cells=4 rms=22.1cm[ 75] TURN goal=(-1.41,0.61) dist=1.53m front=0.33m cells=4 rms=22.5cm[ 76] TURN goal=(-1.41,0.61) dist=1.53m front=0.33m cells=4 rms=22.8cm[ 77] TURN goal=(-1.41,0.61) dist=1.53m front=0.34m cells=4 rms=23.1cm
+
+Stopping (Ctrl+C)...
+[MARKER] Publisher stopped
+
+=======================================================
+NBV NAVIGATION COMPLETE
+=======================================================
+Final state: exploring
+Duration: 25.4s
+Iterations: 77
+Goals reached: 0
+Backups: 0
+Unique cells visited: 4
+Cells scanned by LiDAR: 283
+Walls detected: 122
+
+--- Drive Accuracy ---
+Cross-track RMS error: 23.1cm
+Total distance traveled: 9.28m
+Ideal distance (sum of goals): 2.00m
+Drive efficiency: 21.5%
+Revisit rate: 100.0%
+
+--- Map Accuracy Suggestions ---
+To measure map accuracy, consider:
+1. Ground truth comparison: Place markers at known positions,
+   compare measured vs actual distances between them
+2. Loop closure error: After returning to origin, check
+   odometry drift (final_dist to origin should be ~0)
+3. Feature alignment: Compare map walls to actual room layout
+4. Consistency check: Run multiple times, overlay maps
+5. Tape measure validation: Measure actual room dimensions,
+   compare to map scale (resolution * pixels)
