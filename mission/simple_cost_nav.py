@@ -405,13 +405,18 @@ rclpy.shutdown()
                         obstacles.add((wall_cell[0] + dx, wall_cell[1] + dy))
 
         # Add unreachable cells (waypoints we got stuck trying to reach)
+        # These are cells we FAILED to reach during return - must be blocked even if visited!
+        unreachable_blocked = 0
         for unreachable_cell in self.unreachable_cells.keys():
             obstacles.add(unreachable_cell)
+            unreachable_blocked += 1
             # Also inflate unreachable cells to avoid routing close to them
             for dx in range(-1, 2):
                 for dy in range(-1, 2):
                     obstacles.add((unreachable_cell[0] + dx, unreachable_cell[1] + dy))
 
+        if unreachable_blocked > 0:
+            print(f"[A* PLAN] Blocked {unreachable_blocked} unreachable cells + 3x3 inflation each")
         print(f"[A* PLAN] Inflated obstacles: {len(obstacles)} cells (inflation={inflation}, unreachable={len(self.unreachable_cells)})")
 
         # Show nearby walls around start and goal for debugging
@@ -433,13 +438,23 @@ rclpy.shutdown()
         # This ensures A* can always find a path back through where we came.
         # NOTE: We now prevent visited cells from being added to scan_ends in the
         # first place (in _record_scan_coverage), but this is a safety net.
+        # IMPORTANT: Do NOT clear cells that are marked as unreachable!
+        # Unreachable cells are waypoints we got STUCK trying to reach during return -
+        # even if we visited them during exploration, we can't reach them now.
         visited_cleared = 0
+        unreachable_preserved = 0
         for visited_cell in self.visited.keys():
             if visited_cell in obstacles:
-                obstacles.discard(visited_cell)
-                visited_cleared += 1
+                if visited_cell in self.unreachable_cells:
+                    # Keep this cell as obstacle - we couldn't reach it during return!
+                    unreachable_preserved += 1
+                else:
+                    obstacles.discard(visited_cell)
+                    visited_cleared += 1
         if visited_cleared > 0:
             print(f"[A* PLAN] Cleared {visited_cleared} visited cells from obstacles (guaranteed traversable)")
+        if unreachable_preserved > 0:
+            print(f"[A* PLAN] Preserved {unreachable_preserved} unreachable cells in obstacles (visited but now blocked)")
 
         # IMPORTANT: Clear cells around the goal to ensure we can approach it
         # This allows the final approach to origin even if walls are nearby
