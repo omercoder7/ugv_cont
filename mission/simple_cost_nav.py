@@ -419,14 +419,18 @@ rclpy.shutdown()
             closest_goal = min(walls_near_goal, key=lambda x: x[1])
             print(f"[A* PLAN] Closest wall to GOAL: {closest_goal[0]} at {closest_goal[1]:.1f} cells = {closest_goal[1]*self.grid_res:.2f}m")
 
-        # NOTE: We NO LONGER clear visited cells from obstacles!
-        # This was causing paths to route through inflated wall zones because
-        # the robot had explored there earlier. The walls are real - respect them!
-        # Old code that caused path-through-walls bug:
-        # for visited_cell in self.visited.keys():
-        #     if visited_cell in obstacles:
-        #         obstacles.discard(visited_cell)
-        # Instead, visited cells are used only for tie-breaking in goal selection
+        # CRITICAL: Clear visited cells from obstacles!
+        # If we've physically been in a cell, it's definitely traversable.
+        # This ensures A* can always find a path back through where we came.
+        # NOTE: We now prevent visited cells from being added to scan_ends in the
+        # first place (in _record_scan_coverage), but this is a safety net.
+        visited_cleared = 0
+        for visited_cell in self.visited.keys():
+            if visited_cell in obstacles:
+                obstacles.discard(visited_cell)
+                visited_cleared += 1
+        if visited_cleared > 0:
+            print(f"[A* PLAN] Cleared {visited_cleared} visited cells from obstacles (guaranteed traversable)")
 
         # IMPORTANT: Clear cells around the goal to ensure we can approach it
         # This allows the final approach to origin even if walls are nearby
@@ -2116,7 +2120,10 @@ rclpy.shutdown()
             wall_y = self.current_pos[1] + dist * math.sin(world_angle)
             wall_cell = self._pos_to_cell(wall_x, wall_y)
 
-            if wall_cell not in self.scan_ends:
+            # NEVER mark visited cells as walls - we've been there!
+            # NEVER mark origin cell as wall - we need to return there!
+            origin_cell = self._pos_to_cell(self.start_pos[0], self.start_pos[1]) if self.start_pos else None
+            if wall_cell not in self.scan_ends and wall_cell not in self.visited and wall_cell != origin_cell:
                 self.scan_ends[wall_cell] = now
                 new_walls += 1
                 new_wall_cells.append((wall_cell, dist))
@@ -2201,7 +2208,11 @@ rclpy.shutdown()
                 wall_x = self.current_pos[0] + dist * math.cos(world_angle)
                 wall_y = self.current_pos[1] + dist * math.sin(world_angle)
                 wall_cell = self._pos_to_cell(wall_x, wall_y)
-                self.scan_ends[wall_cell] = now
+                # NEVER mark visited cells as walls - we've been there!
+                # NEVER mark origin cell as wall - we need to return there!
+                origin_cell = self._pos_to_cell(self.start_pos[0], self.start_pos[1]) if self.start_pos else None
+                if wall_cell not in self.visited and wall_cell != origin_cell:
+                    self.scan_ends[wall_cell] = now
 
     def _check_angular_opening(self, raw_scan: List[float], robot_angle: float,
                                 required_dist: float, min_opening_deg: float = 10.0,
