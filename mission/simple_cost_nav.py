@@ -453,6 +453,23 @@ rclpy.shutdown()
         obstacles.discard(start_cell)
         obstacles.discard(goal_cell)
 
+        # CRITICAL FIX: If start is inside inflated zone, we need to clear a path OUT
+        # Otherwise A* can't even begin - all neighbors are blocked
+        # Clear cells around start so robot can escape the inflation zone
+        if start_in_obs:
+            start_cleared = 0
+            # Clear immediate neighbors (1 cell radius) so robot can move
+            for dx in range(-1, 2):
+                for dy in range(-1, 2):
+                    neighbor = (start_cell[0] + dx, start_cell[1] + dy)
+                    if neighbor in obstacles:
+                        # Only clear if it's not an actual wall (just inflated)
+                        if neighbor not in self.scan_ends:
+                            obstacles.discard(neighbor)
+                            start_cleared += 1
+            if start_cleared > 0:
+                print(f"[A* FIX] Cleared {start_cleared} inflated cells around start to allow escape")
+
         # A* algorithm
         def heuristic(cell: Tuple[int, int]) -> float:
             # Euclidean distance heuristic
@@ -508,6 +525,10 @@ rclpy.shutdown()
                 print(f"[A* RESULT] Path found! {path_length_cells} cells, {iterations} iterations")
                 print(f"[A* RESULT] Total cost: {total_cost:.1f}, Path length: ~{path_length_m:.2f}m")
                 print(f"[A* RESULT] Min wall clearance: {min_clearance:.1f} cells = {min_clearance * self.grid_res:.2f}m at {min_clearance_cell}")
+                if min_clearance < 1.0:
+                    print(f"[A* WARN] Path passes very close to walls! May cause collisions.")
+                    if inflation == 0:
+                        print(f"[A* WARN] This is a zero-inflation fallback path - robot was trapped in inflation zone.")
 
                 # Convert to world coordinates (center of each cell)
                 path_world = []
