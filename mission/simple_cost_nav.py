@@ -160,13 +160,19 @@ class NBVNavigator:
         self.return_waypoint_idx: int = 0  # Current waypoint index
         self.waypoint_reached_dist: float = 0.35  # Distance to consider waypoint reached
         self.origin_reached_dist: float = 0.15  # Tighter threshold for reaching origin (15cm)
-        self.path_inflation_radius: int = 4  # Grid cells to inflate walls (4 cells = 16cm clearance)
-        self.goal_clearance_radius: int = 3  # Clear cells within this radius of goal from obstacles
+        # Wall inflation: 2 cells × 0.3m = 0.6m clearance (robot is ~17cm wide, need margin)
+        # IMPORTANT: At 0.3m grid resolution, 4 cells = 1.2m which is WAY too much
+        self.path_inflation_radius: int = 2  # Grid cells to inflate walls (2 cells = 0.6m clearance)
+        # Goal clearance: Only clear 1 cell radius (0.3m) - larger values bypass real walls!
+        self.goal_clearance_radius: int = 1  # Clear cells within this radius of goal from obstacles
 
         # Unreachable waypoints - cells that A* should treat as walls
         # When robot gets stuck trying to reach a waypoint, mark it as unreachable
         # Key: cell tuple, Value: timestamp when added (for debugging/expiry)
         self.unreachable_cells: Dict[Tuple[int, int], float] = {}
+
+        # Origin wall signature - sector distances at startup to detect drift
+        self.origin_wall_signature: Optional[List[float]] = None
 
         # Consecutive goal selection failure tracking
         self.consecutive_no_goal: int = 0  # Count of consecutive "no valid goal" failures
@@ -396,14 +402,14 @@ rclpy.shutdown()
 
         print(f"[A* DEBUG] Inflated obstacles: {len(obstacles)} cells (inflation={inflation}, unreachable={len(self.unreachable_cells)})")
 
-        # IMPORTANT: Remove visited cells from obstacles - we've already been there!
-        visited_cleared = 0
-        for visited_cell in self.visited.keys():
-            if visited_cell in obstacles:
-                obstacles.discard(visited_cell)
-                visited_cleared += 1
-        if visited_cleared > 0:
-            print(f"[A* DEBUG] Cleared {visited_cleared} visited cells from obstacles")
+        # NOTE: We NO LONGER clear visited cells from obstacles!
+        # This was causing paths to route through inflated wall zones because
+        # the robot had explored there earlier. The walls are real - respect them!
+        # Old code that caused path-through-walls bug:
+        # for visited_cell in self.visited.keys():
+        #     if visited_cell in obstacles:
+        #         obstacles.discard(visited_cell)
+        # Instead, visited cells are used only for tie-breaking in goal selection
 
         # IMPORTANT: Clear cells around the goal to ensure we can approach it
         # This allows the final approach to origin even if walls are nearby
@@ -491,8 +497,8 @@ rclpy.shutdown()
                 # Diagonal moves cost sqrt(2), orthogonal cost 1
                 move_cost = 1.414 if dx != 0 and dy != 0 else 1.0
 
-                # Add wall proximity cost - prefer paths away from walls
-                # Check distance to nearest wall and add penalty for being close
+                # Add wall proximity cost - STRONGLY prefer paths away from walls
+                # This is critical for preventing paths that hug walls
                 wall_penalty = 0.0
                 for wall_cell in self.scan_ends.keys():
                     wall_dx = wall_cell[0] - neighbor[0]
@@ -501,9 +507,10 @@ rclpy.shutdown()
                     if abs(wall_dx) <= 3 and abs(wall_dy) <= 3:
                         wall_dist = math.sqrt(wall_dx*wall_dx + wall_dy*wall_dy)
                         if wall_dist < 3:  # Within 3 cells (~0.9m)
-                            # Exponential penalty: closer = much higher cost
-                            # wall_dist=1 -> penalty=2.0, wall_dist=2 -> penalty=0.5
-                            wall_penalty = max(wall_penalty, 2.0 / (wall_dist + 0.5))
+                            # STRONG penalty: closer = MUCH higher cost
+                            # wall_dist=1 -> penalty=8.0, wall_dist=2 -> penalty=3.2
+                            # This ensures A* routes AROUND walls, not along them
+                            wall_penalty = max(wall_penalty, 8.0 / (wall_dist + 0.5))
 
                 tentative_g = g_score[current] + move_cost + wall_penalty
 
@@ -1036,6 +1043,10 @@ rclpy.shutdown()
                 if self.start_pos is None:
                     self.start_pos = self.current_pos
                     print(f"[START] Initial position: ({self.start_pos[0]:.2f}, {self.start_pos[1]:.2f})")
+                    # Capture origin "wall signature" - distances to walls in each direction
+                    # This helps detect if origin has drifted relative to walls
+                    self.origin_wall_signature = sectors.copy()  # 12 sector distances at startup
+                    print(f"[START] Origin wall signature: {[f'{d:.2f}' for d in sectors]}")
                     # Start origin marker (blue sphere) if debug mode
                     if self.debug_marker:
                         self._start_origin_marker(self.start_pos[0], self.start_pos[1])
