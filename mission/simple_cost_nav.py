@@ -385,6 +385,12 @@ rclpy.shutdown()
         print(f"[A* PLAN] Grid res: {self.grid_res}m, Inflation: {inflation} cells = {inflation * self.grid_res:.2f}m clearance")
         print(f"[A* PLAN] Map: {len(self.scan_ends)} walls, {len(self.scanned)} scanned, {len(self.visited)} visited")
 
+        # CRITICAL: Remove origin cell from scan_ends if it got marked as wall
+        # This can happen due to SLAM drift or timing issues at startup
+        if goal_cell in self.scan_ends:
+            print(f"[A* FIX] Removing goal cell {goal_cell} from scan_ends (was incorrectly marked as wall)")
+            del self.scan_ends[goal_cell]
+
         # Build obstacle set with inflation for robot clearance
         obstacles: Set[Tuple[int, int]] = set()
         for wall_cell in self.scan_ends.keys():
