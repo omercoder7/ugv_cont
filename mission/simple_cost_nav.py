@@ -150,6 +150,9 @@ class NBVNavigator:
         self.return_area_radius: float = 0.5  # Radius to consider "same area" (0.5m)
         self.return_area_timeout: float = 15.0  # Replan if in same area for 15s without progress
         self.return_area_best_dist: float = float('inf')  # Best distance to origin while in this area
+        self.return_replan_count: int = 0  # Count of replans at similar distance
+        self.return_replan_max: int = 5  # Give up after this many replans without progress
+        self.return_last_replan_dist: float = float('inf')  # Distance at last replan
         self.return_rotation_threshold: float = 0.15  # Min rotation (rad, ~9°) to count as "not stuck"
 
         # Origin marker subprocess
@@ -947,6 +950,10 @@ rclpy.shutdown()
 
         # Check all visited cells within range
         for cell, _ in self.visited.items():
+            # Skip cells marked as unreachable - we already tried and failed to reach them!
+            if cell in self.unreachable_cells:
+                continue
+
             # Distance to goal in cells
             dx = cell[0] - goal_cell[0]
             dy = cell[1] - goal_cell[1]
@@ -972,6 +979,11 @@ rclpy.shutdown()
 
         if best_point:
             print(f"[A* DEBUG] Found approach point with clearance={best_clearance:.2f}m")
+        else:
+            # Count why we didn't find any approach points
+            skipped_unreachable = sum(1 for c in self.visited if c in self.unreachable_cells)
+            if skipped_unreachable > 0:
+                print(f"[A* DEBUG] No approach point found (skipped {skipped_unreachable} unreachable cells)")
 
         return best_point
 
@@ -1372,6 +1384,28 @@ rclpy.shutdown()
                                 self.return_area_time = now
                                 self.return_area_best_dist = dist_to_origin
 
+                                # Track repeated replans at same distance - indicates SLAM drift
+                                if abs(dist_to_origin - self.return_last_replan_dist) < 0.3:
+                                    self.return_replan_count += 1
+                                    print(f"[A*] Replan #{self.return_replan_count} at similar distance ({dist_to_origin:.2f}m)")
+                                else:
+                                    # Made progress, reset counter
+                                    self.return_replan_count = 1
+                                self.return_last_replan_dist = dist_to_origin
+
+                                # Give up if too many replans without progress - likely SLAM drift
+                                if self.return_replan_count >= self.return_replan_max:
+                                    print(f"\n\n{'=' * 55}")
+                                    print(f"[{now - self.start_time:.1f}s] MISSION COMPLETE!")
+                                    print(f"{'=' * 55}")
+                                    print(f"Cannot reach origin after {self.return_replan_count} attempts (likely SLAM drift)")
+                                    print(f"Finishing at closest reachable position.")
+                                    print(f"Final position: ({self.current_pos[0]:.2f}, {self.current_pos[1]:.2f})")
+                                    print(f"Origin: ({self.start_pos[0]:.2f}, {self.start_pos[1]:.2f})")
+                                    print(f"Distance error: {dist_to_origin:.2f}m")
+                                    print(f"{'=' * 55}\n")
+                                    break
+
                                 # Replan
                                 self.return_path = self._plan_path_astar(self.current_pos, self.start_pos)
                                 self.return_waypoint_idx = 0
@@ -1419,6 +1453,27 @@ rclpy.shutdown()
                         self.return_last_progress_time = time.time()
                         self.return_last_pos = self.current_pos  # Reset position tracking after backup
                         self.return_last_heading = self.current_heading  # Reset heading tracking after backup
+
+                        # Track repeated replans at same distance
+                        if abs(dist_to_origin - self.return_last_replan_dist) < 0.3:
+                            self.return_replan_count += 1
+                            print(f"[A*] Replan #{self.return_replan_count} at similar distance ({dist_to_origin:.2f}m)")
+                        else:
+                            self.return_replan_count = 1
+                        self.return_last_replan_dist = dist_to_origin
+
+                        # Give up if too many replans
+                        if self.return_replan_count >= self.return_replan_max:
+                            print(f"\n\n{'=' * 55}")
+                            print(f"[{time.time() - self.start_time:.1f}s] MISSION COMPLETE!")
+                            print(f"{'=' * 55}")
+                            print(f"Cannot reach origin after {self.return_replan_count} attempts (likely SLAM drift)")
+                            print(f"Finishing at closest reachable position.")
+                            print(f"Final position: ({self.current_pos[0]:.2f}, {self.current_pos[1]:.2f})")
+                            print(f"Origin: ({self.start_pos[0]:.2f}, {self.start_pos[1]:.2f})")
+                            print(f"Distance error: {dist_to_origin:.2f}m")
+                            print(f"{'=' * 55}\n")
+                            break
 
                         # Replan path from current position
                         self.return_path = self._plan_path_astar(self.current_pos, self.start_pos)
