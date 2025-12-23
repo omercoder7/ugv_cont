@@ -940,8 +940,15 @@ rclpy.shutdown()
                         # Reset and try to find a different approach point
                         self.return_approach_fail_count = 0
                         self.return_last_approach_point = None
-                        # Recursively try to find a new approach point
-                        return self._add_clear_approach_point(simplified)
+                        # Recursively try to find a new approach point (now with blocked cell)
+                        new_approach = self._find_clear_approach_point(goal)
+                        if new_approach:
+                            # Found a different approach point, use it
+                            approach_point = new_approach
+                        else:
+                            # No more approach points available, use simplified path as-is
+                            print(f"[A* DEBUG] No alternative approach point found, using path as-is")
+                            return simplified
                 else:
                     # Different approach point, reset counter
                     self.return_approach_fail_count = 1
