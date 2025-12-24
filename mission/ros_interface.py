@@ -66,6 +66,9 @@ if msg:
     siny_cosp = 2 * (q.w * q.z + q.x * q.y)
     cosy_cosp = 1 - 2 * (q.y * q.y + q.z * q.z)
     yaw = math.atan2(siny_cosp, cosy_cosp)
+    # Correct for 180 degree offset between odometry frame and robot physical front
+    yaw = yaw + math.pi
+    if yaw > math.pi: yaw -= 2*math.pi
     print(f'{x:.4f},{y:.4f},{yaw:.4f}')
 node.destroy_node()
 rclpy.shutdown()
