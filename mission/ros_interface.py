@@ -80,9 +80,7 @@ class BridgeNode(Node):
         siny_cosp = 2 * (q.w * q.z + q.x * q.y)
         cosy_cosp = 1 - 2 * (q.y * q.y + q.z * q.z)
         yaw = math.atan2(siny_cosp, cosy_cosp)
-        # 180 degree offset correction
-        yaw = yaw + math.pi
-        if yaw > math.pi: yaw -= 2*math.pi
+        # NOTE: 180° offset removed - TF tree now correct with bringup_ekf_simple.launch.py
         self.odom_data = (round(x, 4), round(y, 4), round(yaw, 4))
 
 rclpy.init()
@@ -276,9 +274,7 @@ if msg:
     siny_cosp = 2 * (q.w * q.z + q.x * q.y)
     cosy_cosp = 1 - 2 * (q.y * q.y + q.z * q.z)
     yaw = math.atan2(siny_cosp, cosy_cosp)
-    # Correct for 180 degree offset between odometry frame and robot physical front
-    yaw = yaw + math.pi
-    if yaw > math.pi: yaw -= 2*math.pi
+    # NOTE: 180° offset removed - TF tree now correct with bringup_ekf_simple.launch.py
     print(f'{x:.4f},{y:.4f},{yaw:.4f}')
 node.destroy_node()
 rclpy.shutdown()

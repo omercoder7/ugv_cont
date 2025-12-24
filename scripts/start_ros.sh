@@ -80,6 +80,12 @@ log "Restarting container to clear all processes..."
 docker restart ${CONTAINER_NAME}
 sleep 5
 
+# Clear FastDDS shared memory to prevent stale node registrations
+# Note: /dev/shm is shared with host, so we clear both inside container and on host
+log "Clearing FastDDS shared memory cache..."
+docker exec ${CONTAINER_NAME} bash -c "rm -rf /dev/shm/fastrtps_* /dev/shm/sem.fastrtps_* 2>/dev/null" || true
+rm -rf /dev/shm/fastrtps_* /dev/shm/sem.fastrtps_* 2>/dev/null || true
+
 # Reset ROS2 daemon inside container to clear DDS discovery cache
 log "Resetting ROS2 daemon (clears DDS cache)..."
 timeout 5 docker exec ${CONTAINER_NAME} bash -c "source /opt/ros/humble/setup.bash && ros2 daemon stop && ros2 daemon start" 2>/dev/null || true
@@ -357,6 +363,14 @@ fi
 # ============================================================================
 echo ""
 log "=== Final Status ==="
+
+# Check for duplicate nodes (indicates stale DDS entries)
+DUPLICATE_NODES=$(timeout 5 docker exec ${CONTAINER_NAME} bash -c "source /opt/ros/humble/setup.bash && ros2 node list 2>/dev/null" 2>/dev/null | sort | uniq -d)
+if [ -n "${DUPLICATE_NODES}" ]; then
+    log_warn "Duplicate node entries detected (stale DDS cache):"
+    echo "${DUPLICATE_NODES}" | while read node; do echo "  - ${node}"; done
+    log "These are harmless phantom entries that will clear in ~30 seconds"
+fi
 
 # Check all key components (fast checks using topic list)
 TOPICS=$(timeout 3 docker exec ${CONTAINER_NAME} bash -c "source /opt/ros/humble/setup.bash && ros2 topic list 2>/dev/null" 2>/dev/null || echo "")
