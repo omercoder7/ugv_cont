@@ -83,6 +83,10 @@ sleep 5
 # Reset ROS2 daemon inside container to clear DDS discovery cache
 log "Resetting ROS2 daemon (clears DDS cache)..."
 timeout 5 docker exec ${CONTAINER_NAME} bash -c "source /opt/ros/humble/setup.bash && ros2 daemon stop && ros2 daemon start" 2>/dev/null || true
+
+# Also clear FastDDS shared memory and cache files (fixes stale node listings)
+log "Clearing FastDDS cache files..."
+docker exec ${CONTAINER_NAME} bash -c "rm -rf /dev/shm/fastrtps_* /dev/shm/sem.fastrtps_* ~/.ros/log/daemon* 2>/dev/null" || true
 sleep 1
 
 # Verify clean state

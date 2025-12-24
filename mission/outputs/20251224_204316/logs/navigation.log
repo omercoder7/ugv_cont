@@ -1,0 +1,168 @@
+[OUTPUT] Logging to: /home/ws/ugv_cont/mission/outputs/20251224_204316
+[OUTPUT] Log file: /home/ws/ugv_cont/mission/outputs/20251224_204316/logs/navigation.log
+=======================================================
+NEXT-BEST-VIEW (NBV) NAVIGATION
+=======================================================
+Speed: 0.08 m/s
+Goal distance: 0.5-2.0m
+Press Ctrl+C to stop
+
+[DEBUG] Marker publishing enabled - check /nav_goal in RViz
+[MARKER] Persistent marker publisher started - add /nav_goal in RViz
+[START] Initial position: (0.01, -0.02)
+[START] Origin wall signature: ['0.60', '0.59', '0.58', '0.58', '0.58', '0.59', '0.61', '0.63', '1.01', '0.96', '0.87', '0.81', '0.61', '0.57', '0.55', '0.52', '0.49', '0.49', '0.54', '0.55', '0.53', '0.54', '0.65', '5.00', '5.00', '5.00', '5.00', '5.00', '5.00', '5.00', '5.00', '5.00', '5.00', '5.00', '5.00', '5.00', '5.00', '5.00', '0.76', '0.79', '0.85', '1.82', '2.08', '3.75', '3.75', '1.82', '1.80', '1.32', '1.32', '1.34', '1.38', '1.43', '1.48', '0.80', '0.77', '0.73', '0.70', '0.65', '0.62', '0.62']
+[MARKER] Origin marker (blue) started at (0.01, -0.02) - add /nav_origin in RViz
+
+[  3.4s] [GOAL SELECT] robot@(0.01,-0.02) | 19 candidates (scanned=52 walls=23 visited=1):
+  #1 ang=-101° d=2.00m pos=(0.42,1.94) score=+36.1 [O=+2.5 U=+34.0 V=-0.0 W=-1.0 R=-0.0 F=+0.0] <-- BEST
+  #2 ang= -52° d=0.50m pos=(-0.30,0.38) score=+30.1 [O=+1.9 U=+34.0 V=-3.0 W=-3.0 R=-0.0 F=+0.0]
+  #3 ang=-107° d=1.50m pos=(0.47,1.41) score=+29.0 [O=+1.6 U=+28.0 V=-0.0 W=-1.0 R=-0.0 F=+0.0]
+  #4 ang=-101° d=1.50m pos=(0.32,1.45) score=+28.0 [O=+2.5 U=+26.0 V=-0.0 W=-1.0 R=-0.0 F=+0.0]
+  #5 ang= -82° d=1.00m pos=(-0.11,0.98) score=+27.1 [O=+1.8 U=+28.0 V=-0.0 W=-3.0 R=-0.0 F=+0.0]
+  #6 ang= -58° d=0.50m pos=(-0.25,0.41) score=+22.0 [O=+1.9 U=+36.0 V=-3.0 W=-3.0 R=-0.0 F=+0.0 T=-10.0]
+  #7 ang=-107° d=1.00m pos=(0.32,0.93) score=+21.4 [O=+2.1 U=+20.0 V=-0.0 W=-1.0 R=-0.0 F=+0.0]
+  #8 ang= -88° d=1.00m pos=(-0.00,0.98) score=+21.1 [O=+1.8 U=+22.0 V=-0.0 W=-3.0 R=-0.0 F=+0.0]
+[  3.4s] [GOAL] Selected: (0.42, 1.94) dist=2.00m timeout=50s angle=-101° reason=no goal
+[  1] DRIVE goal=(0.42,1.94) dist=2.00m front=0.58m cells=1 rms=0.0cm[  2] DRIVE goal=(0.42,1.94) dist=2.00m front=0.58m cells=1 rms=0.0cm[  3] DRIVE goal=(0.42,1.94) dist=2.00m front=0.58m cells=1 rms=0.0cm[  4] DRIVE goal=(0.42,1.94) dist=2.00m front=0.58m cells=1 rms=0.0cm[  5] DRIVE goal=(0.42,1.94) dist=2.00m front=0.58m cells=1 rms=0.1cm[  6] DRIVE goal=(0.42,1.94) dist=2.00m front=0.58m cells=1 rms=0.1cm[  7] DRIVE goal=(0.42,1.94) dist=2.00m front=0.58m cells=1 rms=0.2cm[  8] DRIVE goal=(0.42,1.94) dist=2.00m front=0.58m cells=1 rms=0.2cm[  9] DRIVE goal=(0.42,1.94) dist=2.00m front=0.58m cells=1 rms=0.2cm[ 10] DRIVE goal=(0.42,1.94) dist=2.00m front=0.58m cells=1 rms=0.2cm[ 11] DRIVE goal=(0.42,1.94) dist=1.99m front=0.59m cells=1 rms=0.2cm[ 12] DRIVE goal=(0.42,1.94) dist=1.99m front=0.61m cells=1 rms=0.3cm[ 13] DRIVE goal=(0.42,1.94) dist=1.98m front=0.62m cells=1 rms=0.3cm[ 14] DRIVE goal=(0.42,1.94) dist=1.98m front=0.63m cells=1 rms=0.4cm[ 15] DRIVE goal=(0.42,1.94) dist=1.98m front=0.63m cells=1 rms=0.4cm[ 16] DRIVE goal=(0.42,1.94) dist=1.98m front=0.63m cells=1 rms=0.5cm[ 17] DRIVE goal=(0.42,1.94) dist=1.99m front=0.62m cells=1 rms=0.5cm[ 18] DRIVE goal=(0.42,1.94) dist=1.99m front=0.62m cells=1 rms=0.5cm[ 19] DRIVE goal=(0.42,1.94) dist=1.99m front=0.62m cells=1 rms=0.5cm[ 20] DRIVE goal=(0.42,1.94) dist=1.99m front=0.63m cells=1 rms=0.5cm[ 21] DRIVE goal=(0.42,1.94) dist=1.99m front=0.63m cells=1 rms=0.6cm[ 22] DRIVE goal=(0.42,1.94) dist=1.99m front=0.65m cells=1 rms=0.6cm[ 23] DRIVE goal=(0.42,1.94) dist=1.99m front=0.65m cells=1 rms=0.6cm[ 24] DRIVE goal=(0.42,1.94) dist=1.98m front=0.66m cells=1 rms=0.7cm[ 25] DRIVE goal=(0.42,1.94) dist=1.99m front=0.69m cells=1 rms=0.8cm[ 26] DRIVE goal=(0.42,1.94) dist=1.98m front=0.74m cells=1 rms=0.9cm[ 27] DRIVE goal=(0.42,1.94) dist=1.98m front=0.74m cells=1 rms=1.0cm[ 28] DRIVE goal=(0.42,1.94) dist=1.98m front=0.75m cells=1 rms=1.0cm[ 29] DRIVE goal=(0.42,1.94) dist=1.98m front=0.77m cells=1 rms=1.1cm[ 30] DRIVE goal=(0.42,1.94) dist=1.98m front=0.77m cells=1 rms=1.2cm[ 31] DRIVE goal=(0.42,1.94) dist=1.98m front=0.77m cells=1 rms=1.2cm[ 32] DRIVE goal=(0.42,1.94) dist=1.98m front=0.80m cells=1 rms=1.3cm[ 33] DRIVE goal=(0.42,1.94) dist=1.98m front=0.82m cells=1 rms=1.4cm[ 34] DRIVE goal=(0.42,1.94) dist=1.98m front=0.82m cells=1 rms=1.5cm[ 35] DRIVE goal=(0.42,1.94) dist=1.98m front=0.80m cells=1 rms=1.5cm[ 36] DRIVE goal=(0.42,1.94) dist=1.98m front=1.00m cells=1 rms=1.6cm[ 37] DRIVE goal=(0.42,1.94) dist=1.98m front=1.29m cells=1 rms=1.7cm[ 38] DRIVE goal=(0.42,1.94) dist=1.97m front=1.29m cells=1 rms=1.8cm[ 39] DRIVE goal=(0.42,1.94) dist=1.98m front=1.29m cells=1 rms=1.8cm[ 40] DRIVE goal=(0.42,1.94) dist=1.97m front=1.29m cells=1 rms=1.9cm[ 41] DRIVE goal=(0.42,1.94) dist=1.97m front=1.29m cells=1 rms=2.0cm[ 42] DRIVE goal=(0.42,1.94) dist=1.96m front=0.77m cells=1 rms=2.0cm[ 43] DRIVE goal=(0.42,1.94) dist=1.96m front=0.77m cells=1 rms=2.0cm[ 44] DRIVE goal=(0.42,1.94) dist=1.97m front=0.76m cells=1 rms=2.1cm[ 45] DRIVE goal=(0.42,1.94) dist=1.97m front=0.71m cells=1 rms=2.2cm[ 46] DRIVE goal=(0.42,1.94) dist=1.97m front=0.73m cells=1 rms=2.3cm[ 47] DRIVE goal=(0.42,1.94) dist=1.98m front=0.78m cells=1 rms=2.5cm
+[ 13.0s] [TURN ENTER] Entering TURN mode
+
+[BLOCKED DEBUG] Goal angle: -18.1° (sector 56), goal_dist: 1.98m, goal_dir_min: 1.83m, margin: 0.15m
+[BLOCKED DEBUG] Checking 1 sectors (robot angular width at 2.0m = 5.2°): {56: 1.827}
+[BLOCKED DEBUG] Check: 1.83 < 1.98 - 0.15 = 1.83? True
+[BLOCKED DEBUG] (Full front arc for reference: {55: 1.624, 56: 1.827, 57: 3.734, 58: 3.661, 59: 3.724, 0: 1.738, 1: 1.719, 2: 1.256, 3: 1.248, 4: 1.265, 5: 1.3})
+
+[BLOCKED TURN] goal_sector=56, best_sector=56 (dist=1.83m), target_angle=-24.0°, angle_error=-24.0°, v=0.00, w=-0.50
+[ 48] TURN goal=(0.42,1.94) dist=1.98m front=1.25m cells=1 rms=2.8cm[ 49] DRIVE goal=(0.42,1.94) dist=1.99m front=1.24m cells=1 rms=3.1cm[ 50] DRIVE goal=(0.42,1.94) dist=1.99m front=1.23m cells=1 rms=3.4cm[ 51] DRIVE goal=(0.42,1.94) dist=1.99m front=1.23m cells=1 rms=3.7cm[ 52] DRIVE goal=(0.42,1.94) dist=1.98m front=0.71m cells=1 rms=4.0cm[ 53] DRIVE goal=(0.42,1.94) dist=1.99m front=0.71m cells=1 rms=4.2cm
+[ 14.3s] [TURN ENTER] Entering TURN mode
+
+[BLOCKED DEBUG] Goal angle: -7.2° (sector 58), goal_dist: 1.98m, goal_dir_min: 1.77m, margin: 0.15m
+[BLOCKED DEBUG] Checking 1 sectors (robot angular width at 2.0m = 5.2°): {58: 1.772}
+[BLOCKED DEBUG] Check: 1.77 < 1.98 - 0.15 = 1.83? True
+[BLOCKED DEBUG] (Full front arc for reference: {55: 0.684, 56: 0.73, 57: 1.578, 58: 1.772, 59: 3.701, 0: 3.625, 1: 3.683, 2: 1.686, 3: 1.686, 4: 1.228, 5: 1.217})
+
+[BLOCKED TURN] goal_sector=58, best_sector=58 (dist=1.77m), target_angle=-12.0°, angle_error=-12.0°, v=0.00, w=-0.31
+[ 54] TURN goal=(0.42,1.94) dist=1.98m front=0.68m cells=1 rms=4.5cm[ 55] DRIVE goal=(0.42,1.94) dist=1.99m front=0.70m cells=1 rms=4.8cm
+[ 14.6s] [TURN ENTER] Entering TURN mode
+
+[BLOCKED DEBUG] Goal angle: -7.5° (sector 58), goal_dist: 1.99m, goal_dir_min: 1.77m, margin: 0.15m
+[BLOCKED DEBUG] Checking 1 sectors (robot angular width at 2.0m = 5.2°): {58: 1.767}
+[BLOCKED DEBUG] Check: 1.77 < 1.99 - 0.15 = 1.84? True
+[BLOCKED DEBUG] (Full front arc for reference: {55: 0.675, 56: 0.714, 57: 1.578, 58: 1.767, 59: 3.696, 0: 3.607, 1: 3.632, 2: 1.691, 3: 1.668, 4: 1.678, 5: 1.198})
+
+[BLOCKED TURN] goal_sector=58, best_sector=58 (dist=1.77m), target_angle=-12.0°, angle_error=-12.0°, v=0.00, w=-0.31
+[ 56] TURN goal=(0.42,1.94) dist=1.99m front=0.68m cells=1 rms=5.1cm[ 57] TURN goal=(0.42,1.94) dist=1.99m front=0.67m cells=1 rms=5.5cm[ 58] TURN goal=(0.42,1.94) dist=1.99m front=0.68m cells=1 rms=5.8cm[ 59] DRIVE goal=(0.42,1.94) dist=1.99m front=0.70m cells=1 rms=6.2cm[ 60] DRIVE goal=(0.42,1.94) dist=1.99m front=0.70m cells=1 rms=6.5cm
+[ 15.6s] [TURN ENTER] Entering TURN mode
+
+[BLOCKED DEBUG] Goal angle: -7.5° (sector 58), goal_dist: 1.99m, goal_dir_min: 1.75m, margin: 0.15m
+[BLOCKED DEBUG] Checking 1 sectors (robot angular width at 2.0m = 5.2°): {58: 1.749}
+[BLOCKED DEBUG] Check: 1.75 < 1.99 - 0.15 = 1.84? True
+[BLOCKED DEBUG] (Full front arc for reference: {55: 0.664, 56: 0.701, 57: 1.537, 58: 1.749, 59: 3.677, 0: 3.583, 1: 3.591, 2: 1.653, 3: 1.644, 4: 1.645, 5: 1.173})
+
+[BLOCKED TURN] goal_sector=58, best_sector=58 (dist=1.75m), target_angle=-12.0°, angle_error=-12.0°, v=0.00, w=-0.31
+[ 61] TURN goal=(0.42,1.94) dist=1.99m front=0.66m cells=1 rms=6.8cm[ 62] TURN goal=(0.42,1.94) dist=1.99m front=0.65m cells=1 rms=7.1cm[ 63] TURN goal=(0.42,1.94) dist=1.99m front=0.65m cells=1 rms=7.4cm[ 64] TURN goal=(0.42,1.94) dist=1.99m front=0.66m cells=1 rms=7.6cm[ 65] TURN goal=(0.42,1.94) dist=1.99m front=0.66m cells=1 rms=7.9cm[ 66] TURN goal=(0.42,1.94) dist=1.99m front=0.66m cells=1 rms=8.1cm[ 67] TURN goal=(0.42,1.94) dist=1.99m front=0.66m cells=1 rms=8.4cm[ 68] TURN goal=(0.42,1.94) dist=1.99m front=0.64m cells=1 rms=8.6cm
+[ 17.3s] [DRIVE STUCK] Goal distance unchanged for 5.8s
+[DRIVE STUCK] dist_oldest=1.97m, dist_now=1.99m, change=0.02m < margin=0.08m
+[DRIVE STUCK] Front sectors: s55=0.63 s56=0.68 s57=1.48 s58=1.64 s59=1.86 s0=3.59 s1=3.56 s2=5.03 s3=1.63 s4=1.63 s5=1.16 
+[DRIVE STUCK] Marked front sectors [55, 56, 57, 58, 59, 0, 1, 2, 3, 4, 5] as blocked for 30s
+
+[BACKUP CLEAR] Reversing and turning toward clearer side...
+[BACKUP CLEAR] Turning left (L_avg=2.60m R_avg=1.26m)
+
+[ 22.0s] [REFINE] best score -32.1 < 20.0, resampling with 150 angles (level 1)
+
+[ 22.0s] [REFINE] best score 5.0 < 20.0, resampling with 450 angles (level 2)
+
+[ 22.1s] [REFINE] best score 5.0 < 20.0, resampling with 1350 angles (level 3)
+
+[ 22.1s] [GOAL SELECT] robot@(-0.05,-0.01) | 466 candidates (refined 3x) (scanned=71 walls=46 visited=1):
+  #1 ang= +45° d=0.50m pos=(-0.30,0.42) score=+5.0 [O=+1.8 U=+34.1 V=-3.0 W=-3.0 R=-0.0 F=+0.0 B=-25.0] <-- BEST
+  #2 ang= +45° d=0.50m pos=(-0.30,0.42) score=+5.0 [O=+1.8 U=+34.1 V=-3.0 W=-3.0 R=-0.0 F=+0.0 B=-25.0]
+  #3 ang= +45° d=0.50m pos=(-0.30,0.42) score=+5.0 [O=+1.8 U=+34.1 V=-3.0 W=-3.0 R=-0.0 F=+0.0 B=-25.0]
+  #4 ang= +45° d=0.50m pos=(-0.29,0.42) score=+5.0 [O=+1.8 U=+34.1 V=-3.0 W=-3.0 R=-0.0 F=+0.0 B=-25.0]
+  #5 ang= +44° d=0.50m pos=(-0.29,0.42) score=+5.0 [O=+1.8 U=+34.1 V=-3.0 W=-3.0 R=-0.0 F=+0.0 B=-25.0]
+  #6 ang= +44° d=0.50m pos=(-0.29,0.43) score=+5.0 [O=+1.8 U=+34.1 V=-3.0 W=-3.0 R=-0.0 F=+0.0 B=-25.0]
+  #7 ang= +44° d=0.50m pos=(-0.29,0.43) score=+5.0 [O=+1.8 U=+34.1 V=-3.0 W=-3.0 R=-0.0 F=+0.0 B=-25.0]
+  #8 ang= +44° d=0.50m pos=(-0.29,0.43) score=+5.0 [O=+1.8 U=+34.1 V=-3.0 W=-3.0 R=-0.0 F=+0.0 B=-25.0]
+[ 22.1s] [GOAL] Selected: (-0.30, 0.42) dist=0.50m timeout=28s angle=45° reason=no goal
+[ 70] DRIVE goal=(-0.30,0.42) dist=0.50m front=0.69m cells=1 rms=8.5cm[ 71] DRIVE goal=(-0.30,0.42) dist=0.50m front=0.70m cells=1 rms=8.5cm[ 72] DRIVE goal=(-0.30,0.42) dist=0.50m front=0.70m cells=1 rms=8.4cm[ 73] DRIVE goal=(-0.30,0.42) dist=0.50m front=0.70m cells=1 rms=8.4cm[ 74] DRIVE goal=(-0.30,0.42) dist=0.50m front=0.71m cells=1 rms=8.3cm[ 75] DRIVE goal=(-0.30,0.42) dist=0.50m front=0.70m cells=1 rms=8.3cm[ 76] DRIVE goal=(-0.30,0.42) dist=0.50m front=0.71m cells=1 rms=8.2cm[ 77] DRIVE goal=(-0.30,0.42) dist=0.50m front=0.72m cells=1 rms=8.1cm[ 78] DRIVE goal=(-0.30,0.42) dist=0.50m front=0.72m cells=1 rms=8.1cm[ 79] DRIVE goal=(-0.30,0.42) dist=0.50m front=0.72m cells=1 rms=8.0cm[ 80] DRIVE goal=(-0.30,0.42) dist=0.51m front=0.74m cells=1 rms=8.0cm[ 81] DRIVE goal=(-0.30,0.42) dist=0.51m front=0.75m cells=1 rms=7.9cm[ 82] DRIVE goal=(-0.30,0.42) dist=0.51m front=0.74m cells=1 rms=7.9cm[ 83] DRIVE goal=(-0.30,0.42) dist=0.51m front=0.75m cells=1 rms=7.8cm[ 84] DRIVE goal=(-0.30,0.42) dist=0.51m front=0.80m cells=1 rms=7.8cm[ 85] DRIVE goal=(-0.30,0.42) dist=0.51m front=1.28m cells=1 rms=7.7cm[ 86] DRIVE goal=(-0.30,0.42) dist=0.51m front=1.28m cells=1 rms=7.7cm[ 87] DRIVE goal=(-0.30,0.42) dist=0.51m front=1.28m cells=1 rms=7.7cm[ 88] DRIVE goal=(-0.30,0.42) dist=0.52m front=1.28m cells=1 rms=7.6cm[ 89] DRIVE goal=(-0.30,0.42) dist=0.52m front=1.27m cells=1 rms=7.6cm[ 90] DRIVE goal=(-0.30,0.42) dist=0.52m front=1.27m cells=1 rms=7.5cm[ 91] DRIVE goal=(-0.30,0.42) dist=0.52m front=1.27m cells=1 rms=7.5cm[ 92] DRIVE goal=(-0.30,0.42) dist=0.52m front=1.27m cells=1 rms=7.4cm[ 93] DRIVE goal=(-0.30,0.42) dist=0.52m front=1.27m cells=1 rms=7.4cm[ 94] DRIVE goal=(-0.30,0.42) dist=0.52m front=1.23m cells=1 rms=7.4cm[ 95] DRIVE goal=(-0.30,0.42) dist=0.51m front=1.25m cells=1 rms=7.3cm[ 96] DRIVE goal=(-0.30,0.42) dist=0.51m front=1.24m cells=1 rms=7.3cm[ 97] DRIVE goal=(-0.30,0.42) dist=0.51m front=1.24m cells=1 rms=7.3cm[ 98] DRIVE goal=(-0.30,0.42) dist=0.51m front=1.23m cells=1 rms=7.3cm[ 99] DRIVE goal=(-0.30,0.42) dist=0.50m front=1.22m cells=1 rms=7.3cm[100] DRIVE goal=(-0.30,0.42) dist=0.50m front=1.20m cells=1 rms=7.3cm[101] DRIVE goal=(-0.30,0.42) dist=0.50m front=1.20m cells=1 rms=7.3cm[102] DRIVE goal=(-0.30,0.42) dist=0.50m front=1.19m cells=1 rms=7.3cm[103] DRIVE goal=(-0.30,0.42) dist=0.51m front=0.81m cells=1 rms=7.3cm[104] DRIVE goal=(-0.30,0.42) dist=0.51m front=0.75m cells=1 rms=7.4cm[105] DRIVE goal=(-0.30,0.42) dist=0.51m front=0.63m cells=1 rms=7.5cm[106] DRIVE goal=(-0.30,0.42) dist=0.52m front=0.60m cells=1 rms=7.7cm[107] DRIVE goal=(-0.30,0.42) dist=0.52m front=0.59m cells=1 rms=7.8cm[108] DRIVE goal=(-0.30,0.42) dist=0.52m front=0.71m cells=1 rms=8.0cm[109] DRIVE goal=(-0.30,0.42) dist=0.52m front=0.71m cells=1 rms=8.2cm[110] DRIVE goal=(-0.30,0.42) dist=0.53m front=0.76m cells=1 rms=8.4cm[111] DRIVE goal=(-0.30,0.42) dist=0.53m front=1.08m cells=1 rms=8.6cm[112] DRIVE goal=(-0.30,0.42) dist=0.53m front=1.07m cells=1 rms=8.8cm[113] DRIVE goal=(-0.30,0.42) dist=0.53m front=1.06m cells=1 rms=9.0cm[114] DRIVE goal=(-0.30,0.42) dist=0.53m front=1.05m cells=1 rms=9.2cm
+[ 31.1s] [DRIVE STUCK] Goal distance unchanged for 5.2s
+[DRIVE STUCK] dist_oldest=0.52m, dist_now=0.53m, change=0.01m < margin=0.08m
+[DRIVE STUCK] Front sectors: s55=3.56 s56=3.52 s57=5.29 s58=1.54 s59=1.54 s0=1.04 s1=1.05 s2=1.06 s3=1.09 s4=1.13 s5=1.19 
+[DRIVE STUCK] Marked front sectors [55, 56, 57, 58, 59, 0, 1, 2, 3, 4, 5] as blocked for 30s
+
+[BACKUP CLEAR] Reversing and turning toward clearer side...
+[BACKUP CLEAR] Turning right (L_avg=1.10m R_avg=3.09m)
+
+[ 35.9s] [REFINE] best score 6.3 < 20.0, resampling with 150 angles (level 1)
+
+[ 35.9s] [REFINE] best score 6.3 < 20.0, resampling with 450 angles (level 2)
+
+[ 35.9s] [REFINE] best score 6.3 < 20.0, resampling with 1350 angles (level 3)
+
+[ 35.9s] [GOAL SELECT] robot@(-0.18,-0.07) | 325 candidates (refined 3x) (scanned=77 walls=57 visited=1):
+  #1 ang=-101° d=0.50m pos=(0.29,-0.25) score=+6.3 [O=+1.9 U=+40.0 V=-15.0 W=-3.0 R=-7.7 F=+0.0 T=-10.0] <-- BEST
+  #2 ang=-101° d=0.50m pos=(0.29,-0.25) score=+6.3 [O=+1.9 U=+40.0 V=-15.0 W=-3.0 R=-7.7 F=+0.0 T=-10.0]
+  #3 ang=-101° d=0.50m pos=(0.29,-0.25) score=+6.3 [O=+1.9 U=+40.0 V=-15.0 W=-3.0 R=-7.7 F=+0.0 T=-10.0]
+  #4 ang=-101° d=0.50m pos=(0.29,-0.25) score=+6.3 [O=+1.9 U=+40.0 V=-15.0 W=-3.0 R=-7.7 F=+0.0 T=-10.0]
+  #5 ang=-101° d=0.50m pos=(0.29,-0.25) score=+6.3 [O=+1.9 U=+40.0 V=-15.0 W=-3.0 R=-7.7 F=+0.0 T=-10.0]
+  #6 ang=-102° d=0.50m pos=(0.28,-0.26) score=+6.0 [O=+1.6 U=+40.0 V=-15.0 W=-3.0 R=-7.7 F=+0.0 T=-10.0]
+  #7 ang=-102° d=0.50m pos=(0.28,-0.26) score=+6.0 [O=+1.6 U=+40.0 V=-15.0 W=-3.0 R=-7.7 F=+0.0 T=-10.0]
+  #8 ang=-102° d=0.50m pos=(0.28,-0.26) score=+6.0 [O=+1.6 U=+40.0 V=-15.0 W=-3.0 R=-7.7 F=+0.0 T=-10.0]
+[ 35.9s] [GOAL] Selected: (0.29, -0.25) dist=0.50m timeout=28s angle=-101° reason=no goal
+[116] DRIVE goal=(0.29,-0.25) dist=0.50m front=0.77m cells=1 rms=9.1cm[117] DRIVE goal=(0.29,-0.25) dist=0.50m front=1.15m cells=1 rms=9.1cm[118] DRIVE goal=(0.29,-0.25) dist=0.50m front=0.76m cells=1 rms=9.1cm[119] DRIVE goal=(0.29,-0.25) dist=0.50m front=0.79m cells=1 rms=9.0cm[120] DRIVE goal=(0.29,-0.25) dist=0.50m front=0.77m cells=1 rms=9.0cm[121] DRIVE goal=(0.29,-0.25) dist=0.50m front=0.76m cells=1 rms=8.9cm[122] DRIVE goal=(0.29,-0.25) dist=0.50m front=0.75m cells=1 rms=8.9cm[123] DRIVE goal=(0.29,-0.25) dist=0.50m front=0.74m cells=1 rms=8.9cm[124] DRIVE goal=(0.29,-0.25) dist=0.50m front=0.73m cells=1 rms=8.8cm[125] DRIVE goal=(0.29,-0.25) dist=0.50m front=0.72m cells=1 rms=8.8cm[126] DRIVE goal=(0.29,-0.25) dist=0.50m front=0.71m cells=1 rms=8.8cm[127] DRIVE goal=(0.29,-0.25) dist=0.50m front=0.70m cells=1 rms=8.7cm[128] DRIVE goal=(0.29,-0.25) dist=0.50m front=0.69m cells=1 rms=8.7cm[129] DRIVE goal=(0.29,-0.25) dist=0.50m front=0.68m cells=1 rms=8.7cm[130] DRIVE goal=(0.29,-0.25) dist=0.50m front=0.66m cells=1 rms=8.6cm[131] DRIVE goal=(0.29,-0.25) dist=0.50m front=0.65m cells=1 rms=8.6cm[132] DRIVE goal=(0.29,-0.25) dist=0.50m front=0.64m cells=1 rms=8.6cm[133] DRIVE goal=(0.29,-0.25) dist=0.50m front=0.64m cells=1 rms=8.5cm[134] DRIVE goal=(0.29,-0.25) dist=0.51m front=0.64m cells=1 rms=8.5cm[135] DRIVE goal=(0.29,-0.25) dist=0.51m front=0.63m cells=1 rms=8.5cm[136] DRIVE goal=(0.29,-0.25) dist=0.51m front=0.63m cells=1 rms=8.5cm[137] DRIVE goal=(0.29,-0.25) dist=0.51m front=0.62m cells=1 rms=8.4cm[138] DRIVE goal=(0.29,-0.25) dist=0.51m front=0.62m cells=1 rms=8.4cm[139] DRIVE goal=(0.29,-0.25) dist=0.51m front=0.63m cells=1 rms=8.4cm[140] DRIVE goal=(0.29,-0.25) dist=0.51m front=0.63m cells=1 rms=8.4cm[141] DRIVE goal=(0.29,-0.25) dist=0.51m front=0.63m cells=1 rms=8.4cm[142] DRIVE goal=(0.29,-0.25) dist=0.51m front=0.63m cells=1 rms=8.3cm[143] DRIVE goal=(0.29,-0.25) dist=0.50m front=0.63m cells=1 rms=8.3cm[144] DRIVE goal=(0.29,-0.25) dist=0.50m front=0.63m cells=1 rms=8.3cm[145] DRIVE goal=(0.29,-0.25) dist=0.51m front=0.63m cells=1 rms=8.3cm[146] DRIVE goal=(0.29,-0.25) dist=0.50m front=0.63m cells=1 rms=8.3cm[147] DRIVE goal=(0.29,-0.25) dist=0.50m front=0.63m cells=1 rms=8.2cm[148] DRIVE goal=(0.29,-0.25) dist=0.50m front=0.63m cells=1 rms=8.2cm[149] DRIVE goal=(0.29,-0.25) dist=0.50m front=0.63m cells=1 rms=8.2cm[150] DRIVE goal=(0.29,-0.25) dist=0.50m front=0.63m cells=1 rms=8.2cm[151] DRIVE goal=(0.29,-0.25) dist=0.50m front=0.63m cells=1 rms=8.2cm[152] DRIVE goal=(0.29,-0.25) dist=0.50m front=0.63m cells=1 rms=8.2cm[153] DRIVE goal=(0.29,-0.25) dist=0.50m front=0.64m cells=1 rms=8.2cm[154] DRIVE goal=(0.29,-0.25) dist=0.50m front=0.64m cells=1 rms=8.2cm[155] DRIVE goal=(0.29,-0.25) dist=0.50m front=0.63m cells=1 rms=8.1cm[156] DRIVE goal=(0.29,-0.25) dist=0.50m front=0.63m cells=1 rms=8.1cm[157] DRIVE goal=(0.29,-0.25) dist=0.50m front=0.62m cells=1 rms=8.1cm[158] DRIVE goal=(0.29,-0.25) dist=0.50m front=0.62m cells=1 rms=8.1cm[159] DRIVE goal=(0.29,-0.25) dist=0.50m front=0.60m cells=1 rms=8.1cm[160] DRIVE goal=(0.29,-0.25) dist=0.51m front=0.60m cells=1 rms=8.2cm[161] DRIVE goal=(0.29,-0.25) dist=0.51m front=0.60m cells=1 rms=8.2cm[162] DRIVE goal=(0.29,-0.25) dist=0.51m front=0.59m cells=1 rms=8.2cm[163] DRIVE goal=(0.29,-0.25) dist=0.52m front=0.58m cells=1 rms=8.2cm[164] DRIVE goal=(0.29,-0.25) dist=0.51m front=0.57m cells=1 rms=8.3cm[165] DRIVE goal=(0.29,-0.25) dist=0.52m front=0.56m cells=1 rms=8.3cm[166] DRIVE goal=(0.29,-0.25) dist=0.52m front=0.56m cells=1 rms=8.4cm[167] DRIVE goal=(0.29,-0.25) dist=0.51m front=0.55m cells=1 rms=8.4cm[168] DRIVE goal=(0.29,-0.25) dist=0.51m front=0.56m cells=1 rms=8.5cm[169] DRIVE goal=(0.29,-0.25) dist=0.51m front=0.54m cells=1 rms=8.6cm[170] DRIVE goal=(0.29,-0.25) dist=0.50m front=0.52m cells=1 rms=8.7cm[171] DRIVE goal=(0.29,-0.25) dist=0.50m front=0.50m cells=1 rms=8.8cm[172] DRIVE goal=(0.29,-0.25) dist=0.50m front=0.48m cells=1 rms=9.0cm[173] DRIVE goal=(0.29,-0.25) dist=0.50m front=0.46m cells=1 rms=9.2cm[174] DRIVE goal=(0.29,-0.25) dist=0.50m front=0.45m cells=1 rms=9.4cm[175] DRIVE goal=(0.29,-0.25) dist=0.51m front=0.43m cells=1 rms=9.6cm[176] DRIVE goal=(0.29,-0.25) dist=0.52m front=0.41m cells=1 rms=9.9cm[177] DRIVE goal=(0.29,-0.25) dist=0.53m front=0.39m cells=1 rms=10.2cm[178] DRIVE goal=(0.29,-0.25) dist=0.53m front=0.39m cells=1 rms=10.5cm[179] DRIVE goal=(0.29,-0.25) dist=0.53m front=0.39m cells=1 rms=10.8cm[180] DRIVE goal=(0.29,-0.25) dist=0.53m front=0.38m cells=1 rms=11.1cm
+[ 48.9s] [DRIVE STUCK] Goal distance unchanged for 5.4s
+[DRIVE STUCK] dist_oldest=0.50m, dist_now=0.53m, change=0.03m < margin=0.08m
+[DRIVE STUCK] Front sectors: s55=0.39 s56=0.39 s57=0.47 s58=0.49 s59=0.51 s0=0.54 s1=0.57 s2=0.40 s3=0.38 s4=0.39 s5=0.45 
+[DRIVE STUCK] Marked front sectors [55, 56, 57, 58, 59, 0, 1, 2, 3, 4, 5] as blocked for 30s
+
+[BACKUP CLEAR] Reversing and turning toward clearer side...
+[BACKUP CLEAR] Turning left (default) (L_avg=0.44m R_avg=0.45m)
+
+[ 53.7s] [REFINE] only 3 candidates, resampling with 150 angles (level 1)
+
+[ 53.7s] [GOAL SELECT] robot@(-0.07,0.12) | 9 candidates (refined 1x) (scanned=81 walls=64 visited=1):
+  #1 ang=+115° d=2.00m pos=(0.05,2.12) score=+35.7 [O=+2.5 U=+36.4 V=-0.0 W=-3.0 R=-0.8 F=+0.0] <-- BEST
+  #2 ang=+113° d=2.00m pos=(0.12,2.11) score=+33.7 [O=+2.5 U=+34.4 V=-0.0 W=-3.0 R=-0.8 F=+0.0]
+  #3 ang=+111° d=2.00m pos=(0.19,2.11) score=+33.7 [O=+2.5 U=+34.4 V=-0.0 W=-3.0 R=-0.8 F=+0.0]
+  #4 ang=+103° d=1.50m pos=(0.33,1.57) score=+23.0 [O=+2.5 U=+24.7 V=-0.0 W=-3.0 R=-1.6 F=+0.0]
+  #5 ang= +91° d=0.50m pos=(0.16,0.57) score=-11.9 [O=+2.1 U=+15.9 V=-3.0 W=-3.0 R=-14.1 F=+0.0 T=-10.0]
+  #6 ang= +93° d=0.50m pos=(0.14,0.57) score=-13.5 [O=+2.1 U=+14.4 V=-3.0 W=-3.0 R=-14.1 F=+0.0 T=-10.0]
+  #7 ang= +95° d=0.50m pos=(0.13,0.58) score=-16.1 [O=+2.1 U=+11.7 V=-3.0 W=-3.0 R=-14.1 F=+0.0 T=-10.0]
+  #8 ang= +97° d=0.50m pos=(0.11,0.59) score=-16.1 [O=+2.4 U=+11.5 V=-3.0 W=-3.0 R=-14.1 F=+0.0 T=-10.0]
+[ 53.7s] [GOAL] Selected: (0.05, 2.12) dist=2.00m timeout=50s angle=115° reason=no goal
+[182] DRIVE goal=(0.05,2.12) dist=2.00m front=0.50m cells=1 rms=11.0cm[183] DRIVE goal=(0.05,2.12) dist=2.00m front=0.50m cells=1 rms=11.0cm[184] DRIVE goal=(0.05,2.12) dist=2.00m front=0.50m cells=1 rms=11.0cm[185] DRIVE goal=(0.05,2.12) dist=2.00m front=0.50m cells=1 rms=10.9cm[186] DRIVE goal=(0.05,2.12) dist=2.00m front=0.50m cells=1 rms=10.9cm[187] DRIVE goal=(0.05,2.12) dist=1.99m front=0.49m cells=1 rms=10.9cm[188] DRIVE goal=(0.05,2.12) dist=1.99m front=0.49m cells=1 rms=10.9cm[189] DRIVE goal=(0.05,2.12) dist=1.99m front=0.49m cells=1 rms=10.8cm[190] DRIVE goal=(0.05,2.12) dist=2.00m front=0.50m cells=1 rms=10.8cm[191] DRIVE goal=(0.05,2.12) dist=1.99m front=0.49m cells=1 rms=10.8cm[192] DRIVE goal=(0.05,2.12) dist=1.99m front=0.49m cells=1 rms=10.7cm[193] DRIVE goal=(0.05,2.12) dist=1.99m front=0.49m cells=1 rms=10.7cm[194] DRIVE goal=(0.05,2.12) dist=1.99m front=0.49m cells=1 rms=10.7cmWaiting for LiDAR...
+
+
+Stopping (Ctrl+C)...
+[MARKER] Publisher stopped
+
+=======================================================
+NBV NAVIGATION COMPLETE
+=======================================================
+Final state: exploring
+Duration: 57.0s
+Iterations: 195
+Goals reached: 0
+Backups: 3
+Unique cells visited: 1
+Cells scanned by LiDAR: 81
+Walls detected: 64
+
+--- Drive Accuracy ---
+Cross-track RMS error: 10.7cm
+Total distance traveled: 1.41m
+Ideal distance (sum of goals): 5.00m
+Drive efficiency: 355.8%
+Revisit rate: 100.0%
+
+--- Map Accuracy Suggestions ---
+To measure map accuracy, consider:
+1. Ground truth comparison: Place markers at known positions,
+   compare measured vs actual distances between them
+2. Loop closure error: After returning to origin, check
+   odometry drift (final_dist to origin should be ~0)
+3. Feature alignment: Compare map walls to actual room layout
+4. Consistency check: Run multiple times, overlay maps
+5. Tape measure validation: Measure actual room dimensions,
+   compare to map scale (resolution * pixels)
+[OUTPUT] Map saved to: /home/ws/ugv_cont/mission/outputs/20251224_204316/maps
