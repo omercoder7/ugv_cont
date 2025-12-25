@@ -1,0 +1,77 @@
+[OUTPUT] Logging to: /home/ws/ugv_cont/mission/outputs/20251224_211133
+[OUTPUT] Log file: /home/ws/ugv_cont/mission/outputs/20251224_211133/logs/navigation.log
+=======================================================
+NEXT-BEST-VIEW (NBV) NAVIGATION
+=======================================================
+Speed: 0.08 m/s
+Goal distance: 0.5-2.0m
+Press Ctrl+C to stop
+
+[DEBUG] Marker publishing enabled - check /nav_goal in RViz
+[MARKER] Persistent marker publisher started - add /nav_goal in RViz
+[START] Initial position: (0.00, 0.00)
+[START] Origin wall signature: ['0.58', '0.57', '0.57', '0.57', '0.57', '0.58', '0.60', '0.62', '1.00', '0.92', '0.84', '0.79', '0.59', '0.56', '0.54', '0.51', '0.47', '0.48', '0.54', '0.54', '0.53', '0.56', '0.66', '5.00', '5.00', '5.00', '5.00', '5.00', '5.00', '5.00', '5.00', '5.00', '5.00', '5.00', '5.00', '5.00', '5.00', '5.00', '0.76', '0.82', '1.72', '1.94', '3.83', '3.76', '3.82', '1.81', '1.81', '1.33', '1.33', '1.36', '1.39', '1.45', '0.98', '0.79', '0.74', '0.71', '0.66', '0.62', '0.60', '0.59']
+[MARKER] Origin marker (blue) started at (0.00, 0.00) - add /nav_origin in RViz
+
+[  2.9s] [GOAL SELECT] robot@(0.00,0.00) | 19 candidates (scanned=49 walls=19 visited=1):
+  #1 ang=-107° d=2.00m pos=(0.57,1.92) score=+37.1 [O=+2.5 U=+34.0 V=-0.0 W=-0.0 R=-0.0 F=+0.0] <-- BEST
+  #2 ang= -82° d=1.00m pos=(-0.14,0.99) score=+31.1 [O=+1.8 U=+32.0 V=-0.0 W=-3.0 R=-0.0 F=+0.0]
+  #3 ang=-107° d=1.50m pos=(0.43,1.44) score=+29.0 [O=+2.5 U=+26.0 V=-0.0 W=-0.0 R=-0.0 F=+0.0]
+  #4 ang= -58° d=0.50m pos=(-0.27,0.42) score=+23.2 [O=+1.9 U=+37.2 V=-3.0 W=-3.0 R=-0.0 F=+0.0 T=-10.0]
+  #5 ang=-113° d=1.00m pos=(0.38,0.92) score=+23.2 [O=+1.9 U=+22.0 V=-0.0 W=-1.0 R=-0.0 F=+0.0]
+  #6 ang= -88° d=1.00m pos=(-0.03,1.00) score=+23.1 [O=+1.8 U=+24.0 V=-0.0 W=-3.0 R=-0.0 F=+0.0]
+  #7 ang= -94° d=1.00m pos=(0.07,1.00) score=+21.8 [O=+2.5 U=+22.0 V=-0.0 W=-3.0 R=-0.0 F=+0.0]
+  #8 ang= -64° d=0.50m pos=(-0.22,0.45) score=+21.2 [O=+1.9 U=+35.2 V=-3.0 W=-3.0 R=-0.0 F=+0.0 T=-10.0]
+[  5.0s] [GOAL] Selected: (0.57, 1.92) dist=2.00m timeout=50s angle=-107° reason=no goal
+[  1] DRIVE goal=(0.57,1.92) dist=2.00m front=0.57m cells=1 rms=0.0cm[  2] DRIVE goal=(0.57,1.92) dist=2.01m front=0.56m cells=1 rms=1.3cmWaiting for LiDAR...
+[  4] DRIVE goal=(0.57,1.92) dist=2.00m front=0.60m cells=1 rms=1.2cm[  6] DRIVE goal=(0.57,1.92) dist=2.00m front=0.56m cells=1 rms=1.3cm[  7] DRIVE goal=(0.57,1.92) dist=2.00m front=0.56m cells=1 rms=1.2cm[  8] DRIVE goal=(0.57,1.92) dist=2.02m front=0.56m cells=1 rms=2.9cm[  9] DRIVE goal=(0.57,1.92) dist=2.02m front=0.57m cells=1 rms=3.8cm[ 10] DRIVE goal=(0.57,1.92) dist=2.05m front=0.58m cells=1 rms=5.9cm
+[ 34.9s] [TURN ENTER] Entering TURN mode
+
+[BLOCKED DEBUG] Goal angle: 22.3° (sector 3), goal_dist: 2.04m, goal_dir_min: 0.74m, margin: 0.15m
+[BLOCKED DEBUG] Checking 1 sectors (robot angular width at 2.0m = 5.0°): {3: 0.745}
+[BLOCKED DEBUG] Check: 0.74 < 2.04 - 0.15 = 1.89? True
+[BLOCKED DEBUG] (Full front arc for reference: {55: 0.624, 56: 0.633, 57: 0.648, 58: 0.665, 59: 0.684, 0: 0.598, 1: 0.622, 2: 0.675, 3: 0.745, 4: 1.596, 5: 1.77})
+
+[BLOCKED TURN] goal_sector=3, best_sector=3 (dist=0.74m), target_angle=18.0°, angle_error=18.0°, v=0.00, w=0.47
+[ 11] TURN goal=(0.57,1.92) dist=2.04m front=0.60m cells=1 rms=7.1cm
+[ 40.5s] [TURN STUCK] In TURN mode for 5.6s, backing up
+[TURN STUCK] Position history (1 samples):
+  [0]: (-0.12, 0.01) heading=62.0°
+[TURN STUCK] Current front sectors: s55=0.63 s56=0.65 s57=0.66 s58=0.59 s59=0.59 s0=0.64 s1=0.69 s2=0.79 s3=1.66 s4=1.87 s5=3.81 
+
+[BACKUP CLEAR] Reversing and turning toward clearer side...
+[BACKUP CLEAR] Turning left (L_avg=1.76m R_avg=0.62m)
+
+
+Stopping (Ctrl+C)...
+[MARKER] Publisher stopped
+
+=======================================================
+NBV NAVIGATION COMPLETE
+=======================================================
+Final state: exploring
+Duration: 42.9s
+Iterations: 13
+Goals reached: 0
+Backups: 0
+Unique cells visited: 1
+Cells scanned by LiDAR: 91
+Walls detected: 58
+
+--- Drive Accuracy ---
+Cross-track RMS error: 7.1cm
+Total distance traveled: 0.18m
+Ideal distance (sum of goals): 2.00m
+Drive efficiency: 1083.2%
+Revisit rate: 100.0%
+
+--- Map Accuracy Suggestions ---
+To measure map accuracy, consider:
+1. Ground truth comparison: Place markers at known positions,
+   compare measured vs actual distances between them
+2. Loop closure error: After returning to origin, check
+   odometry drift (final_dist to origin should be ~0)
+3. Feature alignment: Compare map walls to actual room layout
+4. Consistency check: Run multiple times, overlay maps
+5. Tape measure validation: Measure actual room dimensions,
+   compare to map scale (resolution * pixels)

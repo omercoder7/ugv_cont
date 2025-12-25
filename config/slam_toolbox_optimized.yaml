@@ -35,7 +35,7 @@ slam_toolbox:
     # ===========================================
     # MAP SETTINGS - Balanced resolution
     # ===========================================
-    map_update_interval: 3.0       # INCREASED: Less frequent updates = more stable
+    map_update_interval: 0.5       # Update map every 0.5 seconds (2Hz) for responsive RViz
     resolution: 0.04               # CHANGED: 4cm resolution - balance between detail and stability
 
     # ===========================================

@@ -1,0 +1,83 @@
+[OUTPUT] Logging to: /home/ws/ugv_cont/mission/outputs/20251224_212505
+[OUTPUT] Log file: /home/ws/ugv_cont/mission/outputs/20251224_212505/logs/navigation.log
+=======================================================
+NEXT-BEST-VIEW (NBV) NAVIGATION
+=======================================================
+Speed: 0.08 m/s
+Goal distance: 0.5-2.0m
+Press Ctrl+C to stop
+
+[DEBUG] Marker publishing enabled - check /nav_goal in RViz
+[MARKER] Persistent marker publisher started - add /nav_goal in RViz
+[START] Initial position: (-0.24, -0.31)
+[START] Origin wall signature: ['0.60', '0.59', '0.59', '0.59', '0.59', '0.60', '0.62', '0.67', '1.02', '0.93', '0.85', '0.64', '0.59', '0.56', '0.54', '0.48', '0.47', '0.51', '0.53', '0.53', '0.52', '0.61', '0.66', '5.00', '5.00', '5.00', '5.00', '5.00', '5.00', '5.00', '5.00', '5.00', '5.00', '5.00', '5.00', '5.00', '5.00', '5.00', '0.74', '0.78', '1.67', '1.91', '3.82', '3.76', '3.82', '1.81', '1.81', '1.31', '1.33', '1.36', '1.40', '1.45', '1.02', '0.81', '0.76', '0.73', '0.69', '0.64', '0.62', '0.62']
+[MARKER] Origin marker (blue) started at (-0.24, -0.31) - add /nav_origin in RViz
+
+[ 14.7s] [GOAL SELECT] robot@(-0.24,-0.31) | 23 candidates (scanned=53 walls=19 visited=1):
+  #1 ang= -52° d=0.50m pos=(-0.47,0.14) score=+38.1 [O=+1.9 U=+40.0 V=-3.0 W=-1.0 R=-0.0 F=+0.0] <-- BEST
+  #2 ang= -45° d=0.50m pos=(-0.51,0.11) score=+35.7 [O=+1.5 U=+38.0 V=-3.0 W=-1.0 R=-0.0 F=+0.0]
+  #3 ang=-107° d=2.00m pos=(0.71,1.45) score=+34.1 [O=+2.5 U=+32.0 V=-0.0 W=-1.0 R=-0.0 F=+0.0]
+  #4 ang= -58° d=0.50m pos=(-0.42,0.16) score=+32.1 [O=+1.9 U=+34.0 V=-3.0 W=-1.0 R=-0.0 F=+0.0]
+  #5 ang= -82° d=1.00m pos=(-0.17,0.69) score=+31.1 [O=+1.8 U=+30.0 V=-0.0 W=-1.0 R=-0.0 F=+0.0]
+  #6 ang= -88° d=1.00m pos=(-0.07,0.68) score=+31.1 [O=+1.8 U=+30.0 V=-0.0 W=-1.0 R=-0.0 F=+0.0]
+  #7 ang= -76° d=0.50m pos=(-0.26,0.19) score=+30.2 [O=+1.8 U=+31.2 V=-3.0 W=-0.0 R=-0.0 F=+0.0]
+  #8 ang= -64° d=0.50m pos=(-0.37,0.18) score=+30.0 [O=+1.9 U=+32.0 V=-3.0 W=-1.0 R=-0.0 F=+0.0]
+[ 17.0s] [GOAL] Selected: (-0.47, 0.14) dist=0.50m timeout=28s angle=-52° reason=no goal
+[  3] DRIVE goal=(-0.47,0.14) dist=0.50m front=0.59m cells=1 rms=0.0cm[  4] DRIVE goal=(-0.47,0.14) dist=0.50m front=0.59m cells=1 rms=0.0cm[  6] DRIVE goal=(-0.47,0.14) dist=0.50m front=0.74m cells=1 rms=0.2cm
+[ 30.5s] [GOAL SELECT] robot@(-0.17,-0.03) | 15 candidates (scanned=80 walls=39 visited=2):
+  #1 ang= +39° d=0.50m pos=(-0.29,0.46) score=+26.3 [O=+1.8 U=+34.0 V=-3.0 W=-3.0 R=-3.7 F=+0.0] <-- BEST
+  #2 ang= +33° d=0.50m pos=(-0.24,0.47) score=+24.2 [O=+1.8 U=+32.0 V=-3.0 W=-3.0 R=-3.7 F=+0.0]
+  #3 ang=  -3° d=1.00m pos=(0.30,0.86) score=+20.3 [O=+2.5 U=+18.5 V=-0.0 W=-1.0 R=-0.0 F=+0.0]
+  #4 ang=  -9° d=1.00m pos=(0.40,0.80) score=+19.5 [O=+2.0 U=+18.2 V=-0.0 W=-1.0 R=-0.0 F=+0.0]
+  #5 ang= -15° d=1.00m pos=(0.48,0.74) score=+19.2 [O=+1.7 U=+18.2 V=-0.0 W=-1.0 R=-0.0 F=+0.0]
+  #6 ang= -21° d=1.00m pos=(0.56,0.66) score=+17.1 [O=+1.6 U=+16.2 V=-0.0 W=-1.0 R=-0.0 F=+0.0]
+  #7 ang= +27° d=0.50m pos=(-0.19,0.47) score=+14.2 [O=+1.8 U=+32.0 V=-3.0 W=-3.0 R=-3.7 F=+0.0 T=-10.0]
+  #8 ang= +21° d=0.50m pos=(-0.14,0.47) score=+11.2 [O=+2.3 U=+28.5 V=-3.0 W=-3.0 R=-3.7 F=+0.0 T=-10.0]
+[ 32.9s] [GOAL] Selected: (-0.29, 0.46) dist=0.50m timeout=28s angle=39° reason=reached
+[  7] DRIVE goal=(-0.29,0.46) dist=0.50m front=0.72m cells=2 rms=0.2cm
+[ 35.2s] [GOAL SELECT] robot@(-0.04,0.18) | 14 candidates (scanned=89 walls=42 visited=2):
+  #1 ang= +45° d=0.50m pos=(-0.09,0.68) score=+35.3 [O=+2.1 U=+32.0 V=-0.0 W=-3.0 R=-9.2 F=+13.2] <-- BEST
+  #2 ang= +58° d=0.50m pos=(-0.20,0.66) score=+35.2 [O=+1.6 U=+34.2 V=-0.0 W=-3.0 R=-9.2 F=+11.5]
+  #3 ang= +52° d=0.50m pos=(-0.15,0.67) score=+34.7 [O=+2.1 U=+32.2 V=-0.0 W=-3.0 R=-9.2 F=+12.4]
+  #4 ang= +64° d=0.50m pos=(-0.25,0.64) score=+34.0 [O=+1.7 U=+34.0 V=-0.0 W=-3.0 R=-9.2 F=+10.4]
+  #5 ang= +70° d=0.50m pos=(-0.29,0.61) score=+32.9 [O=+1.7 U=+34.1 V=-0.0 W=-3.0 R=-9.2 F=+9.1]
+  #6 ang= +39° d=0.50m pos=(-0.04,0.68) score=+32.1 [O=+2.1 U=+28.1 V=-0.0 W=-3.0 R=-9.2 F=+13.9]
+  #7 ang=  +9° d=1.00m pos=(0.47,1.04) score=+31.9 [O=+1.6 U=+18.2 V=-0.0 W=-3.0 R=-0.0 F=+14.8]
+  #8 ang= +33° d=0.50m pos=(0.01,0.68) score=+31.0 [O=+2.5 U=+26.1 V=-0.0 W=-3.0 R=-9.2 F=+14.4]
+[ 37.3s] [GOAL] Selected: (-0.09, 0.68) dist=0.50m timeout=28s angle=45° reason=reached
+[  8] DRIVE goal=(-0.09,0.68) dist=0.50m front=0.45m cells=2 rms=0.2cm[  9] DRIVE goal=(-0.09,0.68) dist=0.49m front=0.46m cells=2 rms=0.3cm[ 11] DRIVE goal=(-0.09,0.68) dist=0.48m front=0.72m cells=2 rms=0.6cm[ 13] DRIVE goal=(-0.09,0.68) dist=0.49m front=0.63m cells=2 rms=1.1cmWaiting for LiDAR...
+
+
+Stopping (Ctrl+C)...
+[MARKER] Publisher stopped
+
+=======================================================
+NBV NAVIGATION COMPLETE
+=======================================================
+Final state: exploring
+Duration: 62.2s
+Iterations: 17
+Goals reached: 2
+Backups: 0
+Unique cells visited: 2
+Cells scanned by LiDAR: 99
+Walls detected: 50
+
+--- Drive Accuracy ---
+Cross-track RMS error: 1.1cm
+Total distance traveled: 0.58m
+Ideal distance (sum of goals): 1.50m
+Drive efficiency: 260.3%
+Revisit rate: 100.0%
+
+--- Map Accuracy Suggestions ---
+To measure map accuracy, consider:
+1. Ground truth comparison: Place markers at known positions,
+   compare measured vs actual distances between them
+2. Loop closure error: After returning to origin, check
+   odometry drift (final_dist to origin should be ~0)
+3. Feature alignment: Compare map walls to actual room layout
+4. Consistency check: Run multiple times, overlay maps
+5. Tape measure validation: Measure actual room dimensions,
+   compare to map scale (resolution * pixels)
+[OUTPUT] Map saved to: /home/ws/ugv_cont/mission/outputs/20251224_212505/maps

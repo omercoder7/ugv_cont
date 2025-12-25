@@ -1,0 +1,69 @@
+[OUTPUT] Logging to: /home/ws/ugv_cont/mission/outputs/20251224_210243
+[OUTPUT] Log file: /home/ws/ugv_cont/mission/outputs/20251224_210243/logs/navigation.log
+=======================================================
+NEXT-BEST-VIEW (NBV) NAVIGATION
+=======================================================
+Speed: 0.08 m/s
+Goal distance: 0.5-2.0m
+Press Ctrl+C to stop
+
+[DEBUG] Marker publishing enabled - check /nav_goal in RViz
+[MARKER] Persistent marker publisher started - add /nav_goal in RViz
+[START] Initial position: (0.00, 0.00)
+[START] Origin wall signature: ['0.58', '0.57', '0.57', '0.57', '0.58', '0.59', '0.61', '1.01', '0.98', '0.89', '0.83', '0.62', '0.58', '0.56', '0.54', '0.50', '0.48', '0.50', '0.54', '0.54', '0.53', '0.63', '0.68', '5.00', '5.00', '5.00', '5.00', '5.00', '5.00', '5.00', '5.00', '5.00', '5.00', '5.00', '5.00', '5.00', '5.00', '5.00', '0.78', '0.84', '1.75', '1.98', '3.79', '3.76', '5.51', '1.81', '1.79', '1.32', '1.33', '1.36', '1.41', '1.46', '0.94', '0.80', '0.74', '0.72', '0.67', '0.62', '0.61', '0.60']
+[MARKER] Origin marker (blue) started at (0.00, 0.00) - add /nav_origin in RViz
+
+[  2.9s] [GOAL SELECT] robot@(0.00,0.00) | 21 candidates (scanned=50 walls=20 visited=1):
+  #1 ang=-107° d=2.00m pos=(0.64,1.90) score=+37.1 [O=+2.5 U=+34.0 V=-0.0 W=-0.0 R=-0.0 F=+0.0] <-- BEST
+  #2 ang= -52° d=0.50m pos=(-0.30,0.40) score=+33.3 [O=+2.0 U=+37.2 V=-3.0 W=-3.0 R=-0.0 F=+0.0]
+  #3 ang= -82° d=1.00m pos=(-0.10,0.99) score=+33.1 [O=+1.8 U=+34.0 V=-0.0 W=-3.0 R=-0.0 F=+0.0]
+  #4 ang=-101° d=1.50m pos=(0.32,1.46) score=+30.0 [O=+2.5 U=+28.0 V=-0.0 W=-1.0 R=-0.0 F=+0.0]
+  #5 ang= -88° d=1.00m pos=(0.00,1.00) score=+29.1 [O=+1.8 U=+30.0 V=-0.0 W=-3.0 R=-0.0 F=+0.0]
+  #6 ang=-107° d=1.50m pos=(0.48,1.42) score=+28.0 [O=+2.5 U=+26.0 V=-0.0 W=-1.0 R=-0.0 F=+0.0]
+  #7 ang= -94° d=1.00m pos=(0.11,0.99) score=+23.8 [O=+2.5 U=+24.0 V=-0.0 W=-3.0 R=-0.0 F=+0.0]
+  #8 ang=-113° d=1.00m pos=(0.42,0.91) score=+23.3 [O=+2.0 U=+22.0 V=-0.0 W=-1.0 R=-0.0 F=+0.0]
+[  5.0s] [GOAL] Selected: (0.64, 1.90) dist=2.00m timeout=50s angle=-107° reason=no goal
+[  1] DRIVE goal=(0.64,1.90) dist=2.00m front=0.57m cells=1 rms=0.0cm[  2] DRIVE goal=(0.64,1.90) dist=2.01m front=0.57m cells=1 rms=1.3cm
+[ 13.2s] [TURN ENTER] Entering TURN mode
+
+[BLOCKED DEBUG] Goal angle: -34.5° (sector 54), goal_dist: 2.00m, goal_dir_min: 1.79m, margin: 0.15m
+[BLOCKED DEBUG] Checking 1 sectors (robot angular width at 2.0m = 5.1°): {54: 1.788}
+[BLOCKED DEBUG] Check: 1.79 < 2.00 - 0.15 = 1.85? True
+[BLOCKED DEBUG] (Full front arc for reference: {55: 1.792, 56: 1.306, 57: 1.318, 58: 1.346, 59: 1.395, 0: 1.444, 1: 0.932, 2: 0.789, 3: 0.739, 4: 0.717, 5: 0.664})
+
+[BLOCKED TURN] goal_sector=54, best_sector=54 (dist=1.79m), target_angle=-36.0°, angle_error=-36.0°, v=0.00, w=-0.50
+[  4] TURN goal=(0.64,1.90) dist=2.00m front=0.66m cells=1 rms=2.7cm[  5] DRIVE goal=(0.64,1.90) dist=2.00m front=1.29m cells=1 rms=3.2cm[  6] DRIVE goal=(0.64,1.90) dist=1.53m front=0.49m cells=2 rms=3.6cm[  7] DRIVE goal=(0.64,1.90) dist=1.32m front=0.39m cells=3 rms=5.7cm[  9] DRIVE goal=(0.64,1.90) dist=0.82m front=0.30m cells=4 rms=11.3cmWaiting for LiDAR...
+
+
+Stopping (Ctrl+C)...
+[MARKER] Publisher stopped
+
+=======================================================
+NBV NAVIGATION COMPLETE
+=======================================================
+Final state: exploring
+Duration: 36.8s
+Iterations: 12
+Goals reached: 0
+Backups: 0
+Unique cells visited: 4
+Cells scanned by LiDAR: 105
+Walls detected: 61
+
+--- Drive Accuracy ---
+Cross-track RMS error: 11.3cm
+Total distance traveled: 1.31m
+Ideal distance (sum of goals): 2.00m
+Drive efficiency: 152.6%
+Revisit rate: 100.0%
+
+--- Map Accuracy Suggestions ---
+To measure map accuracy, consider:
+1. Ground truth comparison: Place markers at known positions,
+   compare measured vs actual distances between them
+2. Loop closure error: After returning to origin, check
+   odometry drift (final_dist to origin should be ~0)
+3. Feature alignment: Compare map walls to actual room layout
+4. Consistency check: Run multiple times, overlay maps
+5. Tape measure validation: Measure actual room dimensions,
+   compare to map scale (resolution * pixels)

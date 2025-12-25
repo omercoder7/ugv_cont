@@ -389,11 +389,12 @@ rclpy.shutdown()
         # During RETURN mode, sends full path for visualization
         def update_loop():
             last_path_str = ""
+            last_goal_str = ""
 
             while self.running and self.debug_marker:
                 try:
                     # Check if we're in RETURN mode with a path
-                    if self.mode == NavMode.RETURN and self.return_path:
+                    if self.nav_state == NavigationState.RETURNING and self.return_path:
                         # Send full path with current waypoint index
                         # Format: PATH:current_idx:x1,y1;x2,y2;...
                         wp_strs = [f'{x:.3f},{y:.3f}' for x, y in self.return_path]
@@ -404,15 +405,19 @@ rclpy.shutdown()
                             self._marker_proc.stdin.write(path_str.encode())
                             self._marker_proc.stdin.flush()
                             last_path_str = path_str
+                        last_goal_str = ""  # Reset so goal will be sent when we exit RETURN
                     else:
-                        # Normal mode - just show current goal
+                        # Exploration mode - show current goal
                         with self._goal_lock:
                             goal = self.goal_point
                         if goal:
                             x, y = goal
-                            msg = f'{x},{y}\n'
-                            self._marker_proc.stdin.write(msg.encode())
-                            self._marker_proc.stdin.flush()
+                            goal_str = f'{x:.3f},{y:.3f}\n'
+                            # Only send if goal changed
+                            if goal_str != last_goal_str:
+                                self._marker_proc.stdin.write(goal_str.encode())
+                                self._marker_proc.stdin.flush()
+                                last_goal_str = goal_str
                         last_path_str = ""  # Reset so path will be sent again when we enter RETURN
 
                 except Exception:
@@ -2163,7 +2168,7 @@ rclpy.shutdown()
                 blk = f" B={brk.get('blocked', 0):+.1f}" if brk.get('blocked', 0) != 0 else ""
                 bkt = f" T={brk.get('backtrack', 0):+.1f}" if brk.get('backtrack', 0) != 0 else ""
                 print(f"  #{i+1} ang={ang:+4d}° d={d:.2f}m pos=({px:.2f},{py:.2f}) "
-                      f"score={score:+.1f} [O={brk['open']:+.1f} U={brk['unscan']:+.1f} "
+                      f"score={score:+.1f} [O={brk['open']:+.1f} U={brk['unscan']:+.1f} D={brk['dist']:+.1f} "
                       f"V={brk['visited']:+.1f} W={brk['wall']:+.1f} R={brk['recent']:+.1f} F={brk['fwd']:+.1f}{blk}{bkt}]{marker}")
 
         # Record this goal to prevent cycling back
@@ -2322,8 +2327,12 @@ rclpy.shutdown()
                     visited_penalty += 3.0 * decay  # Lighter penalty for neighbors
         breakdown['visited'] = -visited_penalty
 
-        # === Factor 6: DISTANCE EFFICIENCY ===
-        breakdown['dist'] = dist * 0.3
+        # === Factor 6: DISTANCE BONUS ===
+        # Prefer farther goals - they're more efficient (cover more ground per goal)
+        # A point at 2m should be preferred over a point at 0.5m with similar unscanned area
+        # Scale: 0.5m -> 0, 1.0m -> +5, 1.5m -> +10, 2.0m -> +15
+        dist_bonus = (dist - self.min_goal_dist) * 10.0
+        breakdown['dist'] = dist_bonus
 
         # === Factor 7: FORWARD MOMENTUM ===
         # Prefer continuing in the direction we were heading, not backtracking
