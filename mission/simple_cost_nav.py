@@ -104,7 +104,7 @@ class NBVNavigator:
         # Visited cells (for avoiding revisits) - tracks robot position history
         # Key: cell, Value: timestamp of last visit (for time-decay penalty)
         self.visited: Dict[Tuple[int, int], float] = {}
-        self.grid_res = 0.3
+        self.grid_res = 0.1  # 10cm per cell (finer grid for better inflation control)
 
         # Scanned cells - tracks what areas the LiDAR has observed
         # Key: cell, Value: timestamp of last scan
@@ -131,7 +131,7 @@ class NBVNavigator:
 
         # Navigation state machine
         self.nav_state = NavigationState.EXPLORING
-        self.return_trigger_ratio = 0.75  # Trigger return when 75% of time elapsed
+        self.return_trigger_ratio = 0.60  # Trigger return when 60% of time elapsed
 
         # Return navigation tracking
         self.return_start_time: float = 0.0  # When return phase started
@@ -166,11 +166,11 @@ class NBVNavigator:
         self.return_waypoint_idx: int = 0  # Current waypoint index
         self.waypoint_reached_dist: float = 0.35  # Distance to consider waypoint reached
         self.origin_reached_dist: float = 0.05  # Very tight threshold for reaching origin (5cm)
-        # Wall inflation: 2 cells × 0.3m = 0.6m clearance (robot is ~17cm wide, need margin)
-        # IMPORTANT: At 0.3m grid resolution, 4 cells = 1.2m which is WAY too much
-        self.path_inflation_radius: int = 2  # Grid cells to inflate walls (2 cells = 0.6m clearance)
-        # Goal clearance: Only clear 1 cell radius (0.3m) - larger values bypass real walls!
-        self.goal_clearance_radius: int = 1  # Clear cells within this radius of goal from obstacles
+        # Wall inflation: Robot is ~17cm wide, half-width ~8.5cm
+        # At 0.1m grid resolution: 1 cell = 10cm inflation (appropriate for robot size)
+        self.path_inflation_radius: int = 1  # Grid cells to inflate walls (1 cell = 0.1m = 10cm clearance)
+        # Goal clearance: Clear 2 cell radius (0.2m) around goal to ensure reachability
+        self.goal_clearance_radius: int = 2  # Clear cells within this radius of goal from obstacles
 
         # Unreachable waypoints - cells that A* should treat as walls
         # When robot gets stuck trying to reach a waypoint, mark it as unreachable
@@ -494,6 +494,38 @@ rclpy.shutdown()
                     pass
             self._origin_marker_proc = None
 
+    def _check_position_wall_status(self, pos: Tuple[float, float], label: str = "Position") -> None:
+        """
+        Debug helper: Check if a position is inside/near walls and print status.
+        """
+        cell = self._pos_to_cell(pos[0], pos[1])
+
+        # Check if cell is a wall
+        is_wall = cell in self.scan_ends
+
+        # Find closest wall
+        closest_wall_dist = float('inf')
+        for wall in self.scan_ends.keys():
+            dist = math.sqrt((wall[0]-cell[0])**2 + (wall[1]-cell[1])**2)
+            if dist < closest_wall_dist:
+                closest_wall_dist = dist
+
+        wall_dist_m = closest_wall_dist * self.grid_res
+        inflation_m = self.path_inflation_radius * self.grid_res
+
+        # Determine status
+        if is_wall:
+            status = "INSIDE WALL!"
+        elif closest_wall_dist <= self.path_inflation_radius:
+            status = f"IN INFLATED ZONE (inflation={inflation_m:.2f}m)"
+        elif closest_wall_dist <= self.path_inflation_radius + 1:
+            status = "NEAR INFLATION BOUNDARY"
+        else:
+            status = "OK (clear)"
+
+        print(f"[DEBUG] {label}: ({pos[0]:.2f}, {pos[1]:.2f}) -> cell {cell}, "
+              f"wall dist: {closest_wall_dist:.1f} cells = {wall_dist_m:.2f}m [{status}]")
+
     def _plan_path_astar(self, start: Tuple[float, float],
                          goal: Tuple[float, float],
                          inflation: int = None) -> List[Tuple[float, float]]:
@@ -522,6 +554,10 @@ rclpy.shutdown()
         print(f"[A* PLAN] Distance: {math.sqrt((goal[0]-start[0])**2 + (goal[1]-start[1])**2):.2f}m")
         print(f"[A* PLAN] Grid res: {self.grid_res}m, Inflation: {inflation} cells = {inflation * self.grid_res:.2f}m clearance")
         print(f"[A* PLAN] Map: {len(self.scan_ends)} walls, {len(self.scanned)} scanned, {len(self.visited)} visited")
+
+        # Debug: Check start and goal wall status
+        self._check_position_wall_status(start, "Robot START")
+        self._check_position_wall_status(goal, "GOAL")
 
         # CRITICAL: Remove origin cell from scan_ends if it got marked as wall
         # This can happen due to SLAM drift or timing issues at startup
@@ -703,6 +739,29 @@ rclpy.shutdown()
                 # Simplify path: remove intermediate waypoints on straight lines
                 simplified = self._simplify_path(path_world)
                 print(f"[A* RESULT] Simplified to {len(simplified)} waypoints")
+
+                # DEBUG: Check each waypoint for wall proximity
+                print(f"[A* DEBUG] Waypoint analysis (inflation={inflation} cells = {inflation * self.grid_res:.2f}m):")
+                for i, wp in enumerate(simplified):
+                    wp_cell = self._pos_to_cell(wp[0], wp[1])
+                    # Check if waypoint cell is in obstacle set
+                    in_obstacle = wp_cell in obstacles
+                    # Find closest wall to this waypoint
+                    closest_wall_dist = float('inf')
+                    closest_wall = None
+                    for wall in self.scan_ends.keys():
+                        dist = math.sqrt((wall[0]-wp_cell[0])**2 + (wall[1]-wp_cell[1])**2)
+                        if dist < closest_wall_dist:
+                            closest_wall_dist = dist
+                            closest_wall = wall
+                    wall_dist_m = closest_wall_dist * self.grid_res
+                    status = "IN INFLATED ZONE!" if in_obstacle else "OK"
+                    inside_wall = closest_wall_dist < 1.0
+                    if inside_wall:
+                        status = "INSIDE WALL!" if closest_wall_dist < 0.5 else "NEAR WALL"
+                    print(f"  WP{i}: ({wp[0]:.2f}, {wp[1]:.2f}) -> cell {wp_cell}, "
+                          f"wall dist: {closest_wall_dist:.1f} cells = {wall_dist_m:.2f}m [{status}]")
+
                 print(f"[A* PLAN] ========== PATH PLANNING END ==========\n")
                 return simplified
 
@@ -1474,6 +1533,8 @@ rclpy.shutdown()
                                 elapsed_total = time.time() - self.start_time
                                 print(f"\n[{elapsed_total:5.1f}s] [A*] Reached WP{self.return_waypoint_idx - 1}, "
                                       f"heading to WP{self.return_waypoint_idx} ({next_wp[0]:.2f}, {next_wp[1]:.2f})")
+                                # Debug: Check wall status of next waypoint
+                                self._check_position_wall_status(next_wp, f"Next WP{self.return_waypoint_idx}")
                             else:
                                 # All waypoints done, head to final origin
                                 with self._goal_lock:
@@ -1712,6 +1773,16 @@ rclpy.shutdown()
                         goal_str = f"({self.goal_point[0]:.2f},{self.goal_point[1]:.2f})"
                         status = f"[{self.iteration:3d}] RETURN {status_mode} {wp_info} goal={goal_str} origin_dist={dist_to_origin:.2f}m front={front_min:.2f}m"
                         print(f"\r{status}", end="", flush=True)
+
+                        # Periodic debug: Check robot and waypoint wall status every 50 iterations
+                        if self.iteration % 50 == 0:
+                            print("")  # New line for debug output
+                            self._check_position_wall_status(self.current_pos, "Robot position")
+                            if self.return_path and self.return_waypoint_idx < len(self.return_path):
+                                self._check_position_wall_status(
+                                    self.return_path[self.return_waypoint_idx],
+                                    f"Current target WP{self.return_waypoint_idx}"
+                                )
 
                     time.sleep(0.1)
                     continue  # Skip normal exploration logic
