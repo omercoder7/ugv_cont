@@ -215,11 +215,12 @@ class NBVNavigator:
     def _start_marker_thread(self):
         """Start persistent marker publisher that keeps the topic alive."""
         # Start persistent publisher in Docker that reads from stdin
+        # Supports single point (x,y) or multiple points (PATH:x1,y1;x2,y2;...)
         self._marker_proc = subprocess.Popen(
             ['docker', 'exec', '-i', CONTAINER_NAME, 'bash', '-c',
              '''source /opt/ros/humble/setup.bash && python3 -u -c "
 import rclpy
-from visualization_msgs.msg import Marker
+from visualization_msgs.msg import Marker, MarkerArray
 import sys
 import select
 import time
@@ -227,8 +228,11 @@ import time
 rclpy.init()
 node = rclpy.create_node('nav_goal_marker')
 pub = node.create_publisher(Marker, '/nav_goal', 10)
+path_pub = node.create_publisher(MarkerArray, '/return_path', 10)
 
-x, y = 0.0, 0.0
+waypoints = []  # List of (x, y) tuples
+current_goal = (0.0, 0.0)
+current_wp_idx = 0  # Which waypoint is current target
 
 while rclpy.ok():
     # Non-blocking read from stdin
@@ -236,22 +240,45 @@ while rclpy.ok():
         try:
             line = sys.stdin.readline().strip()
             if line:
-                parts = line.split(',')
-                if len(parts) == 2:
-                    x, y = float(parts[0]), float(parts[1])
-        except:
+                if line.startswith('PATH:'):
+                    # Multiple waypoints: PATH:idx:x1,y1;x2,y2;...
+                    parts = line[5:].split(':')
+                    if len(parts) == 2:
+                        current_wp_idx = int(parts[0])
+                        wp_str = parts[1]
+                        waypoints = []
+                        for wp in wp_str.split(';'):
+                            if wp:
+                                coords = wp.split(',')
+                                if len(coords) == 2:
+                                    waypoints.append((float(coords[0]), float(coords[1])))
+                elif line.startswith('CLEAR'):
+                    waypoints = []
+                else:
+                    # Single goal point: x,y
+                    parts = line.split(',')
+                    if len(parts) == 2:
+                        current_goal = (float(parts[0]), float(parts[1]))
+                        waypoints = []  # Clear path when in normal mode
+        except Exception as e:
             pass
 
-    # Always publish current marker
+    now = node.get_clock().now().to_msg()
+
+    # Publish current goal marker (green sphere)
     m = Marker()
     m.header.frame_id = 'odom'
-    m.header.stamp = node.get_clock().now().to_msg()
+    m.header.stamp = now
     m.ns = 'goal'
     m.id = 0
-    m.type = 2
+    m.type = 2  # SPHERE
     m.action = 0
-    m.pose.position.x = x
-    m.pose.position.y = y
+    if waypoints and current_wp_idx < len(waypoints):
+        m.pose.position.x = waypoints[current_wp_idx][0]
+        m.pose.position.y = waypoints[current_wp_idx][1]
+    else:
+        m.pose.position.x = current_goal[0]
+        m.pose.position.y = current_goal[1]
     m.pose.position.z = 0.15
     m.pose.orientation.w = 1.0
     m.scale.x = 0.25
@@ -261,8 +288,92 @@ while rclpy.ok():
     m.color.a = 1.0
     m.lifetime.sec = 1
     pub.publish(m)
+
+    # Publish all waypoints as MarkerArray (yellow spheres with numbers)
+    if waypoints:
+        ma = MarkerArray()
+        for i, (wx, wy) in enumerate(waypoints):
+            wm = Marker()
+            wm.header.frame_id = 'odom'
+            wm.header.stamp = now
+            wm.ns = 'waypoints'
+            wm.id = i
+            wm.type = 2  # SPHERE
+            wm.action = 0
+            wm.pose.position.x = wx
+            wm.pose.position.y = wy
+            wm.pose.position.z = 0.1
+            wm.pose.orientation.w = 1.0
+            # Current target is green, reached are gray, upcoming are yellow
+            if i < current_wp_idx:
+                # Already reached - gray
+                wm.scale.x = wm.scale.y = wm.scale.z = 0.12
+                wm.color.r = 0.5
+                wm.color.g = 0.5
+                wm.color.b = 0.5
+                wm.color.a = 0.5
+            elif i == current_wp_idx:
+                # Current target - green
+                wm.scale.x = wm.scale.y = wm.scale.z = 0.2
+                wm.color.g = 1.0
+                wm.color.a = 1.0
+            else:
+                # Upcoming - yellow/orange gradient
+                wm.scale.x = wm.scale.y = wm.scale.z = 0.15
+                wm.color.r = 1.0
+                wm.color.g = 0.7
+                wm.color.a = 0.8
+            wm.lifetime.sec = 1
+            ma.markers.append(wm)
+
+            # Add text label with waypoint number
+            tm = Marker()
+            tm.header.frame_id = 'odom'
+            tm.header.stamp = now
+            tm.ns = 'wp_labels'
+            tm.id = i
+            tm.type = 9  # TEXT_VIEW_FACING
+            tm.action = 0
+            tm.pose.position.x = wx
+            tm.pose.position.y = wy
+            tm.pose.position.z = 0.3
+            tm.pose.orientation.w = 1.0
+            tm.scale.z = 0.15
+            tm.color.r = 1.0
+            tm.color.g = 1.0
+            tm.color.b = 1.0
+            tm.color.a = 1.0
+            tm.text = str(i)
+            tm.lifetime.sec = 1
+            ma.markers.append(tm)
+
+        # Add line strip connecting waypoints
+        line = Marker()
+        line.header.frame_id = 'odom'
+        line.header.stamp = now
+        line.ns = 'path_line'
+        line.id = 0
+        line.type = 4  # LINE_STRIP
+        line.action = 0
+        line.scale.x = 0.03  # Line width
+        line.color.r = 0.0
+        line.color.g = 0.8
+        line.color.b = 1.0
+        line.color.a = 0.7
+        line.lifetime.sec = 1
+        from geometry_msgs.msg import Point
+        for wx, wy in waypoints:
+            p = Point()
+            p.x = wx
+            p.y = wy
+            p.z = 0.05
+            line.points.append(p)
+        ma.markers.append(line)
+
+        path_pub.publish(ma)
+
     rclpy.spin_once(node, timeout_sec=0.05)
-    time.sleep(0.15)
+    time.sleep(0.1)
 
 node.destroy_node()
 rclpy.shutdown()
@@ -271,22 +382,43 @@ rclpy.shutdown()
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE
         )
-        print("[MARKER] Persistent marker publisher started - add /nav_goal in RViz")
+        print("[MARKER] Persistent marker publisher started - add /nav_goal and /return_path in RViz")
         time.sleep(0.5)  # Give it time to start
 
         # Thread to send coordinates via stdin when goal changes
+        # During RETURN mode, sends full path for visualization
         def update_loop():
+            last_path_str = ""
+
             while self.running and self.debug_marker:
-                with self._goal_lock:
-                    goal = self.goal_point
-                if goal:
-                    x, y = goal
-                    try:
-                        self._marker_proc.stdin.write(f'{x},{y}\n'.encode())
-                        self._marker_proc.stdin.flush()
-                    except:
-                        pass
-                time.sleep(0.2)
+                try:
+                    # Check if we're in RETURN mode with a path
+                    if self.mode == NavMode.RETURN and self.return_path:
+                        # Send full path with current waypoint index
+                        # Format: PATH:current_idx:x1,y1;x2,y2;...
+                        wp_strs = [f'{x:.3f},{y:.3f}' for x, y in self.return_path]
+                        path_str = f"PATH:{self.return_waypoint_idx}:{';'.join(wp_strs)}\n"
+
+                        # Only send if path changed
+                        if path_str != last_path_str:
+                            self._marker_proc.stdin.write(path_str.encode())
+                            self._marker_proc.stdin.flush()
+                            last_path_str = path_str
+                    else:
+                        # Normal mode - just show current goal
+                        with self._goal_lock:
+                            goal = self.goal_point
+                        if goal:
+                            x, y = goal
+                            msg = f'{x},{y}\n'
+                            self._marker_proc.stdin.write(msg.encode())
+                            self._marker_proc.stdin.flush()
+                        last_path_str = ""  # Reset so path will be sent again when we enter RETURN
+
+                except Exception:
+                    pass
+
+                time.sleep(0.15)
 
         self._marker_thread = threading.Thread(target=update_loop, daemon=True)
         self._marker_thread.start()
