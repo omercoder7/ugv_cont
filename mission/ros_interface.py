@@ -57,6 +57,7 @@ import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import LaserScan
 from nav_msgs.msg import Odometry
+from tf2_ros import Buffer, TransformListener
 import sys
 import select
 import math
@@ -69,6 +70,9 @@ class BridgeNode(Node):
         self.odom_data = None
         self.create_subscription(LaserScan, '/scan', self.scan_cb, 1)
         self.create_subscription(Odometry, '/odom', self.odom_cb, 1)
+        # TF buffer for map->base_footprint lookup
+        self.tf_buffer = Buffer()
+        self.tf_listener = TransformListener(self.tf_buffer, self)
 
     def scan_cb(self, msg):
         self.scan_data = [round(r, 3) for r in msg.ranges]
@@ -80,8 +84,21 @@ class BridgeNode(Node):
         siny_cosp = 2 * (q.w * q.z + q.x * q.y)
         cosy_cosp = 1 - 2 * (q.y * q.y + q.z * q.z)
         yaw = math.atan2(siny_cosp, cosy_cosp)
-        # NOTE: 180° offset removed - TF tree now correct with bringup_ekf_simple.launch.py
+        # NOTE: 180 offset removed - TF tree now correct with bringup_ekf_simple.launch.py
         self.odom_data = (round(x, 4), round(y, 4), round(yaw, 4))
+
+    def get_map_pose(self):
+        try:
+            t = self.tf_buffer.lookup_transform('map', 'base_footprint', rclpy.time.Time())
+            x = t.transform.translation.x
+            y = t.transform.translation.y
+            q = t.transform.rotation
+            siny = 2 * (q.w * q.z + q.x * q.y)
+            cosy = 1 - 2 * (q.y * q.y + q.z * q.z)
+            yaw = math.atan2(siny, cosy)
+            return (round(x, 4), round(y, 4), round(yaw, 4))
+        except:
+            return None
 
 rclpy.init()
 node = BridgeNode()
@@ -106,6 +123,15 @@ while rclpy.ok():
                     print(f'ODOM:{node.odom_data[0]},{node.odom_data[1]},{node.odom_data[2]}', flush=True)
                 else:
                     print('ODOM:NONE', flush=True)
+            elif line == 'MAP_POSE':
+                pose = node.get_map_pose()
+                if pose:
+                    print(f'MAP_POSE:{pose[0]},{pose[1]},{pose[2]}', flush=True)
+                elif node.odom_data:
+                    # Fallback to odom if TF not ready
+                    print(f'MAP_POSE:{node.odom_data[0]},{node.odom_data[1]},{node.odom_data[2]}', flush=True)
+                else:
+                    print('MAP_POSE:NONE', flush=True)
         except:
             pass
 
@@ -180,6 +206,25 @@ rclpy.shutdown()
                 self._last_odom = (float(parts[0]), float(parts[1]), float(parts[2]))
                 self._odom_time = now
                 return self._last_odom
+            except:
+                pass
+        return None
+
+    def get_map_pose(self) -> Optional[Tuple[float, float, float]]:
+        """Get robot pose in MAP frame (SLAM-corrected) with caching."""
+        now = time.time()
+        if hasattr(self, '_last_map_pose') and self._last_map_pose and \
+           hasattr(self, '_map_pose_time') and (now - self._map_pose_time) < self._cache_timeout:
+            return self._last_map_pose
+
+        response = self._query('MAP_POSE')
+        if response and response.startswith('MAP_POSE:') and response != 'MAP_POSE:NONE':
+            try:
+                data = response[9:]  # Remove 'MAP_POSE:' prefix
+                parts = data.split(',')
+                self._last_map_pose = (float(parts[0]), float(parts[1]), float(parts[2]))
+                self._map_pose_time = now
+                return self._last_map_pose
             except:
                 pass
         return None
@@ -429,7 +474,7 @@ node = rclpy.create_node('virtual_obstacle_pub')
 marker_pub = node.create_publisher(Marker, '/virtual_obstacles', 10)
 
 marker = Marker()
-marker.header.frame_id = 'odom'
+marker.header.frame_id = 'map'
 marker.header.stamp = node.get_clock().now().to_msg()
 marker.ns = 'stuck_obstacles'
 marker.id = int({x}*1000 + {y}*100) % 10000
@@ -479,7 +524,7 @@ rclpy.init()
 node = rclpy.create_node('goal_marker')
 pub = node.create_publisher(Marker, '/nav_goal', 10)
 m = Marker()
-m.header.frame_id = 'odom'
+m.header.frame_id = 'map'
 m.header.stamp = node.get_clock().now().to_msg()
 m.ns = 'goal'
 m.id = 0
@@ -625,6 +670,31 @@ def ensure_slam_running(container: str = CONTAINER_NAME) -> bool:
         except Exception as e:
             print(f"SLAM check failed: {e}")
             return False
+
+
+def get_map_pose(container: str = CONTAINER_NAME) -> Optional[Tuple[float, float, float]]:
+    """
+    Get current position and heading in MAP frame (SLAM-corrected).
+
+    Unlike get_odometry() which returns position in odom frame, this function
+    returns the robot's position in the map frame. This is essential for
+    navigation targets because SLAM loop closures can shift the odom frame
+    relative to the map, causing stored odom-frame coordinates to become invalid.
+
+    Returns:
+        (x, y, yaw) tuple in map frame, or None if unavailable
+    """
+    # Use persistent bridge for efficient TF lookup
+    if _use_persistent_bridge:
+        bridge = _get_bridge()
+        if bridge:
+            result = bridge.get_map_pose()
+            if result:
+                return result
+
+    # Fallback to get_odometry if bridge unavailable
+    # (At startup before SLAM runs, map frame may not exist yet)
+    return get_odometry(container)
 
 
 def shutdown_ros_bridge():

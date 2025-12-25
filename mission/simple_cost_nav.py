@@ -25,7 +25,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Optional, List, Tuple, Dict, Set, TextIO
 
-from .ros_interface import get_lidar_scan, send_velocity_cmd, get_odometry, publish_goal_marker
+from .ros_interface import get_lidar_scan, send_velocity_cmd, get_odometry, get_map_pose, publish_goal_marker
 
 
 class TeeLogger:
@@ -267,7 +267,7 @@ while rclpy.ok():
 
     # Publish current goal marker (green sphere)
     m = Marker()
-    m.header.frame_id = 'odom'
+    m.header.frame_id = 'map'  # Use map frame for SLAM-corrected position
     m.header.stamp = now
     m.ns = 'goal'
     m.id = 0
@@ -294,7 +294,7 @@ while rclpy.ok():
         ma = MarkerArray()
         for i, (wx, wy) in enumerate(waypoints):
             wm = Marker()
-            wm.header.frame_id = 'odom'
+            wm.header.frame_id = 'map'  # Use map frame for SLAM-corrected position
             wm.header.stamp = now
             wm.ns = 'waypoints'
             wm.id = i
@@ -328,7 +328,7 @@ while rclpy.ok():
 
             # Add text label with waypoint number
             tm = Marker()
-            tm.header.frame_id = 'odom'
+            tm.header.frame_id = 'map'  # Use map frame for SLAM-corrected position
             tm.header.stamp = now
             tm.ns = 'wp_labels'
             tm.id = i
@@ -349,7 +349,7 @@ while rclpy.ok():
 
         # Add line strip connecting waypoints
         line = Marker()
-        line.header.frame_id = 'odom'
+        line.header.frame_id = 'map'  # Use map frame for SLAM-corrected position
         line.header.stamp = now
         line.ns = 'path_line'
         line.id = 0
@@ -457,7 +457,7 @@ pub = node.create_publisher(Marker, '/nav_origin', 10)
 
 while rclpy.ok():
     m = Marker()
-    m.header.frame_id = 'odom'
+    m.header.frame_id = 'map'  # Use map frame for SLAM-corrected position
     m.header.stamp = node.get_clock().now().to_msg()
     m.ns = 'origin'
     m.id = 0
@@ -1366,7 +1366,10 @@ rclpy.shutdown()
 
                 sectors = compute_sector_distances(scan)
 
-                odom = get_odometry()
+                # Use MAP frame position (SLAM-corrected) to prevent origin drift
+                # during loop closures. This ensures start_pos and current_pos stay
+                # in the same coordinate frame even when SLAM adjusts the map->odom TF.
+                odom = get_map_pose()
                 if not odom:
                     time.sleep(0.1)
                     continue
@@ -1374,7 +1377,7 @@ rclpy.shutdown()
                 self.current_pos = (odom[0], odom[1])
                 self.current_heading = odom[2]
 
-                # Track starting position
+                # Track starting position (in MAP frame for stability)
                 if self.start_pos is None:
                     self.start_pos = self.current_pos
                     print(f"[START] Initial position: ({self.start_pos[0]:.2f}, {self.start_pos[1]:.2f})")
