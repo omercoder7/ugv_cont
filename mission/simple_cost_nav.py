@@ -19,10 +19,31 @@ import time
 import threading
 import subprocess
 import heapq
+import os
+import sys
+from datetime import datetime
 from enum import Enum
-from typing import Optional, List, Tuple, Dict, Set
+from typing import Optional, List, Tuple, Dict, Set, TextIO
 
 from .ros_interface import get_lidar_scan, send_velocity_cmd, get_odometry, publish_goal_marker
+
+
+class TeeLogger:
+    """Write to both console and file simultaneously."""
+    def __init__(self, log_file: TextIO):
+        self.terminal = sys.stdout
+        self.log_file = log_file
+
+    def write(self, message):
+        self.terminal.write(message)
+        self.log_file.write(message)
+        self.log_file.flush()
+
+    def flush(self):
+        self.terminal.flush()
+        self.log_file.flush()
+
+
 from .avoider.lidar import compute_sector_distances
 from .constants import NUM_SECTORS, CONTAINER_NAME, SECTORS_FRONT_ARC, SECTORS_LEFT, SECTORS_RIGHT
 
@@ -121,6 +142,20 @@ class NBVNavigator:
         self.return_last_pos: Optional[Tuple[float, float]] = None  # Last position for movement detection
         self.return_last_heading: Optional[float] = None  # Last heading for rotation detection
         self.return_movement_threshold: float = 0.10  # Min movement (m) to count as "not stuck"
+
+        # Area-based progress tracking for return
+        # Triggers replan if robot stays in same area without getting closer to origin
+        self.return_area_center: Optional[Tuple[float, float]] = None  # Center of current area
+        self.return_area_time: float = 0.0  # When we entered this area
+        self.return_area_radius: float = 0.5  # Radius to consider "same area" (0.5m)
+        self.return_area_timeout: float = 15.0  # Replan if in same area for 15s without progress
+        self.return_area_best_dist: float = float('inf')  # Best distance to origin while in this area
+        self.return_replan_count: int = 0  # Count of replans at similar distance
+        self.return_replan_max: int = 5  # Give up after this many replans without progress
+        self.return_last_replan_dist: float = float('inf')  # Distance at last replan
+        self.return_last_approach_point: Optional[Tuple[float, float]] = None  # Track last approach point
+        self.return_approach_fail_count: int = 0  # Count failures with same approach point
+        self.return_approach_fail_max: int = 2  # Block approach point after this many failures
         self.return_rotation_threshold: float = 0.15  # Min rotation (rad, ~9°) to count as "not stuck"
 
         # Origin marker subprocess
@@ -130,8 +165,20 @@ class NBVNavigator:
         self.return_path: List[Tuple[float, float]] = []  # Waypoints to follow
         self.return_waypoint_idx: int = 0  # Current waypoint index
         self.waypoint_reached_dist: float = 0.35  # Distance to consider waypoint reached
+        self.origin_reached_dist: float = 0.05  # Very tight threshold for reaching origin (5cm)
+        # Wall inflation: 2 cells × 0.3m = 0.6m clearance (robot is ~17cm wide, need margin)
+        # IMPORTANT: At 0.3m grid resolution, 4 cells = 1.2m which is WAY too much
         self.path_inflation_radius: int = 2  # Grid cells to inflate walls (2 cells = 0.6m clearance)
-        self.goal_clearance_radius: int = 3  # Clear cells within this radius of goal from obstacles
+        # Goal clearance: Only clear 1 cell radius (0.3m) - larger values bypass real walls!
+        self.goal_clearance_radius: int = 1  # Clear cells within this radius of goal from obstacles
+
+        # Unreachable waypoints - cells that A* should treat as walls
+        # When robot gets stuck trying to reach a waypoint, mark it as unreachable
+        # Key: cell tuple, Value: timestamp when added (for debugging/expiry)
+        self.unreachable_cells: Dict[Tuple[int, int], float] = {}
+
+        # Origin wall signature - sector distances at startup to detect drift
+        self.origin_wall_signature: Optional[List[float]] = None
 
         # Consecutive goal selection failure tracking
         self.consecutive_no_goal: int = 0  # Count of consecutive "no valid goal" failures
@@ -142,19 +189,28 @@ class NBVNavigator:
         self.turn_mode_timeout: float = 5.0  # Max time in TURN mode before forcing backup
         self.was_in_turn_mode: bool = False  # Track if we were in TURN mode last iteration
 
-        # Blocked direction tracking - penalize directions that repeatedly fail
-        # Key: sector (0-59), Value: (block_count, last_block_time)
-        self.blocked_directions: Dict[int, Tuple[int, float]] = {}
-        self.blocked_direction_memory: float = 30.0  # Forget after 30 seconds
-        self.blocked_direction_threshold: int = 3  # After 3 blocks, heavily penalize
+        # DRIVE mode stuck detection - sliding window on goal distance
+        # Track recent goal distance readings to detect when robot isn't making progress
+        self.drive_goal_dist_history: List[Tuple[float, float]] = []  # List of (timestamp, goal_distance)
+        self.drive_stuck_window: float = 7.0  # Check for no progress in last 7 seconds
+        self.drive_stuck_margin: float = 0.08  # Must change by 8cm to count as progress
 
-        # DRIVE mode stuck detection - detect when robot isn't making progress
-        self.drive_mode_start_time: float = 0.0  # When we started driving toward current goal
-        self.drive_mode_start_dist: float = 0.0  # Distance to goal when we started
-        self.drive_mode_last_progress_time: float = 0.0  # Last time we made progress
-        self.drive_mode_last_dist: float = 0.0  # Last distance to goal
-        self.drive_mode_stuck_timeout: float = 5.0  # Seconds without progress = stuck
-        self.drive_mode_progress_threshold: float = 0.05  # Must move 5cm to count as progress
+        # Blocked sectors tracking - mark sectors as blocked for a duration
+        # Key: sector index, Value: timestamp when block expires
+        self.blocked_sectors: Dict[int, float] = {}
+
+        # Output logging
+        self.output_dir: Optional[str] = None
+        self.log_file: Optional[TextIO] = None
+        self._original_stdout = None
+
+        # Drive accuracy tracking
+        # Track deviation from ideal straight-line path to goal
+        self.drive_error_sum_sq: float = 0.0  # Sum of squared cross-track errors
+        self.drive_error_count: int = 0  # Number of measurements
+        self.drive_total_distance: float = 0.0  # Total distance traveled
+        self.drive_ideal_distance: float = 0.0  # Sum of straight-line distances to goals
+        self.last_pos_for_distance: Optional[Tuple[float, float]] = None
 
     def _start_marker_thread(self):
         """Start persistent marker publisher that keeps the topic alive."""
@@ -328,9 +384,18 @@ rclpy.shutdown()
         start_cell = self._pos_to_cell(start[0], start[1])
         goal_cell = self._pos_to_cell(goal[0], goal[1])
 
-        print(f"[A* DEBUG] Planning from {start_cell} to {goal_cell}")
-        print(f"[A* DEBUG] World coords: ({start[0]:.2f},{start[1]:.2f}) -> ({goal[0]:.2f},{goal[1]:.2f})")
-        print(f"[A* DEBUG] Map stats: {len(self.scan_ends)} walls, {len(self.scanned)} scanned, {len(self.visited)} visited")
+        print(f"\n[A* PLAN] ========== PATH PLANNING START ==========")
+        print(f"[A* PLAN] From cell {start_cell} to cell {goal_cell}")
+        print(f"[A* PLAN] World: ({start[0]:.2f},{start[1]:.2f}) -> ({goal[0]:.2f},{goal[1]:.2f})")
+        print(f"[A* PLAN] Distance: {math.sqrt((goal[0]-start[0])**2 + (goal[1]-start[1])**2):.2f}m")
+        print(f"[A* PLAN] Grid res: {self.grid_res}m, Inflation: {inflation} cells = {inflation * self.grid_res:.2f}m clearance")
+        print(f"[A* PLAN] Map: {len(self.scan_ends)} walls, {len(self.scanned)} scanned, {len(self.visited)} visited")
+
+        # CRITICAL: Remove origin cell from scan_ends if it got marked as wall
+        # This can happen due to SLAM drift or timing issues at startup
+        if goal_cell in self.scan_ends:
+            print(f"[A* FIX] Removing goal cell {goal_cell} from scan_ends (was incorrectly marked as wall)")
+            del self.scan_ends[goal_cell]
 
         # Build obstacle set with inflation for robot clearance
         obstacles: Set[Tuple[int, int]] = set()
@@ -342,16 +407,57 @@ rclpy.shutdown()
                     if max(abs(dx), abs(dy)) <= inflation:
                         obstacles.add((wall_cell[0] + dx, wall_cell[1] + dy))
 
-        print(f"[A* DEBUG] Inflated obstacles: {len(obstacles)} cells (inflation={inflation})")
+        # Add unreachable cells (waypoints we got stuck trying to reach)
+        # These are cells we FAILED to reach during return - must be blocked even if visited!
+        unreachable_blocked = 0
+        for unreachable_cell in self.unreachable_cells.keys():
+            obstacles.add(unreachable_cell)
+            unreachable_blocked += 1
+            # Also inflate unreachable cells to avoid routing close to them
+            for dx in range(-1, 2):
+                for dy in range(-1, 2):
+                    obstacles.add((unreachable_cell[0] + dx, unreachable_cell[1] + dy))
 
-        # IMPORTANT: Remove visited cells from obstacles - we've already been there!
+        if unreachable_blocked > 0:
+            print(f"[A* PLAN] Blocked {unreachable_blocked} unreachable cells + 3x3 inflation each")
+        print(f"[A* PLAN] Inflated obstacles: {len(obstacles)} cells (inflation={inflation}, unreachable={len(self.unreachable_cells)})")
+
+        # Show nearby walls around start and goal for debugging
+        walls_near_start = [(w, math.sqrt((w[0]-start_cell[0])**2 + (w[1]-start_cell[1])**2))
+                           for w in self.scan_ends.keys()
+                           if abs(w[0]-start_cell[0]) <= 3 and abs(w[1]-start_cell[1]) <= 3]
+        walls_near_goal = [(w, math.sqrt((w[0]-goal_cell[0])**2 + (w[1]-goal_cell[1])**2))
+                          for w in self.scan_ends.keys()
+                          if abs(w[0]-goal_cell[0]) <= 3 and abs(w[1]-goal_cell[1]) <= 3]
+        if walls_near_start:
+            closest_start = min(walls_near_start, key=lambda x: x[1])
+            print(f"[A* PLAN] Closest wall to START: {closest_start[0]} at {closest_start[1]:.1f} cells = {closest_start[1]*self.grid_res:.2f}m")
+        if walls_near_goal:
+            closest_goal = min(walls_near_goal, key=lambda x: x[1])
+            print(f"[A* PLAN] Closest wall to GOAL: {closest_goal[0]} at {closest_goal[1]:.1f} cells = {closest_goal[1]*self.grid_res:.2f}m")
+
+        # CRITICAL: Clear visited cells from obstacles!
+        # If we've physically been in a cell, it's definitely traversable.
+        # This ensures A* can always find a path back through where we came.
+        # NOTE: We now prevent visited cells from being added to scan_ends in the
+        # first place (in _record_scan_coverage), but this is a safety net.
+        # IMPORTANT: Do NOT clear cells that are marked as unreachable!
+        # Unreachable cells are waypoints we got STUCK trying to reach during return -
+        # even if we visited them during exploration, we can't reach them now.
         visited_cleared = 0
+        unreachable_preserved = 0
         for visited_cell in self.visited.keys():
             if visited_cell in obstacles:
-                obstacles.discard(visited_cell)
-                visited_cleared += 1
+                if visited_cell in self.unreachable_cells:
+                    # Keep this cell as obstacle - we couldn't reach it during return!
+                    unreachable_preserved += 1
+                else:
+                    obstacles.discard(visited_cell)
+                    visited_cleared += 1
         if visited_cleared > 0:
-            print(f"[A* DEBUG] Cleared {visited_cleared} visited cells from obstacles")
+            print(f"[A* PLAN] Cleared {visited_cleared} visited cells from obstacles (guaranteed traversable)")
+        if unreachable_preserved > 0:
+            print(f"[A* PLAN] Preserved {unreachable_preserved} unreachable cells in obstacles (visited but now blocked)")
 
         # IMPORTANT: Clear cells around the goal to ensure we can approach it
         # This allows the final approach to origin even if walls are nearby
@@ -368,11 +474,32 @@ rclpy.shutdown()
         # Check if start or goal are in obstacles
         start_in_obs = start_cell in obstacles
         goal_in_obs = goal_cell in obstacles
-        print(f"[A* DEBUG] Start in obstacles: {start_in_obs}, Goal in obstacles: {goal_in_obs}")
+        print(f"[A* PLAN] Start in obstacles: {start_in_obs}, Goal in obstacles: {goal_in_obs}")
+        if start_in_obs:
+            print(f"[A* WARN] Robot starting position is inside inflated obstacle zone!")
+        if goal_in_obs:
+            print(f"[A* WARN] Goal is inside inflated obstacle zone - will be cleared")
 
         # Don't block the start or goal cells
         obstacles.discard(start_cell)
         obstacles.discard(goal_cell)
+
+        # CRITICAL FIX: If start is inside inflated zone, we need to clear a path OUT
+        # Otherwise A* can't even begin - all neighbors are blocked
+        # Clear cells around start so robot can escape the inflation zone
+        if start_in_obs:
+            start_cleared = 0
+            # Clear immediate neighbors (1 cell radius) so robot can move
+            for dx in range(-1, 2):
+                for dy in range(-1, 2):
+                    neighbor = (start_cell[0] + dx, start_cell[1] + dy)
+                    if neighbor in obstacles:
+                        # Only clear if it's not an actual wall (just inflated)
+                        if neighbor not in self.scan_ends:
+                            obstacles.discard(neighbor)
+                            start_cleared += 1
+            if start_cleared > 0:
+                print(f"[A* FIX] Cleared {start_cleared} inflated cells around start to allow escape")
 
         # A* algorithm
         def heuristic(cell: Tuple[int, int]) -> float:
@@ -411,7 +538,28 @@ rclpy.shutdown()
                     path_cells.append(current)
                 path_cells.reverse()
 
-                print(f"[A* DEBUG] Path found! {len(path_cells)} cells, {iterations} iterations")
+                # Calculate path statistics for debugging
+                total_cost = g_score.get(goal_cell, 0)
+                path_length_cells = len(path_cells)
+                path_length_m = (path_length_cells - 1) * self.grid_res  # Approximate
+
+                # Find minimum wall clearance along path
+                min_clearance = float('inf')
+                min_clearance_cell = None
+                for cell in path_cells:
+                    for wall in self.scan_ends.keys():
+                        dist = math.sqrt((wall[0]-cell[0])**2 + (wall[1]-cell[1])**2)
+                        if dist < min_clearance:
+                            min_clearance = dist
+                            min_clearance_cell = cell
+
+                print(f"[A* RESULT] Path found! {path_length_cells} cells, {iterations} iterations")
+                print(f"[A* RESULT] Total cost: {total_cost:.1f}, Path length: ~{path_length_m:.2f}m")
+                print(f"[A* RESULT] Min wall clearance: {min_clearance:.1f} cells = {min_clearance * self.grid_res:.2f}m at {min_clearance_cell}")
+                if min_clearance < 1.0:
+                    print(f"[A* WARN] Path passes very close to walls! May cause collisions.")
+                    if inflation == 0:
+                        print(f"[A* WARN] This is a zero-inflation fallback path - robot was trapped in inflation zone.")
 
                 # Convert to world coordinates (center of each cell)
                 path_world = []
@@ -422,7 +570,8 @@ rclpy.shutdown()
 
                 # Simplify path: remove intermediate waypoints on straight lines
                 simplified = self._simplify_path(path_world)
-                print(f"[A* DEBUG] Simplified to {len(simplified)} waypoints")
+                print(f"[A* RESULT] Simplified to {len(simplified)} waypoints")
+                print(f"[A* PLAN] ========== PATH PLANNING END ==========\n")
                 return simplified
 
             for dx, dy in neighbors:
@@ -439,8 +588,8 @@ rclpy.shutdown()
                 # Diagonal moves cost sqrt(2), orthogonal cost 1
                 move_cost = 1.414 if dx != 0 and dy != 0 else 1.0
 
-                # Add wall proximity cost - prefer paths away from walls
-                # Check distance to nearest wall and add penalty for being close
+                # Add wall proximity cost - STRONGLY prefer paths away from walls
+                # This is critical for preventing paths that hug walls
                 wall_penalty = 0.0
                 for wall_cell in self.scan_ends.keys():
                     wall_dx = wall_cell[0] - neighbor[0]
@@ -449,8 +598,9 @@ rclpy.shutdown()
                     if abs(wall_dx) <= 3 and abs(wall_dy) <= 3:
                         wall_dist = math.sqrt(wall_dx*wall_dx + wall_dy*wall_dy)
                         if wall_dist < 3:  # Within 3 cells (~0.9m)
-                            # Exponential penalty: closer = much higher cost
-                            # wall_dist=1 -> penalty=2.0, wall_dist=2 -> penalty=0.5
+                            # Moderate penalty: prefer clearance but don't create huge detours
+                            # wall_dist=1 -> penalty=2.0, wall_dist=2 -> penalty=0.8
+                            # NOTE: 8.0 was causing 2x path length detours - way too strong!
                             wall_penalty = max(wall_penalty, 2.0 / (wall_dist + 0.5))
 
                 tentative_g = g_score[current] + move_cost + wall_penalty
@@ -480,30 +630,34 @@ rclpy.shutdown()
                     blocked_neighbors.append(neighbor)
             print(f"[A* DEBUG] Goal neighbors blocked: {len(blocked_neighbors)}/8")
 
-        # If path failed and we have inflation > 0, retry with no inflation
+        # If path failed and we have inflation > 0, retry with smaller inflation
+        # Iteratively reduce inflation until we find a path or reach 0
         if inflation > 0:
-            print(f"[A* DEBUG] Retrying with inflation=0...")
-            return self._plan_path_astar(start, goal, inflation=0)
+            next_inflation = inflation - 1
+            print(f"[A* RETRY] No path with inflation={inflation}, trying inflation={next_inflation}...")
+            return self._plan_path_astar(start, goal, inflation=next_inflation)
 
         return []
 
     def _simplify_path(self, path: List[Tuple[float, float]]) -> List[Tuple[float, float]]:
         """
-        Simplify path by removing intermediate waypoints where possible.
+        Simplify path by removing intermediate waypoints while GUARANTEEING
+        line-of-sight between all consecutive waypoints.
 
-        Only removes a waypoint if:
-        1. Direction change is small (< 11 degrees)
-        2. There's clear line-of-sight between the previous and next waypoint
+        Uses visibility-preserving simplification:
+        1. Only removes waypoints if resulting connection has clear LOS
+        2. More conservative at corners (lower angle threshold)
+        3. Inserts corner waypoints when needed to maintain LOS
 
-        This ensures the simplified path doesn't cut through walls.
-        Also ensures the penultimate waypoint is in verified open space
-        for a clear final approach to the goal.
+        This ensures the robot can always drive in a straight line to
+        the next waypoint without hitting walls.
         """
         if len(path) <= 2:
             return path
 
+        # Phase 1: Conservative simplification - only remove if LOS is clear
         simplified = [path[0]]
-        angle_threshold = 0.2  # ~11 degrees - keep waypoints with significant direction change
+        angle_threshold = 0.35  # ~20 degrees - more conservative, keep more corners
 
         for i in range(1, len(path) - 1):
             prev = simplified[-1]
@@ -516,7 +670,7 @@ rclpy.shutdown()
             angle_diff = abs(self._normalize_angle(angle2 - angle1))
 
             # Keep this waypoint if:
-            # 1. Direction changes significantly, OR
+            # 1. Direction changes significantly (corner), OR
             # 2. No clear line-of-sight from prev to next (would cut through walls)
             if angle_diff > angle_threshold:
                 simplified.append(curr)
@@ -526,13 +680,165 @@ rclpy.shutdown()
 
         simplified.append(path[-1])
 
-        # Validate all waypoint connections have line-of-sight
-        simplified = self._validate_path_connectivity(simplified, path)
+        # Phase 2: Ensure LOS between ALL consecutive waypoints
+        # Insert corner waypoints where needed
+        simplified = self._ensure_all_waypoints_have_los(simplified, path)
 
-        # Ensure penultimate waypoint is in open space for clear final approach
+        # Phase 3: Ensure penultimate waypoint is in open space for clear final approach
         simplified = self._ensure_penultimate_in_open_space(simplified, path)
 
         return simplified
+
+    def _ensure_all_waypoints_have_los(self, simplified: List[Tuple[float, float]],
+                                        original_path: List[Tuple[float, float]]) -> List[Tuple[float, float]]:
+        """
+        Ensure every consecutive pair of waypoints has clear line-of-sight.
+
+        For each blocked segment, find and insert a corner waypoint that:
+        1. Has LOS to the previous waypoint
+        2. Has LOS to the next waypoint
+        3. Is away from walls (safe passage)
+
+        This is based on the visibility graph approach where waypoints are
+        placed at corners where visibility changes.
+        """
+        if len(simplified) <= 1:
+            return simplified
+
+        result = [simplified[0]]
+        max_iterations = 10  # Prevent infinite loops
+
+        i = 1
+        while i < len(simplified):
+            prev = result[-1]
+            curr = simplified[i]
+
+            # Check if direct LOS exists
+            if self._has_line_of_sight_with_margin(prev[0], prev[1], curr[0], curr[1]):
+                result.append(curr)
+                i += 1
+            else:
+                # No LOS - need to insert corner waypoint(s)
+                corner = self._find_corner_waypoint(prev, curr, original_path)
+
+                if corner:
+                    # Insert corner and continue (will check LOS from corner to curr next iteration)
+                    result.append(corner)
+                    # Don't increment i - we still need to reach curr
+                    # But to prevent infinite loops, check if we're making progress
+                    dist_to_curr = math.sqrt((corner[0] - curr[0])**2 + (corner[1] - curr[1])**2)
+                    dist_prev_to_curr = math.sqrt((prev[0] - curr[0])**2 + (prev[1] - curr[1])**2)
+
+                    if dist_to_curr >= dist_prev_to_curr * 0.9:
+                        # Not making progress, just add curr and move on
+                        result.append(curr)
+                        i += 1
+                else:
+                    # Couldn't find corner waypoint - try to use original path waypoints
+                    inserted = self._insert_original_waypoints(prev, curr, original_path, result)
+                    if not inserted:
+                        # Last resort: just add the waypoint anyway
+                        result.append(curr)
+                    i += 1
+
+        return result
+
+    def _find_corner_waypoint(self, start: Tuple[float, float], end: Tuple[float, float],
+                               original_path: List[Tuple[float, float]]) -> Optional[Tuple[float, float]]:
+        """
+        Find a corner waypoint between start and end that has LOS to both.
+
+        Strategy:
+        1. First try waypoints from the original A* path
+        2. Then try points along the perpendicular to find a corner
+        3. Look for visited cells that have LOS to both points
+        """
+        # Strategy 1: Find original path waypoints between start and end
+        start_idx = self._find_closest_path_index(original_path, start)
+        end_idx = self._find_closest_path_index(original_path, end)
+
+        if start_idx < end_idx:
+            # Check each intermediate waypoint from original path
+            for j in range(start_idx + 1, end_idx):
+                candidate = original_path[j]
+                # Check if this point has LOS to both start and end
+                if (self._has_line_of_sight_with_margin(start[0], start[1], candidate[0], candidate[1]) and
+                    self._has_line_of_sight_with_margin(candidate[0], candidate[1], end[0], end[1])):
+                    return candidate
+
+            # If no single point works, find the best intermediate that at least has LOS to start
+            for j in range(start_idx + 1, min(start_idx + 5, end_idx)):
+                candidate = original_path[j]
+                if self._has_line_of_sight_with_margin(start[0], start[1], candidate[0], candidate[1]):
+                    return candidate
+
+        # Strategy 2: Try points offset from the midpoint (perpendicular search)
+        mid_x = (start[0] + end[0]) / 2
+        mid_y = (start[1] + end[1]) / 2
+
+        dx = end[0] - start[0]
+        dy = end[1] - start[1]
+        dist = math.sqrt(dx*dx + dy*dy)
+
+        if dist > 0.1:
+            # Perpendicular direction
+            perp_x = -dy / dist
+            perp_y = dx / dist
+
+            # Try offsets in perpendicular direction
+            for offset in [0.2, 0.4, 0.6, -0.2, -0.4, -0.6]:
+                corner_x = mid_x + perp_x * offset
+                corner_y = mid_y + perp_y * offset
+
+                # Check if this is a valid corner (not in wall, has LOS to both)
+                cell = self._pos_to_cell(corner_x, corner_y)
+                if cell not in self.scan_ends and cell not in self.unreachable_cells:
+                    if (self._has_line_of_sight_with_margin(start[0], start[1], corner_x, corner_y) and
+                        self._has_line_of_sight_with_margin(corner_x, corner_y, end[0], end[1])):
+                        return (corner_x, corner_y)
+
+        # Strategy 3: Look for visited cells near the path that have LOS to both
+        for visited_cell in self.visited.keys():
+            vx = (visited_cell[0] + 0.5) * self.grid_res
+            vy = (visited_cell[1] + 0.5) * self.grid_res
+
+            # Check if visited cell is roughly between start and end
+            dist_to_start = math.sqrt((vx - start[0])**2 + (vy - start[1])**2)
+            dist_to_end = math.sqrt((vx - end[0])**2 + (vy - end[1])**2)
+            direct_dist = math.sqrt((end[0] - start[0])**2 + (end[1] - start[1])**2)
+
+            # Visited cell should be reasonably close to the path
+            if dist_to_start + dist_to_end < direct_dist * 2.0:
+                if (self._has_line_of_sight_with_margin(start[0], start[1], vx, vy) and
+                    self._has_line_of_sight_with_margin(vx, vy, end[0], end[1])):
+                    return (vx, vy)
+
+        return None
+
+    def _insert_original_waypoints(self, start: Tuple[float, float], end: Tuple[float, float],
+                                    original_path: List[Tuple[float, float]],
+                                    result: List[Tuple[float, float]]) -> bool:
+        """
+        Insert waypoints from original path to bridge between start and end.
+        Returns True if any waypoints were inserted.
+        """
+        start_idx = self._find_closest_path_index(original_path, start)
+        end_idx = self._find_closest_path_index(original_path, end)
+
+        if start_idx >= end_idx:
+            return False
+
+        inserted = False
+        for j in range(start_idx + 1, end_idx):
+            wp = original_path[j]
+            # Only add if it has LOS to the last result point
+            if self._has_line_of_sight_with_margin(result[-1][0], result[-1][1], wp[0], wp[1]):
+                result.append(wp)
+                inserted = True
+
+        # Add the end point
+        result.append(end)
+        return inserted
 
     def _has_line_of_sight_with_margin(self, x1: float, y1: float, x2: float, y2: float,
                                         margin_cells: int = 1) -> bool:
@@ -574,49 +880,10 @@ rclpy.shutdown()
 
                 if cell in self.scan_ends:
                     return False  # Wall blocking path
+                if cell in self.unreachable_cells:
+                    return False  # Known unreachable cell
 
         return True
-
-    def _validate_path_connectivity(self, simplified: List[Tuple[float, float]],
-                                     original_path: List[Tuple[float, float]]) -> List[Tuple[float, float]]:
-        """
-        Validate that all consecutive waypoints have clear line-of-sight.
-
-        If any connection is blocked, insert intermediate waypoints from
-        the original A* path to ensure connectivity.
-        """
-        if len(simplified) <= 1:
-            return simplified
-
-        validated = [simplified[0]]
-
-        for i in range(1, len(simplified)):
-            prev = validated[-1]
-            curr = simplified[i]
-
-            # Check if direct path is clear
-            if self._has_line_of_sight_with_margin(prev[0], prev[1], curr[0], curr[1]):
-                validated.append(curr)
-            else:
-                # Path blocked - find intermediate waypoints from original path
-                print(f"[A* DEBUG] Path blocked between ({prev[0]:.2f},{prev[1]:.2f}) and ({curr[0]:.2f},{curr[1]:.2f})")
-
-                # Find the segment in original path that corresponds to this gap
-                prev_idx = self._find_closest_path_index(original_path, prev)
-                curr_idx = self._find_closest_path_index(original_path, curr)
-
-                if prev_idx < curr_idx:
-                    # Add intermediate waypoints from original path
-                    for j in range(prev_idx + 1, curr_idx):
-                        intermediate = original_path[j]
-                        # Only add if it helps (has LOS to previous)
-                        if self._has_line_of_sight_with_margin(validated[-1][0], validated[-1][1],
-                                                               intermediate[0], intermediate[1]):
-                            validated.append(intermediate)
-
-                validated.append(curr)
-
-        return validated
 
     def _find_closest_path_index(self, path: List[Tuple[float, float]],
                                   point: Tuple[float, float]) -> int:
@@ -653,6 +920,43 @@ rclpy.shutdown()
         approach_point = self._find_clear_approach_point(goal)
 
         if approach_point:
+            # Track if we're getting the same approach point repeatedly
+            if self.return_last_approach_point:
+                dist_to_last = math.sqrt(
+                    (approach_point[0] - self.return_last_approach_point[0])**2 +
+                    (approach_point[1] - self.return_last_approach_point[1])**2
+                )
+                if dist_to_last < 0.5:  # Same approach point (within 0.5m)
+                    self.return_approach_fail_count += 1
+                    print(f"[A* DEBUG] Same approach point #{self.return_approach_fail_count} "
+                          f"({approach_point[0]:.2f}, {approach_point[1]:.2f})")
+
+                    # If we've failed too many times with this approach point, block it
+                    if self.return_approach_fail_count >= self.return_approach_fail_max:
+                        approach_cell = self._pos_to_cell(approach_point[0], approach_point[1])
+                        self.unreachable_cells[approach_cell] = time.time()
+                        print(f"[A* DEBUG] Blocking approach point cell {approach_cell} after "
+                              f"{self.return_approach_fail_count} failures - will find new approach")
+                        # Reset and try to find a different approach point
+                        self.return_approach_fail_count = 0
+                        self.return_last_approach_point = None
+                        # Recursively try to find a new approach point (now with blocked cell)
+                        new_approach = self._find_clear_approach_point(goal)
+                        if new_approach:
+                            # Found a different approach point, use it
+                            approach_point = new_approach
+                        else:
+                            # No more approach points available, use simplified path as-is
+                            print(f"[A* DEBUG] No alternative approach point found, using path as-is")
+                            return simplified
+                else:
+                    # Different approach point, reset counter
+                    self.return_approach_fail_count = 1
+            else:
+                self.return_approach_fail_count = 1
+
+            self.return_last_approach_point = approach_point
+
             # Replace path ending with: ... -> approach_point -> goal
             # Keep earlier waypoints that lead toward the approach point
             new_simplified = []
@@ -701,6 +1005,10 @@ rclpy.shutdown()
 
         # Check all visited cells within range
         for cell, _ in self.visited.items():
+            # Skip cells marked as unreachable - we already tried and failed to reach them!
+            if cell in self.unreachable_cells:
+                continue
+
             # Distance to goal in cells
             dx = cell[0] - goal_cell[0]
             dy = cell[1] - goal_cell[1]
@@ -726,6 +1034,11 @@ rclpy.shutdown()
 
         if best_point:
             print(f"[A* DEBUG] Found approach point with clearance={best_clearance:.2f}m")
+        else:
+            # Count why we didn't find any approach points
+            skipped_unreachable = sum(1 for c in self.visited if c in self.unreachable_cells)
+            if skipped_unreachable > 0:
+                print(f"[A* DEBUG] No approach point found (skipped {skipped_unreachable} unreachable cells)")
 
         return best_point
 
@@ -813,6 +1126,9 @@ rclpy.shutdown()
 
     def run(self):
         """Main loop: select goal -> drive to goal -> repeat."""
+        # Setup output logging first
+        self._setup_output_logging()
+
         print("=" * 55)
         print("NEXT-BEST-VIEW (NBV) NAVIGATION")
         print("=" * 55)
@@ -823,6 +1139,7 @@ rclpy.shutdown()
         self.running = True
         self.start_time = time.time()
         self.start_pos = None  # Track starting position
+        self.goal_start_pos = None  # Track position when goal was set (for accuracy)
 
         # Start marker publishing thread if debug mode
         if self.debug_marker:
@@ -865,6 +1182,10 @@ rclpy.shutdown()
                 if self.start_pos is None:
                     self.start_pos = self.current_pos
                     print(f"[START] Initial position: ({self.start_pos[0]:.2f}, {self.start_pos[1]:.2f})")
+                    # Capture origin "wall signature" - distances to walls in each direction
+                    # This helps detect if origin has drifted relative to walls
+                    self.origin_wall_signature = sectors.copy()  # 12 sector distances at startup
+                    print(f"[START] Origin wall signature: {[f'{d:.2f}' for d in sectors]}")
                     # Start origin marker (blue sphere) if debug mode
                     if self.debug_marker:
                         self._start_origin_marker(self.start_pos[0], self.start_pos[1])
@@ -940,8 +1261,8 @@ rclpy.shutdown()
                         (self.current_pos[0] - self.start_pos[0])**2 +
                         (self.current_pos[1] - self.start_pos[1])**2)
 
-                    # Check if we've reached origin
-                    if dist_to_origin < self.goal_reached_dist:
+                    # Check if we've reached origin (tighter threshold than other waypoints)
+                    if dist_to_origin < self.origin_reached_dist:
                         print(f"\n\n{'=' * 55}")
                         print(f"[{time.time() - self.start_time:.1f}s] MISSION COMPLETE!")
                         print(f"{'=' * 55}")
@@ -949,8 +1270,59 @@ rclpy.shutdown()
                         print(f"Final position: ({self.current_pos[0]:.2f}, {self.current_pos[1]:.2f})")
                         print(f"Origin: ({self.start_pos[0]:.2f}, {self.start_pos[1]:.2f})")
                         print(f"Distance error: {dist_to_origin:.2f}m")
+
+                        # Compare wall signature to detect drift
+                        if self.origin_wall_signature:
+                            print(f"\n[DRIFT CHECK] Comparing wall signatures:")
+                            print(f"  Original: {[f'{d:.2f}' for d in self.origin_wall_signature]}")
+                            print(f"  Current:  {[f'{d:.2f}' for d in sectors]}")
+                            drift_errors = []
+                            for i, (orig, curr) in enumerate(zip(self.origin_wall_signature, sectors)):
+                                if orig > 0.1 and curr > 0.1:  # Both valid
+                                    drift_errors.append(abs(orig - curr))
+                            if drift_errors:
+                                avg_drift = sum(drift_errors) / len(drift_errors)
+                                max_drift = max(drift_errors)
+                                print(f"  Avg drift: {avg_drift:.2f}m, Max drift: {max_drift:.2f}m")
+
                         print(f"{'=' * 55}\n")
                         break
+
+                    # Check if origin drifted behind a wall (SLAM drift)
+                    # Only trigger when VERY close (<20cm) but blocked - don't give up at 50cm!
+                    # Must be heading directly to origin (no more waypoints)
+                    if (dist_to_origin < 0.20 and
+                        self.goal_point == self.start_pos and
+                        (not self.return_path or self.return_waypoint_idx >= len(self.return_path))):
+
+                        # Check if origin is behind a wall
+                        origin_cell = self._pos_to_cell(self.start_pos[0], self.start_pos[1])
+                        if origin_cell in self.scan_ends:
+                            # Origin cell is marked as a wall - SLAM drifted
+                            print(f"\n\n{'=' * 55}")
+                            print(f"[{time.time() - self.start_time:.1f}s] MISSION COMPLETE!")
+                            print(f"{'=' * 55}")
+                            print(f"Origin appears to have drifted behind a wall (SLAM drift)")
+                            print(f"Finishing at closest safe position.")
+                            print(f"Final position: ({self.current_pos[0]:.2f}, {self.current_pos[1]:.2f})")
+                            print(f"Origin: ({self.start_pos[0]:.2f}, {self.start_pos[1]:.2f})")
+                            print(f"Distance error: {dist_to_origin:.2f}m")
+                            print(f"{'=' * 55}\n")
+                            break
+
+                        # Also check if there's a wall directly in front blocking path to origin
+                        if front_min < 0.20:
+                            # Very close to origin but wall in front - likely drift
+                            print(f"\n\n{'=' * 55}")
+                            print(f"[{time.time() - self.start_time:.1f}s] MISSION COMPLETE!")
+                            print(f"{'=' * 55}")
+                            print(f"Wall blocking final approach to origin (likely SLAM drift)")
+                            print(f"Finishing at current position.")
+                            print(f"Final position: ({self.current_pos[0]:.2f}, {self.current_pos[1]:.2f})")
+                            print(f"Origin: ({self.start_pos[0]:.2f}, {self.start_pos[1]:.2f})")
+                            print(f"Distance error: {dist_to_origin:.2f}m")
+                            print(f"{'=' * 55}\n")
+                            break
 
                     # Check if current waypoint reached
                     if self.return_path and self.return_waypoint_idx < len(self.return_path):
@@ -1003,16 +1375,160 @@ rclpy.shutdown()
                     if dist_to_origin < self.return_last_dist - 0.1:
                         self.return_last_dist = dist_to_origin
 
+                    # === Area-based progress tracking ===
+                    # Check if robot is staying in same area without making progress toward origin
+                    now = time.time()
+                    if self.return_area_center is None:
+                        # Initialize area tracking
+                        self.return_area_center = self.current_pos
+                        self.return_area_time = now
+                        self.return_area_best_dist = dist_to_origin
+                    else:
+                        # Check if we've left the area
+                        dist_from_area_center = math.sqrt(
+                            (self.current_pos[0] - self.return_area_center[0])**2 +
+                            (self.current_pos[1] - self.return_area_center[1])**2
+                        )
+
+                        if dist_from_area_center > self.return_area_radius:
+                            # Left the area - reset tracking
+                            self.return_area_center = self.current_pos
+                            self.return_area_time = now
+                            self.return_area_best_dist = dist_to_origin
+                        else:
+                            # Still in same area - track best distance
+                            if dist_to_origin < self.return_area_best_dist - 0.1:
+                                # Made progress toward origin
+                                self.return_area_best_dist = dist_to_origin
+                                self.return_area_time = now  # Reset timer on progress
+
+                            # Check if we've been in this area too long without progress
+                            time_in_area = now - self.return_area_time
+                            if time_in_area > self.return_area_timeout:
+                                elapsed_total = now - self.start_time
+                                print(f"\n[{elapsed_total:5.1f}s] [A*] No progress in {time_in_area:.1f}s (stayed within {self.return_area_radius}m), replanning...")
+                                print(f"[A*] Area center: ({self.return_area_center[0]:.2f},{self.return_area_center[1]:.2f}), "
+                                      f"best_dist={self.return_area_best_dist:.2f}m, current_dist={dist_to_origin:.2f}m")
+
+                                # Mark current waypoint and surrounding cells as unreachable
+                                # If we've already failed at this cell, expand the blocked area
+                                if self.return_path and self.return_waypoint_idx < len(self.return_path):
+                                    failed_wp = self.return_path[self.return_waypoint_idx]
+                                    failed_cell = self._pos_to_cell(failed_wp[0], failed_wp[1])
+
+                                    # Check if we've already failed here before
+                                    if failed_cell in self.unreachable_cells:
+                                        # Expand blocked area - mark all adjacent cells too
+                                        print(f"[A*] Cell {failed_cell} already unreachable, EXPANDING blocked area")
+                                        for dx in range(-2, 3):
+                                            for dy in range(-2, 3):
+                                                expanded_cell = (failed_cell[0] + dx, failed_cell[1] + dy)
+                                                self.unreachable_cells[expanded_cell] = now
+                                        print(f"[A*] Blocked 5x5 area around ({failed_wp[0]:.2f},{failed_wp[1]:.2f})")
+                                    else:
+                                        self.unreachable_cells[failed_cell] = now
+                                        print(f"[A*] Marked waypoint ({failed_wp[0]:.2f},{failed_wp[1]:.2f}) cell {failed_cell} as UNREACHABLE")
+
+                                # Update obstacles and replan
+                                self._update_obstacles_from_lidar(scan)
+                                self._backup(sectors, scan)
+                                self.backups += 1
+
+                                # Reset area tracking
+                                self.return_area_center = self.current_pos
+                                self.return_area_time = now
+                                self.return_area_best_dist = dist_to_origin
+
+                                # Track repeated replans at same distance - indicates SLAM drift
+                                if abs(dist_to_origin - self.return_last_replan_dist) < 0.3:
+                                    self.return_replan_count += 1
+                                    print(f"[A*] Replan #{self.return_replan_count} at similar distance ({dist_to_origin:.2f}m)")
+                                else:
+                                    # Made progress, reset counter
+                                    self.return_replan_count = 1
+                                self.return_last_replan_dist = dist_to_origin
+
+                                # Give up if too many replans without progress - likely SLAM drift
+                                if self.return_replan_count >= self.return_replan_max:
+                                    print(f"\n\n{'=' * 55}")
+                                    print(f"[{now - self.start_time:.1f}s] MISSION COMPLETE!")
+                                    print(f"{'=' * 55}")
+                                    print(f"Cannot reach origin after {self.return_replan_count} attempts (likely SLAM drift)")
+                                    print(f"Finishing at closest reachable position.")
+                                    print(f"Final position: ({self.current_pos[0]:.2f}, {self.current_pos[1]:.2f})")
+                                    print(f"Origin: ({self.start_pos[0]:.2f}, {self.start_pos[1]:.2f})")
+                                    print(f"Distance error: {dist_to_origin:.2f}m")
+                                    print(f"{'=' * 55}\n")
+                                    break
+
+                                # Replan
+                                self.return_path = self._plan_path_astar(self.current_pos, self.start_pos)
+                                self.return_waypoint_idx = 0
+                                self.return_last_progress_time = now
+                                if self.return_path:
+                                    print(f"[A*] Replanned with {len(self.return_path)} waypoints")
+                                    with self._goal_lock:
+                                        self.goal_point = self.return_path[0]
+                                else:
+                                    print(f"[A*] Replan failed, using direct navigation")
+                                    with self._goal_lock:
+                                        self.goal_point = self.start_pos
+                                continue
+
                     # Check if stuck (no significant movement OR rotation for too long)
                     time_since_progress = time.time() - self.return_last_progress_time
                     if time_since_progress > self.return_stuck_threshold:
                         elapsed_total = time.time() - self.start_time
                         print(f"\n[{elapsed_total:5.1f}s] [A*] Stuck for {time_since_progress:.1f}s (no movement/rotation), replanning...")
+
+                        # Mark the current waypoint as unreachable so A* won't route through it again
+                        # If already unreachable, expand the blocked area
+                        if self.return_path and self.return_waypoint_idx < len(self.return_path):
+                            failed_wp = self.return_path[self.return_waypoint_idx]
+                            failed_cell = self._pos_to_cell(failed_wp[0], failed_wp[1])
+
+                            if failed_cell in self.unreachable_cells:
+                                # Already failed here - expand blocked area
+                                print(f"[A*] Cell {failed_cell} already unreachable, EXPANDING blocked area")
+                                for dx in range(-2, 3):
+                                    for dy in range(-2, 3):
+                                        expanded_cell = (failed_cell[0] + dx, failed_cell[1] + dy)
+                                        self.unreachable_cells[expanded_cell] = time.time()
+                                print(f"[A*] Blocked 5x5 area around ({failed_wp[0]:.2f},{failed_wp[1]:.2f})")
+                            else:
+                                self.unreachable_cells[failed_cell] = time.time()
+                                print(f"[A*] Marked waypoint ({failed_wp[0]:.2f},{failed_wp[1]:.2f}) cell {failed_cell} as UNREACHABLE")
+
+                        # Update scan_ends with current LiDAR obstacles
+                        # This ensures A* knows about obstacles we're seeing now
+                        self._update_obstacles_from_lidar(scan)
+
                         self._backup(sectors, scan)
                         self.backups += 1
                         self.return_last_progress_time = time.time()
                         self.return_last_pos = self.current_pos  # Reset position tracking after backup
                         self.return_last_heading = self.current_heading  # Reset heading tracking after backup
+
+                        # Track repeated replans at same distance
+                        if abs(dist_to_origin - self.return_last_replan_dist) < 0.3:
+                            self.return_replan_count += 1
+                            print(f"[A*] Replan #{self.return_replan_count} at similar distance ({dist_to_origin:.2f}m)")
+                        else:
+                            self.return_replan_count = 1
+                        self.return_last_replan_dist = dist_to_origin
+
+                        # Give up if too many replans
+                        if self.return_replan_count >= self.return_replan_max:
+                            print(f"\n\n{'=' * 55}")
+                            print(f"[{time.time() - self.start_time:.1f}s] MISSION COMPLETE!")
+                            print(f"{'=' * 55}")
+                            print(f"Cannot reach origin after {self.return_replan_count} attempts (likely SLAM drift)")
+                            print(f"Finishing at closest reachable position.")
+                            print(f"Final position: ({self.current_pos[0]:.2f}, {self.current_pos[1]:.2f})")
+                            print(f"Origin: ({self.start_pos[0]:.2f}, {self.start_pos[1]:.2f})")
+                            print(f"Distance error: {dist_to_origin:.2f}m")
+                            print(f"{'=' * 55}\n")
+                            break
 
                         # Replan path from current position
                         self.return_path = self._plan_path_astar(self.current_pos, self.start_pos)
@@ -1079,8 +1595,6 @@ rclpy.shutdown()
                     need_new_goal = True
                     reason = "reached"
                     self.goals_reached += 1
-                    # Clear blocked directions on success - we made it through
-                    self.blocked_directions.clear()
                 elif self._goal_blocked(sectors):
                     # Don't select new goal - keep current goal and try to navigate around
                     goal_blocked = True
@@ -1117,9 +1631,11 @@ rclpy.shutdown()
                         self.goal_initial_dist = dist  # Store initial distance for timeout calc
                         self.goal_timeout_extended = False  # Reset extension flag
                         self.consecutive_no_goal = 0  # Reset failure counter on success
-                        # Reset DRIVE mode stuck detection for new goal
-                        self.drive_mode_start_time = 0
-                        self.drive_mode_start_dist = 0
+                        self.drive_goal_dist_history.clear()  # Reset DRIVE stuck detection
+
+                        # Track for drive accuracy
+                        self.goal_start_pos = self.current_pos
+                        self.drive_ideal_distance += dist
 
                         # Publish goal marker to RViz (green sphere)
                         publish_goal_marker(new_goal[0], new_goal[1])
@@ -1166,46 +1682,16 @@ rclpy.shutdown()
                         v, w = self._compute_blocked_turn(sectors)
                         status_mode = "TURN"
 
-                        # Record blocked direction for goal selection penalty
-                        dx = self.goal_point[0] - self.current_pos[0]
-                        dy = self.goal_point[1] - self.current_pos[1]
-                        goal_world_angle = math.atan2(dy, dx)
-                        goal_robot_angle = self._normalize_angle(goal_world_angle - self.current_heading)
-                        blocked_sector = self._angle_to_sector(goal_robot_angle)
-
                         # Track time spent in TURN mode - if too long, force backup
                         if not self.was_in_turn_mode:
                             self.turn_mode_start_time = time.time()
                             self.turn_mode_positions = []  # Track positions during TURN mode
                             self.was_in_turn_mode = True
-
-                            # Record this blocked direction
-                            now = time.time()
-                            if blocked_sector in self.blocked_directions:
-                                count, last_time = self.blocked_directions[blocked_sector]
-                                if now - last_time < self.blocked_direction_memory:
-                                    self.blocked_directions[blocked_sector] = (count + 1, now)
-                                else:
-                                    self.blocked_directions[blocked_sector] = (1, now)
-                            else:
-                                self.blocked_directions[blocked_sector] = (1, now)
-
                             # Debug: Print why we're entering TURN mode
                             elapsed_total = time.time() - self.start_time
-                            block_count = self.blocked_directions[blocked_sector][0]
-                            print(f"\n[{elapsed_total:5.1f}s] [TURN ENTER] Entering TURN mode (sector {blocked_sector} blocked {block_count}x)")
+                            print(f"\n[{elapsed_total:5.1f}s] [TURN ENTER] Entering TURN mode")
                             self._goal_blocked(sectors, debug=True)
                             self._compute_blocked_turn(sectors, debug=True)
-
-                            # If this direction has been blocked too many times, abandon goal
-                            if block_count >= self.blocked_direction_threshold:
-                                print(f"[BLOCKED DIR] Sector {blocked_sector} blocked {block_count}x - abandoning goal, backing up")
-                                self._backup_toward_clear_side(sectors)
-                                self.backups += 1
-                                self.was_in_turn_mode = False
-                                with self._goal_lock:
-                                    self.goal_point = None
-                                continue
                         else:
                             # Track position during TURN mode
                             if hasattr(self, 'turn_mode_positions'):
@@ -1256,77 +1742,75 @@ rclpy.shutdown()
                         status_mode = "DRIVE"
                         self.was_in_turn_mode = False
 
-                        # DRIVE mode stuck detection - check if we're making progress
+                        # DRIVE mode stuck detection - sliding window on goal distance
+                        # Only check when actually driving forward (v > 0), not rotating
+                        now = time.time()
                         goal_dist = math.sqrt((self.goal_point[0] - self.current_pos[0])**2 +
                                              (self.goal_point[1] - self.current_pos[1])**2)
-                        now = time.time()
 
-                        # Initialize on first DRIVE iteration for this goal
-                        if self.drive_mode_start_time == 0 or self.drive_mode_start_dist == 0:
-                            self.drive_mode_start_time = now
-                            self.drive_mode_start_dist = goal_dist
-                            self.drive_mode_last_progress_time = now
-                            self.drive_mode_last_dist = goal_dist
+                        if v > 0.01:
+                            # Add current reading to history
+                            self.drive_goal_dist_history.append((now, goal_dist))
 
-                        # Check if we're making progress (getting closer to goal)
-                        progress = self.drive_mode_last_dist - goal_dist
-                        if progress > self.drive_mode_progress_threshold:
-                            # Made progress - update tracking
-                            self.drive_mode_last_progress_time = now
-                            self.drive_mode_last_dist = goal_dist
+                            # Remove readings older than the window
+                            cutoff = now - self.drive_stuck_window
+                            self.drive_goal_dist_history = [(t, d) for t, d in self.drive_goal_dist_history if t >= cutoff]
 
-                        # Check if stuck (no progress for too long)
-                        time_without_progress = now - self.drive_mode_last_progress_time
-                        if time_without_progress > self.drive_mode_stuck_timeout:
-                            elapsed_total = time.time() - self.start_time
-                            total_progress = self.drive_mode_start_dist - goal_dist
-                            print(f"\n[{elapsed_total:5.1f}s] [DRIVE STUCK] No progress for {time_without_progress:.1f}s")
-                            print(f"[DRIVE STUCK] Started at dist={self.drive_mode_start_dist:.2f}m, "
-                                  f"now={goal_dist:.2f}m, total_progress={total_progress:.2f}m")
-                            print(f"[DRIVE STUCK] front_min={front_min:.2f}m, v={v:.2f}, w={w:.2f}")
-                            print(f"[DRIVE STUCK] Front sectors: ", end="")
-                            for s in SECTORS_FRONT_ARC:
-                                print(f"s{s}={sectors[s]:.2f} ", end="")
-                            print()
+                            # Check if we have enough history (at least 5 seconds of data)
+                            if len(self.drive_goal_dist_history) >= 2:
+                                oldest_time, oldest_dist = self.drive_goal_dist_history[0]
+                                time_span = now - oldest_time
 
-                            # Record this as a blocked direction
-                            dx = self.goal_point[0] - self.current_pos[0]
-                            dy = self.goal_point[1] - self.current_pos[1]
-                            goal_world_angle = math.atan2(dy, dx)
-                            goal_robot_angle = self._normalize_angle(goal_world_angle - self.current_heading)
-                            blocked_sector = self._angle_to_sector(goal_robot_angle)
+                                # Only check if we have at least 5 seconds of data
+                                if time_span >= 5.0:
+                                    # Check if goal distance changed significantly
+                                    dist_change = abs(oldest_dist - goal_dist)
 
-                            if blocked_sector in self.blocked_directions:
-                                count, _ = self.blocked_directions[blocked_sector]
-                                self.blocked_directions[blocked_sector] = (count + 1, now)
-                            else:
-                                self.blocked_directions[blocked_sector] = (1, now)
-                            print(f"[DRIVE STUCK] Marking sector {blocked_sector} as blocked")
+                                    if dist_change < self.drive_stuck_margin:
+                                        # Goal distance not changing - robot is stuck
+                                        elapsed_total = time.time() - self.start_time
+                                        print(f"\n[{elapsed_total:5.1f}s] [DRIVE STUCK] Goal distance unchanged for {time_span:.1f}s")
+                                        print(f"[DRIVE STUCK] dist_oldest={oldest_dist:.2f}m, "
+                                              f"dist_now={goal_dist:.2f}m, change={dist_change:.2f}m < margin={self.drive_stuck_margin:.2f}m")
+                                        print(f"[DRIVE STUCK] Front sectors: ", end="")
+                                        for s in SECTORS_FRONT_ARC:
+                                            print(f"s{s}={sectors[s]:.2f} ", end="")
+                                        print()
 
-                            # Backup and abandon goal
-                            self._backup_toward_clear_side(sectors)
-                            self.backups += 1
-                            with self._goal_lock:
-                                self.goal_point = None
-                            # Reset drive mode tracking
-                            self.drive_mode_start_time = 0
-                            self.drive_mode_start_dist = 0
-                            continue
+                                        # Mark front sectors as blocked for 30 seconds
+                                        block_expire = now + 30.0
+                                        for s in SECTORS_FRONT_ARC:
+                                            self.blocked_sectors[s] = block_expire
+                                        print(f"[DRIVE STUCK] Marked front sectors {list(SECTORS_FRONT_ARC)} as blocked for 30s")
+
+                                        # Backup toward clearer side
+                                        self._backup_toward_clear_side(sectors)
+                                        self.backups += 1
+
+                                        with self._goal_lock:
+                                            self.goal_point = None
+                                        # Clear history
+                                        self.drive_goal_dist_history.clear()
+                                        continue
+                        else:
+                            # Not driving forward (rotating) - don't add to history but don't clear it
+                            pass
 
                     # Apply velocity ramping for smooth acceleration (Fix 1)
                     v, w = self._ramp_velocity(v, w)
                     send_velocity_cmd(v, w)
 
-                    # Status
-                    if not goal_blocked:
-                        # goal_dist already calculated above for DRIVE mode
-                        pass
-                    else:
-                        goal_dist = math.sqrt((self.goal_point[0] - self.current_pos[0])**2 +
-                                             (self.goal_point[1] - self.current_pos[1])**2)
+                    # Update drive accuracy tracking
+                    if self.goal_start_pos and self.goal_point:
+                        self._update_drive_accuracy(self.goal_start_pos, self.goal_point)
+
+                    # Status with drive accuracy
+                    goal_dist = math.sqrt((self.goal_point[0] - self.current_pos[0])**2 +
+                                         (self.goal_point[1] - self.current_pos[1])**2)
                     pos_str = f"({self.current_pos[0]:.2f},{self.current_pos[1]:.2f})"
                     goal_str = f"({self.goal_point[0]:.2f},{self.goal_point[1]:.2f})"
-                    status = f"[{self.iteration:3d}] {status_mode} goal={goal_str} dist={goal_dist:.2f}m front={front_min:.2f}m cells={len(self.visited)}"
+                    rms_cm = self._get_drive_rms_error() * 100
+                    status = f"[{self.iteration:3d}] {status_mode} goal={goal_str} dist={goal_dist:.2f}m front={front_min:.2f}m cells={len(self.visited)} rms={rms_cm:.1f}cm"
                     print(f"\r{status}", end="", flush=True)
 
                 time.sleep(0.1)
@@ -1339,6 +1823,8 @@ rclpy.shutdown()
             self._stop_marker_thread()
             self._stop_origin_marker()
             self._print_stats()
+            self._save_map()
+            self._cleanup_logging()
 
     def _select_goal_point(self, sectors: List[float], raw_scan: List[float] = None) -> Tuple[Optional[Tuple[float, float]], Optional[int]]:
         """
@@ -1352,8 +1838,6 @@ rclpy.shutdown()
 
         Uses adaptive angular refinement: if <5 candidates found, resample
         with 5x more angles. Repeat until ≥5 candidates or max refinement reached.
-
-        Fallback: If no candidates found after max refinement, try smaller distances.
 
         Returns: (goal_point, goal_sector) or (None, None)
         """
@@ -1369,94 +1853,88 @@ rclpy.shutdown()
         angle_start = -150.0 * math.pi / 180.0  # -150° = right-back
         angle_end = 150.0 * math.pi / 180.0     # +150° = left-back
 
-        # Distance ranges to try - start with normal range, fall back to smaller
-        # Normal: 0.5-2.0m, Fallback 1: 0.3-1.0m, Fallback 2: 0.25-0.5m
-        distance_configs = [
-            (self.min_goal_dist, self.max_goal_dist),  # Normal: 0.5-2.0m
-            (0.3, 1.0),   # Fallback 1: shorter range
-            (0.25, 0.5),  # Fallback 2: very short range for tight spaces
-        ]
+        # Generate equally spaced distances from min to max goal distance
+        num_distances = 4
+        dist_step = (self.max_goal_dist - self.min_goal_dist) / (num_distances - 1)
+        candidate_distances = [self.min_goal_dist + i * dist_step for i in range(num_distances)]
 
-        for dist_config_idx, (min_dist, max_dist) in enumerate(distance_configs):
-            # Generate equally spaced distances for this config
-            num_distances = 4
-            if max_dist > min_dist:
-                dist_step = (max_dist - min_dist) / (num_distances - 1)
-                candidate_distances = [min_dist + i * dist_step for i in range(num_distances)]
-            else:
-                candidate_distances = [min_dist]
+        # Adaptive angular refinement parameters
+        min_candidates = 5       # Minimum candidates we want
+        min_best_score = 20.0    # Minimum acceptable best score before refining
+        base_num_angles = 50     # Starting number of angles (finer: 300°/50 = 6° per step)
+        refinement_factor = 3    # Multiply angles by this factor each iteration
+        max_refinements = 3      # Max iterations (50 -> 150 -> 450 -> 1350)
 
-            # Adaptive angular refinement parameters
-            min_candidates = 5       # Minimum candidates we want
-            base_num_angles = 25     # Starting number of angles
-            refinement_factor = 5    # Multiply angles by this factor each iteration
-            max_refinements = 3      # Max iterations (25 -> 125 -> 625 -> 3125)
+        candidates = []
+        num_angles = base_num_angles
+        refinement_level = 0
 
-            candidates = []
-            num_angles = base_num_angles
-            refinement_level = 0
+        # Keep refining until we have enough good candidates or hit max refinements
+        # Refine if: not enough candidates OR best score is too low
+        def should_refine():
+            if len(candidates) < min_candidates:
+                return True
+            # Check if best score is too low - might be missing better options
+            if candidates:
+                best = max(c[0] for c in candidates)
+                if best < min_best_score:
+                    return True
+            return False
 
-            # Keep refining until we have enough candidates or hit max refinements
-            while len(candidates) < min_candidates and refinement_level <= max_refinements:
-                if refinement_level > 0:
-                    # Only show message if we're actually refining
-                    elapsed_total = time.time() - self.start_time if self.start_time > 0 else 0
-                    print(f"\n[{elapsed_total:5.1f}s] [REFINE] Only {len(candidates)} candidates, "
-                          f"resampling with {num_angles} angles (level {refinement_level})")
-                    candidates = []  # Clear previous candidates for fresh sampling
+        while should_refine() and refinement_level <= max_refinements:
+            if refinement_level > 0:
+                # Only show message if we're actually refining
+                elapsed_total = time.time() - self.start_time if self.start_time > 0 else 0
+                best_so_far = max(c[0] for c in candidates) if candidates else -999
+                reason = f"only {len(candidates)} candidates" if len(candidates) < min_candidates else f"best score {best_so_far:.1f} < {min_best_score}"
+                print(f"\n[{elapsed_total:5.1f}s] [REFINE] {reason}, "
+                      f"resampling with {num_angles} angles (level {refinement_level})")
+                candidates = []  # Clear previous candidates for fresh sampling
 
-                angle_step = (angle_end - angle_start) / (num_angles - 1)
+            angle_step = (angle_end - angle_start) / (num_angles - 1)
 
-                for angle_idx in range(num_angles):
-                    # Robot-frame angle for this candidate direction
-                    robot_angle = angle_start + angle_idx * angle_step
-                    world_angle = self.current_heading + robot_angle
+            for angle_idx in range(num_angles):
+                # Robot-frame angle for this candidate direction
+                robot_angle = angle_start + angle_idx * angle_step
+                world_angle = self.current_heading + robot_angle
 
-                    # Find which sector this angle falls into for obstacle checking
-                    sector_idx = self._angle_to_sector(robot_angle)
-                    sector_dist = sectors[sector_idx]
+                # Find which sector this angle falls into for obstacle checking
+                sector_idx = self._angle_to_sector(robot_angle)
+                sector_dist = sectors[sector_idx]
 
-                    # Use current distance config for filtering
-                    if sector_dist < min_dist + 0.1:
-                        # Direction too blocked for this distance config
+                if sector_dist < self.min_goal_dist + 0.1:
+                    # Direction too blocked
+                    continue
+
+                # Don't place goal at the wall - leave larger margin for safety
+                max_dist = min(sector_dist - 0.5, self.max_goal_dist)
+
+                for dist in candidate_distances:
+                    if dist > max_dist:
                         continue
 
-                    # Don't place goal at the wall - leave margin for safety
-                    local_max_dist = min(sector_dist - 0.3, max_dist)
+                    # Calculate world position of candidate point
+                    px = self.current_pos[0] + dist * math.cos(world_angle)
+                    py = self.current_pos[1] + dist * math.sin(world_angle)
 
-                    for dist in candidate_distances:
-                        if dist > local_max_dist:
-                            continue
+                    # FILTER: Skip points that are directly ON a known wall cell
+                    point_cell = self._pos_to_cell(px, py)
+                    if self.scan_ends.get(point_cell, 0) > 0:
+                        continue  # Discard - this is a wall cell
 
-                        # Calculate world position of candidate point
-                        px = self.current_pos[0] + dist * math.cos(world_angle)
-                        py = self.current_pos[1] + dist * math.sin(world_angle)
+                    # FILTER: Check angular opening (not just single ray)
+                    # Require 10° opening on each side to filter narrow slits and noise
+                    if raw_scan and not self._check_angular_opening(raw_scan, robot_angle, dist + 0.2, min_opening_deg=10.0):
+                        continue  # Discard - narrow slit or noise, robot can't fit
 
-                        # FILTER: Skip points that are directly ON a known wall cell
-                        point_cell = self._pos_to_cell(px, py)
-                        if self.scan_ends.get(point_cell, 0) > 0:
-                            continue  # Discard - this is a wall cell
+                    # Score this viewpoint with detailed breakdown
+                    score, breakdown = self._score_viewpoint_debug(px, py, sector_idx, dist, sectors)
+                    angle_deg = int(robot_angle * 180 / math.pi)
+                    candidates.append((score, angle_deg, dist, px, py, breakdown))
 
-                        # FILTER: Check angular opening (not just single ray)
-                        # Require 10° opening on each side to filter narrow slits and noise
-                        if raw_scan and not self._check_angular_opening(raw_scan, robot_angle, dist + 0.2, min_opening_deg=10.0):
-                            continue  # Discard - narrow slit or noise, robot can't fit
-
-                        # Score this viewpoint with detailed breakdown
-                        score, breakdown = self._score_viewpoint_debug(px, py, sector_idx, dist, sectors)
-                        angle_deg = int(robot_angle * 180 / math.pi)
-                        candidates.append((score, angle_deg, dist, px, py, breakdown))
-
-                # Prepare for next refinement if needed
-                refinement_level += 1
-                num_angles *= refinement_factor
-
-            # If we found candidates with this distance config, use them
-            if candidates:
-                if dist_config_idx > 0:
-                    elapsed_total = time.time() - self.start_time if self.start_time > 0 else 0
-                    print(f"\n[{elapsed_total:5.1f}s] [FALLBACK] Using shorter distance range {min_dist:.2f}-{max_dist:.2f}m")
-                break  # Exit distance config loop - we have candidates
+            # Prepare for next refinement if needed
+            refinement_level += 1
+            num_angles *= refinement_factor
 
         # Find best candidate
         best_point = None
@@ -1479,10 +1957,11 @@ rclpy.shutdown()
                   f"(scanned={len(self.scanned)} walls={len(self.scan_ends)} visited={len(self.visited)}):")
             for i, (score, ang, d, px, py, brk) in enumerate(candidates[:8]):
                 marker = " <-- BEST" if i == 0 else ""
-                blk_str = f" B={brk['blocked']:+.1f}" if brk.get('blocked', 0) != 0 else ""
+                blk = f" B={brk.get('blocked', 0):+.1f}" if brk.get('blocked', 0) != 0 else ""
+                bkt = f" T={brk.get('backtrack', 0):+.1f}" if brk.get('backtrack', 0) != 0 else ""
                 print(f"  #{i+1} ang={ang:+4d}° d={d:.2f}m pos=({px:.2f},{py:.2f}) "
                       f"score={score:+.1f} [O={brk['open']:+.1f} U={brk['unscan']:+.1f} "
-                      f"V={brk['visited']:+.1f} W={brk['wall']:+.1f} R={brk['recent']:+.1f} F={brk['fwd']:+.1f}{blk_str}]{marker}")
+                      f"V={brk['visited']:+.1f} W={brk['wall']:+.1f} R={brk['recent']:+.1f} F={brk['fwd']:+.1f}{blk}{bkt}]{marker}")
 
         # Record this goal to prevent cycling back
         if best_point:
@@ -1623,10 +2102,21 @@ rclpy.shutdown()
         visit_time = self.visited.get(point_cell, 0)
         if visit_time > 0:
             time_since_visit = now - visit_time
-            decay_rate = 0.05  # Decay constant: penalty halves every ~14 seconds
+            decay_rate = 0.03  # SLOWER decay: penalty lasts longer
             decay_factor = math.exp(-decay_rate * time_since_visit)
-            # Base penalty of 8.0, decays over time
-            visited_penalty = 8.0 * decay_factor
+            # INCREASED base penalty of 15.0 - strongly discourage revisiting
+            visited_penalty = 15.0 * decay_factor
+        # Also check neighboring cells - penalize being NEAR visited areas
+        for dx in [-1, 0, 1]:
+            for dy in [-1, 0, 1]:
+                if dx == 0 and dy == 0:
+                    continue
+                neighbor = (point_cell[0] + dx, point_cell[1] + dy)
+                neighbor_visit = self.visited.get(neighbor, 0)
+                if neighbor_visit > 0:
+                    time_since = now - neighbor_visit
+                    decay = math.exp(-0.03 * time_since)
+                    visited_penalty += 3.0 * decay  # Lighter penalty for neighbors
         breakdown['visited'] = -visited_penalty
 
         # === Factor 6: DISTANCE EFFICIENCY ===
@@ -1636,7 +2126,7 @@ rclpy.shutdown()
         # Prefer continuing in the direction we were heading, not backtracking
         # This prevents oscillating between areas
         fwd_bonus = 0.0
-        if self.goal_point and self.start_pos:
+        if self.start_pos:
             # Direction from start to current position (overall exploration direction)
             explore_dx = self.current_pos[0] - self.start_pos[0]
             explore_dy = self.current_pos[1] - self.start_pos[1]
@@ -1657,35 +2147,115 @@ rclpy.shutdown()
                     # Dot product: +1 = same direction, -1 = opposite
                     dot = explore_dx * cand_dx + explore_dy * cand_dy
 
-                    # Bonus for forward, penalty for backward
-                    # dot=1 -> +5, dot=0 -> 0, dot=-1 -> -5
-                    fwd_bonus = dot * 5.0
+                    # Stronger bonus for forward, penalty for backward
+                    # dot=1 -> +15, dot=0 -> 0, dot=-1 -> -15
+                    # This needs to be strong enough to overcome unscanned bonus
+                    fwd_bonus = dot * 15.0
 
         breakdown['fwd'] = fwd_bonus
 
-        # === Factor 8: BLOCKED DIRECTION PENALTY ===
-        # Heavily penalize directions that have been repeatedly blocked recently
-        blocked_penalty = 0.0
-        now = time.time()
-        # Clean up old blocked directions
-        for sector in list(self.blocked_directions.keys()):
-            count, last_time = self.blocked_directions[sector]
-            if now - last_time > self.blocked_direction_memory:
-                del self.blocked_directions[sector]
+        # === Factor 7b: ALREADY VISITED AREA PENALTY ===
+        # Strong penalty for selecting goals in areas we've recently been
+        # This prevents going back to where we just came from
+        backtrack_penalty = 0.0
+        for visited_cell, visit_time in self.visited.items():
+            # Check if candidate is close to a visited cell
+            visited_wx = (visited_cell[0] + 0.5) * self.grid_res
+            visited_wy = (visited_cell[1] + 0.5) * self.grid_res
+            dist_to_visited = math.sqrt((px - visited_wx)**2 + (py - visited_wy)**2)
 
-        # Check if this direction has been blocked
-        # Check candidate sector and neighbors (±1 sector = ±6°)
-        for offset in range(-1, 2):
-            check_sector = (sector_idx + offset) % NUM_SECTORS
-            if check_sector in self.blocked_directions:
-                count, last_time = self.blocked_directions[check_sector]
-                # Exponential penalty based on block count
-                # 1 block = -5, 2 blocks = -15, 3+ blocks = -30
-                blocked_penalty += min(30.0, 5.0 * count * count)
+            # If candidate is within 0.5m of a visited cell, penalize based on recency
+            if dist_to_visited < 0.5:
+                time_since_visit = now - visit_time
+                if time_since_visit < 60:  # Visited in last 60 seconds
+                    # Recent visits get higher penalty
+                    recency_factor = 1.0 - (time_since_visit / 60.0)
+                    backtrack_penalty += recency_factor * 10.0
+
+        breakdown['backtrack'] = -min(backtrack_penalty, 25.0)  # Cap at -25
+
+        # === Factor 8: BLOCKED SECTOR PENALTY ===
+        # Heavily penalize goals in sectors that are currently blocked
+        # (marked after DRIVE stuck detection found an impassable obstacle)
+        blocked_penalty = 0.0
+        if sector_idx in self.blocked_sectors:
+            if now < self.blocked_sectors[sector_idx]:
+                # Sector still blocked - heavy penalty
+                blocked_penalty = 50.0
+            else:
+                # Block expired - remove it
+                del self.blocked_sectors[sector_idx]
+        # Also check adjacent sectors (obstacles span multiple sectors)
+        for adj in [-1, 1, -2, 2]:
+            adj_sector = (sector_idx + adj) % NUM_SECTORS
+            if adj_sector in self.blocked_sectors:
+                if now < self.blocked_sectors[adj_sector]:
+                    blocked_penalty += 25.0  # Lighter penalty for adjacent
+                else:
+                    del self.blocked_sectors[adj_sector]
         breakdown['blocked'] = -blocked_penalty
 
         total = sum(breakdown.values())
         return total, breakdown
+
+    def _update_obstacles_from_lidar(self, raw_scan: List[float]):
+        """
+        Update scan_ends with obstacles detected by current LiDAR scan.
+
+        Called when robot gets stuck during return - adds any close obstacles
+        to the map so A* can route around them.
+        """
+        if not self.current_pos or self.current_heading is None:
+            print(f"[LIDAR UPDATE] Skipped - no position/heading")
+            return
+
+        if not raw_scan:
+            print(f"[LIDAR UPDATE] Skipped - no scan data")
+            return
+
+        now = time.time()
+        n_points = len(raw_scan)
+        lidar_rotation_rad = 3 * (2 * math.pi / 12)  # 90° offset
+        angle_per_point = 2 * math.pi / n_points
+
+        walls_before = len(self.scan_ends)
+        new_walls = 0
+        new_wall_cells = []
+
+        for i, dist in enumerate(raw_scan):
+            # Only add close obstacles (< 1m) - these are what's blocking us
+            if not (0.1 < dist < 1.0):
+                continue
+
+            lidar_angle = i * angle_per_point
+            robot_angle = lidar_angle + lidar_rotation_rad
+            world_angle = self.current_heading + robot_angle
+
+            # Mark the obstacle cell
+            wall_x = self.current_pos[0] + dist * math.cos(world_angle)
+            wall_y = self.current_pos[1] + dist * math.sin(world_angle)
+            wall_cell = self._pos_to_cell(wall_x, wall_y)
+
+            # NEVER mark visited cells as walls - we've been there!
+            # NEVER mark origin cell as wall - we need to return there!
+            origin_cell = self._pos_to_cell(self.start_pos[0], self.start_pos[1]) if self.start_pos else None
+            if wall_cell not in self.scan_ends and wall_cell not in self.visited and wall_cell != origin_cell:
+                self.scan_ends[wall_cell] = now
+                new_walls += 1
+                new_wall_cells.append((wall_cell, dist))
+
+        if new_walls > 0:
+            print(f"[LIDAR UPDATE] Added {new_walls} new wall cells (total: {walls_before} -> {len(self.scan_ends)})")
+            # Show a sample of new walls for debugging
+            if len(new_wall_cells) <= 5:
+                for cell, dist in new_wall_cells:
+                    print(f"  - Cell {cell} at {dist:.2f}m")
+            else:
+                for cell, dist in new_wall_cells[:3]:
+                    print(f"  - Cell {cell} at {dist:.2f}m")
+                print(f"  ... and {len(new_wall_cells) - 3} more")
+        else:
+            print(f"[LIDAR UPDATE] No new walls (all {walls_before} already known)")
 
     def _record_scan_coverage(self, raw_scan: List[float]):
         """
@@ -1754,7 +2324,11 @@ rclpy.shutdown()
                 wall_x = self.current_pos[0] + dist * math.cos(world_angle)
                 wall_y = self.current_pos[1] + dist * math.sin(world_angle)
                 wall_cell = self._pos_to_cell(wall_x, wall_y)
-                self.scan_ends[wall_cell] = now
+                # NEVER mark visited cells as walls - we've been there!
+                # NEVER mark origin cell as wall - we need to return there!
+                origin_cell = self._pos_to_cell(self.start_pos[0], self.start_pos[1]) if self.start_pos else None
+                if wall_cell not in self.visited and wall_cell != origin_cell:
+                    self.scan_ends[wall_cell] = now
 
     def _check_angular_opening(self, raw_scan: List[float], robot_angle: float,
                                 required_dist: float, min_opening_deg: float = 10.0,
@@ -2275,6 +2849,120 @@ rclpy.shutdown()
             except:
                 pass
 
+    def _setup_output_logging(self):
+        """Setup output directory and logging to file."""
+        # Create output directory with timestamp
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        self.output_dir = os.path.join(base_dir, "outputs", timestamp)
+
+        # Create subdirectories
+        logs_dir = os.path.join(self.output_dir, "logs")
+        maps_dir = os.path.join(self.output_dir, "maps")
+        os.makedirs(logs_dir, exist_ok=True)
+        os.makedirs(maps_dir, exist_ok=True)
+
+        # Setup logging to file
+        log_path = os.path.join(logs_dir, "navigation.log")
+        self.log_file = open(log_path, 'w')
+        self._original_stdout = sys.stdout
+        sys.stdout = TeeLogger(self.log_file)
+
+        print(f"[OUTPUT] Logging to: {self.output_dir}")
+        print(f"[OUTPUT] Log file: {log_path}")
+
+    def _cleanup_logging(self):
+        """Restore stdout and close log file."""
+        if self._original_stdout:
+            sys.stdout = self._original_stdout
+        if self.log_file:
+            self.log_file.close()
+
+    def _save_map(self):
+        """Save the current map to the output directory."""
+        if not self.output_dir:
+            return
+
+        maps_dir = os.path.join(self.output_dir, "maps")
+        try:
+            # Save map using ROS map_saver
+            result = subprocess.run(
+                ['docker', 'exec', CONTAINER_NAME, 'bash', '-c',
+                 'source /opt/ros/humble/setup.bash && cd /tmp && '
+                 'ros2 run nav2_map_server map_saver_cli -f map --ros-args -p save_map_timeout:=10.0'],
+                capture_output=True, text=True, timeout=15
+            )
+
+            if result.returncode == 0:
+                # Copy files from container
+                subprocess.run(['docker', 'cp', f'{CONTAINER_NAME}:/tmp/map.pgm', maps_dir], check=True)
+                subprocess.run(['docker', 'cp', f'{CONTAINER_NAME}:/tmp/map.yaml', maps_dir], check=True)
+
+                # Convert to PNG
+                try:
+                    from PIL import Image
+                    pgm_path = os.path.join(maps_dir, 'map.pgm')
+                    png_path = os.path.join(maps_dir, 'map.png')
+                    img = Image.open(pgm_path)
+                    img.save(png_path)
+                    print(f"[OUTPUT] Map saved to: {maps_dir}")
+                except ImportError:
+                    print(f"[OUTPUT] Map saved (PGM only, PIL not available for PNG conversion)")
+            else:
+                print(f"[OUTPUT] Map save failed: {result.stderr}")
+        except Exception as e:
+            print(f"[OUTPUT] Map save error: {e}")
+
+    def _update_drive_accuracy(self, goal_start: Tuple[float, float], goal_end: Tuple[float, float]):
+        """
+        Update drive accuracy metrics.
+
+        Calculates cross-track error (perpendicular distance from ideal line)
+        and updates cumulative RMS error.
+        """
+        if not self.current_pos or not goal_start:
+            return
+
+        # Calculate cross-track error (perpendicular distance from ideal line)
+        # Line from goal_start to goal_end
+        dx = goal_end[0] - goal_start[0]
+        dy = goal_end[1] - goal_start[1]
+        line_len = math.sqrt(dx*dx + dy*dy)
+
+        if line_len < 0.01:
+            return
+
+        # Perpendicular distance from current position to line
+        # Using formula: |((y2-y1)*x0 - (x2-x1)*y0 + x2*y1 - y2*x1)| / sqrt((y2-y1)^2 + (x2-x1)^2)
+        cross_track_error = abs(
+            dy * self.current_pos[0] - dx * self.current_pos[1] +
+            goal_end[0] * goal_start[1] - goal_end[1] * goal_start[0]
+        ) / line_len
+
+        self.drive_error_sum_sq += cross_track_error ** 2
+        self.drive_error_count += 1
+
+        # Track actual distance traveled
+        if self.last_pos_for_distance:
+            dist_moved = math.sqrt(
+                (self.current_pos[0] - self.last_pos_for_distance[0])**2 +
+                (self.current_pos[1] - self.last_pos_for_distance[1])**2
+            )
+            self.drive_total_distance += dist_moved
+        self.last_pos_for_distance = self.current_pos
+
+    def _get_drive_rms_error(self) -> float:
+        """Get RMS cross-track error."""
+        if self.drive_error_count == 0:
+            return 0.0
+        return math.sqrt(self.drive_error_sum_sq / self.drive_error_count)
+
+    def _get_drive_efficiency(self) -> float:
+        """Get drive efficiency (ideal distance / actual distance)."""
+        if self.drive_total_distance < 0.01:
+            return 1.0
+        return self.drive_ideal_distance / self.drive_total_distance
+
     def _print_stats(self):
         """Print final statistics."""
         elapsed = time.time() - self.start_time
@@ -2290,9 +2978,19 @@ rclpy.shutdown()
         print(f"Cells scanned by LiDAR: {len(self.scanned)}")
         print(f"Walls detected: {len(self.scan_ends)}")
 
+        # Drive accuracy stats
+        print(f"\n--- Drive Accuracy ---")
+        rms_error = self._get_drive_rms_error()
+        efficiency = self._get_drive_efficiency()
+        print(f"Cross-track RMS error: {rms_error*100:.1f}cm")
+        print(f"Total distance traveled: {self.drive_total_distance:.2f}m")
+        print(f"Ideal distance (sum of goals): {self.drive_ideal_distance:.2f}m")
+        print(f"Drive efficiency: {efficiency*100:.1f}%")
+
         # Return phase stats
         if self.return_start_time > 0:
             return_duration = time.time() - self.return_start_time
+            print(f"\n--- Return Phase ---")
             print(f"Return phase duration: {return_duration:.1f}s")
             if self.start_pos and self.current_pos:
                 final_dist = math.sqrt(
@@ -2304,6 +3002,18 @@ rclpy.shutdown()
         if total > 0:
             revisit_pct = 100 * (total - len(self.visited)) / total
             print(f"Revisit rate: {revisit_pct:.1f}%")
+
+        # Map accuracy suggestions
+        print(f"\n--- Map Accuracy Suggestions ---")
+        print("To measure map accuracy, consider:")
+        print("1. Ground truth comparison: Place markers at known positions,")
+        print("   compare measured vs actual distances between them")
+        print("2. Loop closure error: After returning to origin, check")
+        print("   odometry drift (final_dist to origin should be ~0)")
+        print("3. Feature alignment: Compare map walls to actual room layout")
+        print("4. Consistency check: Run multiple times, overlay maps")
+        print("5. Tape measure validation: Measure actual room dimensions,")
+        print("   compare to map scale (resolution * pixels)")
 
 
 def run_simple_nav(speed: float = 0.08, duration: float = 60.0,
