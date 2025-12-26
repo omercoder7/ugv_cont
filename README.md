@@ -1,214 +1,448 @@
-# UGV Control System
+# UGV Beast Control System
 
 Control scripts and autonomous navigation for the UGV Beast robot with ROS2 Humble.
 
-## Quick Start
+---
 
-### Recommended: EKF Mode (Best Accuracy)
+## Table of Contents
+
+1. [First Setup](#1-first-setup)
+2. [Algorithm Structure](#2-algorithm-structure)
+3. [How to Use the Algorithm](#3-how-to-use-the-algorithm)
+4. [More Information](#4-more-information)
+
+---
+
+## 1. First Setup
+
+### 1.1 Flash the SD Card
+
+1. Download the original Waveshare image: https://drive.google.com/file/d/1k6fEqZpp5l7Al2_RBfg__JTVs6DdfX9U/view
+2. Download the Raspberry Pi Imager
+3. Flash the SD card with the following settings:
+   ```
+   username: ws
+   password: ws
+   ```
+
+### 1.2 Initial WiFi Configuration
+
+1. Start the Pi (it will automatically connect to the AccessPopup WiFi)
+2. From your computer:
+   1. Connect to `accesspopup` WiFi with password: `1234567890`
+   2. Go to `192.168.50.5:8888` and press Terminal, then run:
+      ```bash
+      cd AccessPopup/
+      sudo chmod +x installconfig.sh
+      sudo ./installconfig.sh
+      5  # Select "setup a new wifi"
+      ```
+   3. Choose the WiFi you want to connect to and follow the instructions
+   4. After entering the WiFi password, use `ip a` on a terminal from the Pi itself to see its new IP address
+   5. Reconnect to your WiFi, and navigate to `new_pi_ip:8888`
+   6. Hit continue, then `9` to exit the WiFi configuration script
+
+### 1.3 Enable SSH
+
 ```bash
-# 1. Start ROS with EKF sensor fusion
+sudo raspi-config
+# Select: Interface Options → SSH → Yes → Finish
+```
+
+### 1.4 Fix Requirements File
+
+In the `requirements.txt` file, find the line `av==10.0.0` and modify it to: `av`
+
+### 1.5 Install System Dependencies
+
+```bash
+sudo apt update
+sudo apt install -y python3-dev pkg-config
+sudo apt install -y libavformat-dev
+sudo apt install -y libavcodec-dev
+sudo apt install -y libavdevice-dev
+sudo apt install -y libavutil-dev
+sudo apt install -y libswscale-dev
+sudo apt install -y libavfilter-dev
+sudo apt install -y libswresample-dev
+sudo apt install arandr
+sudo apt upgrade
+```
+
+### 1.6 Install Older Cython Version
+
+1. Activate the virtual environment:
+   ```bash
+   cd ~/ugv_rpi/ugv-env/bin
+   source activate
+   ```
+
+2. You will see `(ugv-env)` added to the beginning of the hostname: `(ugv-env) ws@ws:~/ugv_rpi/ugv-env/bin`
+
+3. Install packages:
+   ```bash
+   sudo /home/ws/ugv_rpi/ugv-env/bin/python3 -m pip install --upgrade pip setuptools wheel --no-user
+   sudo /home/ws/ugv_rpi/ugv-env/bin/python3 -m pip install "cython<3.0.0" --no-cache-dir
+   ```
+
+### 1.7 Install Docker
+
+```bash
+cd /home/ws/ugv_ws
+sudo apt update && sudo apt install docker.io -y
+sudo usermod -aG docker ws
+```
+
+Refresh user permissions: In the terminal, run `groups` and make sure you see `docker` listed.
+
+### 1.8 Run Setup Script
+
+```bash
+cd ~/ugv_rpi
+sudo ./setup.sh
+```
+
+### 1.9 Configure Robot Type
+
+Modify the `config.yaml` file:
+
+```yaml
+main_type: 3
+module_type: 0
+robot_name: UGV Beast
+use_lidar: true
+```
+
+**Configuration Options:**
+- `main_type`: Robot type (1 = RaspRover, 2 = UGV Rover, 3 = UGV Beast)
+- `module_type`: Module type (0 = Nothing, 1 = RoArm-M2, 2 = Camera PT)
+
+### 1.10 Reboot
+
+```bash
+sudo reboot
+```
+
+---
+
+## Stage 2: Install UGV Control System
+
+### 2.1 Clone Repository
+
+```bash
+cd /home/ws
+git clone https://github.com/omercoder7/ugv_cont
+```
+
+### 2.2 Build Docker Image
+
+```bash
+cd /home/ws/ugv_cont/docker
+sudo chmod +x *.sh
+./build_ugv_image.sh
+```
+
+This builds an ARM64 Docker image (`ugv_beast_arm64:humble`) with:
+- ROS2 Humble desktop + Navigation2
+- SLAM Toolbox (async mode)
+- Cartographer SLAM (alternative)
+- RF2O Laser Odometry
+- Robot Localization (EKF)
+- LDLiDAR driver (LD19)
+
+---
+
+## 2. Algorithm Structure
+
+### 2.1 Overview
+
+The UGV uses a **Frontier-based Exploration with FSM-based Obstacle Avoidance** approach for autonomous navigation.
+
+### 2.2 Core Components
+
+```
+mission/
+├── main.py               # Launcher & prerequisites checker
+├── fsm_avoider.py        # FSM-based obstacle avoidance (main loop)
+├── simple_cost_nav.py    # Next-Best-View (NBV) navigation
+├── frontier.py           # Frontier detection (explore_lite-style)
+├── exploration.py        # Visited cell tracking
+├── pro_avoidance.py      # Professional avoidance (TTC, gaps)
+├── ros_interface.py      # ROS2 communication bridge
+├── constants.py          # Sector definitions & calibration
+├── virtual_obstacles.py  # Virtual boundary obstacles
+└── avoider/
+    └── lidar.py          # Sector distance computation
+```
+
+### 2.3 Finite State Machine (FSM)
+
+The navigation FSM operates in the following states:
+
+| State | Description |
+|-------|-------------|
+| `STOPPED` | Idle state |
+| `FORWARD` | Moving with adaptive speed |
+| `AVOIDING` | Steering around obstacles |
+| `BACKING_UP` | Emergency reverse when too close |
+
+### 2.4 Frontier Explorer
+
+Based on explore_lite and Wavefront Frontier Detector (WFD):
+- Identifies unexplored area boundaries
+- Cost function: `C = distance_cost - gain * frontier_size + orientation_cost`
+- Prefers larger frontiers with more information gain
+- Prevents circular patterns with goal history tracking
+
+### 2.5 LiDAR Sector System
+
+The 360° LiDAR scan is divided into 60 sectors (6° each):
+
+| Sector Group | Range | Description |
+|--------------|-------|-------------|
+| FRONT_ARC | ±30° (sectors 55-4) | Primary obstacle detection |
+| LEFT | +6° to +90° | Left side clearance |
+| RIGHT | -84° to -6° | Right side clearance |
+| BACK | ±96° to ±90° | Rear clearance |
+
+### 2.6 Pro Obstacle Avoidance
+
+Implements advanced obstacle avoidance with:
+- **Time-to-Collision (TTC)** calculation (Nav2 MPPI-based)
+- **Gap analysis** between obstacles
+- **Dynamic speed limiting** based on obstacle proximity
+- Safe direction recommendations through gap evaluation
+
+### 2.7 ROS2 Topic Flow
+
+**Standard Mode:**
+```
+LiDAR (/scan) → RF2O Laser Odometry → /odom → SLAM Toolbox → /map
+```
+
+**EKF Mode (Recommended):**
+```
+LiDAR (/scan) → RF2O → /odom_rf2o ─┐
+                                    ├→ EKF Filter → /odom → SLAM → /map
+IMU (/imu/data) ───────────────────┘
+```
+
+### 2.8 EKF Sensor Fusion
+
+Extended Kalman Filter combines multiple sensors for improved localization:
+
+| Source | Data Used |
+|--------|-----------|
+| RF2O Laser Odometry (`/odom_rf2o`) | Position (x, y), Velocity (vx, vy) |
+| IMU (`/imu/data`) | Orientation (yaw - authoritative), Angular velocity |
+
+**Key Design Decisions:**
+- Single yaw source (IMU) prevents sensor fighting
+- Differential position integration reduces drift
+- 50Hz output matches robot control loop frequency
+
+---
+
+## 3. How to Use the Algorithm
+
+### 3.1 Starting Autonomous Scan
+
+```bash
+cd ugv_cont
 ./start_ros.sh --ekf
-
-# 2. Launch RViz for visualization
-./rviz.sh slam-ekf
-
-# 3. In another terminal, run autonomous scanning
-python3 auto_scan.py --duration 120
+./rviz.sh slam-ekf new_map
+python3 -m mission.simple_cost_nav --duration 300 --debug-marker
 ```
 
-### Basic Operation (Without EKF)
-```bash
-# 1. Start ROS
-./start_ros.sh
-
-# 2. Launch RViz with SLAM
-./rviz.sh slam-opt
-
-# 3. Run autonomous scanning
-python3 auto_scan.py --duration 120
-```
-
-## Scripts Overview
+### 3.2 Script Reference
 
 | Script | Description |
 |--------|-------------|
-| `start_ros.sh` | Start ROS nodes cleanly (use `--ekf` for sensor fusion) |
-| `rviz.sh` | Launch RViz visualization (various modes available) |
+| `start_ros.sh` | Start ROS nodes (use `--ekf` for sensor fusion) |
+| `rviz.sh` | Launch RViz visualization |
 | `auto_scan.py` | Autonomous room scanning with obstacle avoidance |
-| `ensure_bringup.sh` | Ensures robot bringup is running |
+| `ensure_slam.sh` | SLAM health monitor and auto-restart |
 
-## rviz.sh Modes
+### 3.3 start_ros.sh Options
+
+```bash
+./start_ros.sh [--ekf]
+```
+
+| Option | Description |
+|--------|-------------|
+| (none) | Standard mode with RF2O laser odometry only |
+| `--ekf` | EKF mode with IMU + laser odometry fusion (recommended) |
+
+**What it does:**
+- Restarts Docker container to clear zombie processes
+- Clears FastDDS shared memory cache
+- Starts sensor drivers (LiDAR, IMU, motors)
+- Verifies TF tree, topics, and SLAM process
+- Duration: ~45 seconds for full startup
+
+### 3.4 rviz.sh Modes
 
 ```bash
 ./rviz.sh <mode> [map_name] [options]
 ```
 
-### Modes
-
 | Mode | Description |
 |------|-------------|
-| `slam-opt` | SLAM with optimized parameters (recommended for scanning) |
-| `slam` | Standard SLAM |
+| `slam-opt` | Optimized SLAM with tuned parameters (recommended) |
+| `slam-ekf` | SLAM with EKF sensor fusion |
+| `slam-carto` | Google Cartographer (best accuracy) |
+| `slam-simple` | SLAM without Nav2 |
+| `lidar` | LiDAR-only visualization |
+| `ekf` | EKF sensor fusion without SLAM |
 | `map` | Load existing map for navigation |
 | `nav` | Navigation mode |
-| `lidar` | Lidar-only visualization |
 
-### Options
-
-| Option | Description |
-|--------|-------------|
-| `--ekf` | Enable EKF sensor fusion (slam-opt mode only) |
-| `map_name` | Name for new map or existing map to load |
-
-### Examples
-
+**Examples:**
 ```bash
 # Start SLAM and create a new map called "office"
 ./rviz.sh slam-opt office
 
 # Start SLAM with EKF for better localization
-./rviz.sh slam-opt kitchen --ekf
+./rviz.sh slam-ekf kitchen
 
 # Load existing map for navigation
 ./rviz.sh map office
 ```
 
-## Autonomous Scanning (auto_scan.py)
+### 3.5 Navigation Parameters
 
-Autonomous exploration using Vector Field Histogram (VFH) for obstacle avoidance.
-
-### Usage
-
+**simple_cost_nav.py Options:**
 ```bash
-python3 auto_scan.py [options]
+python3 -m mission.simple_cost_nav [options]
 ```
-
-### Options
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--speed` | 0.15 | Linear speed (m/s) |
-| `--angular-speed` | 0.35 | Angular speed (rad/s) |
-| `--obstacle-distance` | 0.55 | Distance to trigger avoidance (m) |
-| `--clear-distance` | 0.70 | Distance to resume forward motion (m) |
+| `--speed` / `-s` | 0.06 | Linear speed (m/s), max: 0.12 |
+| `--min-dist` / `-m` | 0.35 | Minimum obstacle distance (m) |
+| `--duration` / `-d` | 60 | Scan duration (seconds), 0 = unlimited |
+| `--debug-marker` | off | Enable RViz goal markers |
 
-### Features
+### 3.6 FSM Avoider Thresholds
 
-- **VFH Obstacle Avoidance**: Uses 36 histogram bins for smooth navigation
-- **Adaptive Speed Control**: Automatically slows down near obstacles for tighter maneuvering
-- **Stuck Detection**: Detects and recovers from stuck situations
-- **Rotation Limiting**: Prevents excessive spinning (max ~1.5 revolutions)
-- **Smooth Transitions**: Gradual speed changes for stable odometry
+| Parameter | Value | Description |
+|-----------|-------|-------------|
+| `danger_threshold` | 0.40m | Triggers avoidance |
+| `backup_threshold` | 0.30m | Triggers backup |
+| `commit_duration` | 1.5s | Direction commitment time |
+| `grid_resolution` | 0.5m | Exploration grid cell size |
 
-### Behavior States
+### 3.7 Calibration Constants
 
-1. **FORWARD**: Moving forward, scanning for obstacles
-2. **AVOIDING**: Rotating to find clear path using VFH
-3. **STUCK**: Recovery mode when robot can't progress
+Located in `mission/constants.py`:
 
-### Adaptive Speed Control
+| Constant | Value | Description |
+|----------|-------|-------------|
+| `LIDAR_ROTATION_SECTORS` | 15 | LiDAR 270° = Robot FRONT |
+| `LIDAR_FRONT_OFFSET` | 0.37m | LiDAR offset from front |
+| `ROBOT_WIDTH` | 0.18m | Robot width |
+| `SAFE_TURN_CLEARANCE` | 0.70m | Space needed to turn |
+| `MIN_BACKUP_DISTANCE` | 0.35m | Backup threshold |
 
-The robot automatically adjusts speed based on obstacle proximity:
-- **Far (>1.0m)**: Full speed
-- **Near (<0.5m)**: 40% speed
-- **In between**: Linear interpolation
+---
 
-This allows the robot to drive confidently in open areas while carefully maneuvering in tight spaces.
+## 4. More Information
 
-## EKF Sensor Fusion
+### 4.1 Repository Structure
 
-Extended Kalman Filter (EKF) combines multiple sensors for improved localization.
+```
+ugv_cont/
+├── start_ros.sh              # Main startup wrapper
+├── rviz.sh                   # Main RViz wrapper
+├── auto_scan.py              # Autonomous scanning entry point
+├── ensure_slam.sh            # SLAM health monitor
+│
+├── scripts/                  # Main operational scripts
+│   ├── start_ros.sh          # ROS startup implementation
+│   ├── rviz.sh               # RViz launcher implementation
+│   └── ensure_bringup.sh     # Bringup health check
+│
+├── mission/                  # Core navigation algorithms
+│   ├── main.py               # Launcher
+│   ├── fsm_avoider.py        # FSM obstacle avoidance
+│   ├── simple_cost_nav.py    # NBV navigation
+│   ├── frontier.py           # Frontier detection
+│   └── ...
+│
+├── config/                   # Configuration files
+│   ├── slam_toolbox_optimized.yaml
+│   ├── ekf_lidar_imu.yaml
+│   ├── view_slam_2d.rviz
+│   └── cartographer_2d.lua
+│
+├── launch/                   # ROS2 launch files
+│   └── bringup_ekf_simple.launch.py
+│
+├── tools/                    # Calibration and testing
+│   ├── calibrate_*.py
+│   ├── test_rotation.py
+│   └── keyboard_control.py
+│
+├── docker/                   # Docker configuration
+│   ├── Dockerfile
+│   ├── docker-compose.yaml
+│   └── build_ugv_image.sh
+│
+└── mapping/                  # Mapping utilities
+    ├── robot/
+    └── offline/
+```
 
-### Why Use EKF?
+### 4.2 Docker Container Architecture
 
-| Without EKF | With EKF |
-|-------------|----------|
-| Laser odometry only | IMU + Laser odometry fusion |
-| Orientation can drift | IMU provides stable orientation |
-| Single point of failure | Redundant sensing |
+**Container Name:** `ugv_rpi_ros_humble`
 
-### EKF Configuration
+**Key Mounts:**
+- `/dev/ttyACM0`: Serial device for LiDAR/Motor controller
+- `/tmp/.X11-unix`: X11 display for RViz
+- `./ugv_data`: Persistent data storage
 
-The EKF fuses data from two sources:
+**Environment Variables:**
+- `UGV_MODEL=ugv_beast`
+- `LDLIDAR_MODEL=ld19`
 
-**RF2O Laser Odometry (`/odom_rf2o`)**
-- Position: x, y (differential mode - reduces drift)
-- Velocity: vx, vy
+### 4.3 Hardware Specifications
 
-**IMU (`/imu/data`)**
-- Orientation: yaw (authoritative source)
-- Angular velocity: yaw_rate
+| Component | Model |
+|-----------|-------|
+| Robot | UGV Beast |
+| LiDAR | LD19 (360° scan) |
+| IMU | Built-in |
+| CPU | ARM64 (Raspberry Pi) |
 
-### Key Design Decisions
+### 4.4 Troubleshooting
 
-1. **Single Yaw Source**: Only IMU provides yaw to prevent sensor fighting
-2. **Differential Position**: Integrates velocity instead of absolute position
-3. **No IMU Acceleration**: Disabled to prevent drift accumulation
-4. **50Hz Output**: Matches robot control loop frequency
+#### Duplicate RF2O Nodes
 
-### Enabling EKF
+If RF2O nodes are duplicated (robot won't receive LiDAR information):
 
 ```bash
-# Start ROS with EKF (recommended)
 ./start_ros.sh --ekf
-
-# Then launch RViz
-./rviz.sh slam-ekf
 ```
 
-## Configuration Files
+This performs a full container restart to clear zombie processes.
 
-### slam_toolbox_optimized.yaml
-
-Optimized SLAM parameters for indoor scanning:
-- Aggressive loop closure for map consistency
-- Lower resolution for faster processing
-- Tuned for UGV Beast's lidar characteristics
-
-### ekf.yaml
-
-EKF sensor fusion configuration:
-- Located at `/home/ws/ugv_ws/src/ugv_main/ugv_bringup/param/ekf.yaml`
-- Copied to container at `/root/ugv_ws/install/ugv_bringup/share/ugv_bringup/param/`
-
-## Troubleshooting
-
-### Duplicate Nodes / Zombie Processes
-
-Symptoms: Odometry drift, Eigensolver errors, nodes listed multiple times
+#### SLAM Not Publishing
 
 ```bash
-# Full restart to clear zombies
-./start_ros.sh --ekf
+./ensure_slam.sh
+# or start fresh:
+./rviz.sh slam-opt new_map
 ```
 
-### SLAM Map Corruption
+#### Robot Spins Continuously
 
-Symptoms: Map shows artifacts, robot position jumps
-
-```bash
-# Start fresh SLAM with new map
-./rviz.sh slam-opt new_map_name
-```
-
-### Robot Spins Continuously
-
-The autonomous scanner has rotation limits (~1.5 revolutions). If this happens:
-1. Check lidar is publishing: `ros2 topic echo /scan --once`
+1. Check LiDAR is publishing: `ros2 topic echo /scan --once`
 2. Verify obstacle distances are reasonable
-3. Reduce `--obstacle-distance` parameter
+3. Reduce `--min-dist` parameter
 
-### EKF Not Starting
-
-```bash
-# Check if EKF node is running
-docker exec ugv_rpi_ros_humble bash -c "source /opt/ros/humble/setup.bash && ros2 node list | grep ekf"
-
-# Check EKF logs
-docker exec ugv_rpi_ros_humble cat /tmp/bringup.log
-```
-
-### No Odometry
+#### No Odometry
 
 ```bash
 # Check odometry topic
@@ -219,77 +453,30 @@ docker exec ugv_rpi_ros_humble bash -c "source /opt/ros/humble/setup.bash && ros
 docker exec ugv_rpi_ros_humble bash -c "source /opt/ros/humble/setup.bash && ros2 topic echo /imu/data --once"
 ```
 
-## Repository Structure
+#### EKF Not Starting
 
-```
-ugv_cont/
-├── start_ros.sh         # Wrapper → scripts/start_ros.sh
-├── rviz.sh              # Wrapper → scripts/rviz.sh
-├── auto_scan.py         # Main autonomous navigation script
-├── README.md
-│
-├── scripts/             # Main operational scripts
-│   ├── start_ros.sh     # Start ROS nodes (--ekf for sensor fusion)
-│   ├── rviz.sh          # Launch RViz (various modes)
-│   └── ensure_bringup.sh
-│
-├── config/              # Configuration files
-│   ├── slam_toolbox_optimized.yaml
-│   ├── ekf_lidar_imu.yaml
-│   ├── view_slam_2d.rviz
-│   └── cartographer_2d.lua
-│
-├── launch/              # ROS2 launch files
-│   └── bringup_ekf_simple.launch.py
-│
-├── tools/               # Calibration and testing
-│   ├── calibrate_*.py
-│   ├── test_rotation.py
-│   └── keyboard_control.*
-│
-├── docker/              # Docker configuration
-│   ├── Dockerfile
-│   ├── docker-compose.yaml
-│   └── entrypoint.sh
-│
-└── deprecated/          # Legacy scripts (for reference)
+```bash
+# Check if EKF node is running
+docker exec ugv_rpi_ros_humble bash -c "source /opt/ros/humble/setup.bash && ros2 node list | grep ekf"
+
+# Check EKF logs
+docker exec ugv_rpi_ros_humble cat /tmp/bringup.log
 ```
 
-## Architecture
+### 4.5 Configuration Files
 
-```
-Docker Container (ugv_rpi_ros_humble)
-├── /root/ugv_ws/        # ROS2 workspace
-│   └── install/         # Built packages
-├── /tmp/                # Runtime configs & logs
-│   ├── slam_toolbox_optimized.yaml
-│   ├── bringup.log
-│   └── slam.log
-```
+| File | Purpose |
+|------|---------|
+| `config/slam_toolbox_optimized.yaml` | SLAM parameters (4cm resolution, aggressive loop closure) |
+| `config/ekf_lidar_imu.yaml` | EKF sensor fusion (50Hz, IMU + laser odometry) |
+| `config/view_slam_2d.rviz` | RViz visualization configuration |
+| `config/cartographer_2d.lua` | Google Cartographer configuration |
 
-### Topic Flow
+### 4.6 SLAM Configuration Details
 
-```
-Standard Mode:
-  /scan → RF2O → /odom → SLAM → /map
-
-EKF Mode:
-  /scan → RF2O → /odom_rf2o ─┐
-                             ├→ EKF → /odom → SLAM → /map
-  /imu/data ─────────────────┘
-```
-
-## Environment Variables
-
-Required for bringup:
-- `UGV_MODEL=ugv_beast`
-- `LDLIDAR_MODEL=ld19`
-
-These are set automatically by the scripts.
-
-## Hardware
-
-- **Robot**: UGV Beast
-- **Lidar**: LD19 (360° laser scanner)
-- **IMU**: Built-in IMU (when using EKF)
-- **Container**: ugv_rpi_ros_humble (ROS2 Humble)
+**`slam_toolbox_optimized.yaml` Key Settings:**
+- **Resolution:** 4cm (balance between detail and stability)
+- **Scan Processing:** Every scan, minimum 0.3s interval
+- **Scan Matching:** Minimum 15cm / 11° travel between scans
+- **Loop Closure:** Aggressive detection (min_chain_size: 3)
+- **TF Publish Rate:** 50Hz
