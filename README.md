@@ -261,7 +261,6 @@ python3 -m mission.simple_cost_nav --duration 300 --debug-marker
 
 | Option | Description |
 |--------|-------------|
-| (none) | Start with EKF sensor fusion (IMU + laser odometry) |
 | `new_map` | Restart container and start fresh |
 
 **What it does:**
