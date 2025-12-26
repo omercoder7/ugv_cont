@@ -332,6 +332,25 @@ Located in `mission/constants.py`:
 | `SAFE_TURN_CLEARANCE` | 0.70m | Space needed to turn |
 | `MIN_BACKUP_DISTANCE` | 0.35m | Backup threshold |
 
+### 3.8 Session Outputs
+
+Each navigation run automatically creates a timestamped output directory:
+
+```
+mission/outputs/
+└── YYYYMMDD_HHMMSS/          # e.g., 20251225_184845
+    ├── logs/
+    │   └── navigation.log    # Full console output and debug info
+    └── maps/
+        ├── map.pgm           # Occupancy grid (raw format)
+        ├── map.yaml          # Map metadata (resolution, origin)
+        └── map.png           # Map image (if PIL is installed)
+```
+
+**What gets saved:**
+- **navigation.log**: Complete session log including goal selections, obstacle detections, and state transitions
+- **map files**: Final SLAM map saved when the session ends (requires nav2_map_server)
+
 ---
 
 ## 4. More Information
@@ -353,6 +372,8 @@ ugv_cont/
 │   ├── simple_cost_nav.py    # NBV navigation (main algorithm)
 │   ├── frontier.py           # Frontier detection
 │   ├── ros_interface.py      # ROS2 communication
+│   ├── outputs/              # Auto-generated session outputs
+│   │   └── YYYYMMDD_HHMMSS/  # Timestamped logs and maps
 │   └── ...
 │
 ├── config/                   # Configuration files
