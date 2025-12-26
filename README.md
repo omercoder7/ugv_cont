@@ -472,3 +472,10 @@ docker exec ugv_rpi_ros_humble cat /tmp/bringup.log
 - **Scan Matching:** Minimum 15cm / 11° travel between scans
 - **Loop Closure:** Aggressive detection (min_chain_size: 3)
 - **TF Publish Rate:** 50Hz
+
+### 4.7 Additional Documentation
+
+| File | Description |
+|------|-------------|
+| `MANUAL.md` | Comprehensive usage manual covering all scripts, keyboard control, autonomous navigation, container management, and troubleshooting |
+| `README_CONTAINER_USAGE.md` | Quick reference for Docker container operations: starting, stopping, entering the container, and available ROS2 packages |
