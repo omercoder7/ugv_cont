@@ -156,15 +156,13 @@ This builds an ARM64 Docker image (`ugv_beast_arm64:humble`) with:
 
 ### 2.1 Overview
 
-The UGV uses a **Frontier-based Exploration with FSM-based Obstacle Avoidance** approach for autonomous navigation.
+The UGV uses **Next-Best-View (NBV) Navigation** for autonomous exploration. It selects goal points that maximize expected visibility gain, commits to goals, and navigates with obstacle avoidance.
 
 ### 2.2 Core Components
 
 ```
 mission/
-├── main.py               # Launcher & prerequisites checker
-├── fsm_avoider.py        # FSM-based obstacle avoidance (main loop)
-├── simple_cost_nav.py    # Next-Best-View (NBV) navigation
+├── simple_cost_nav.py    # Next-Best-View (NBV) navigation (main algorithm)
 ├── frontier.py           # Frontier detection (explore_lite-style)
 ├── exploration.py        # Visited cell tracking
 ├── pro_avoidance.py      # Professional avoidance (TTC, gaps)
@@ -175,16 +173,14 @@ mission/
     └── lidar.py          # Sector distance computation
 ```
 
-### 2.3 Finite State Machine (FSM)
+### 2.3 NBV Navigation States
 
-The navigation FSM operates in the following states:
+The navigation operates in two main states:
 
 | State | Description |
 |-------|-------------|
-| `STOPPED` | Idle state |
-| `FORWARD` | Moving with adaptive speed |
-| `AVOIDING` | Steering around obstacles |
-| `BACKING_UP` | Emergency reverse when too close |
+| `EXPLORING` | Normal NBV exploration - selecting and driving to goal points |
+| `RETURNING` | Returning to origin when duration limit approaches |
 
 ### 2.4 Frontier Explorer
 
@@ -260,7 +256,6 @@ python3 -m mission.simple_cost_nav --duration 300 --debug-marker
 |--------|-------------|
 | `start_ros.sh` | Start ROS nodes (use `--ekf` for sensor fusion) |
 | `rviz.sh` | Launch RViz visualization |
-| `auto_scan.py` | Autonomous room scanning with obstacle avoidance |
 | `ensure_slam.sh` | SLAM health monitor and auto-restart |
 
 ### 3.3 start_ros.sh Options
@@ -324,14 +319,15 @@ python3 -m mission.simple_cost_nav [options]
 | `--duration` / `-d` | 60 | Scan duration (seconds), 0 = unlimited |
 | `--debug-marker` | off | Enable RViz goal markers |
 
-### 3.6 FSM Avoider Thresholds
+### 3.6 NBV Navigator Thresholds
 
 | Parameter | Value | Description |
 |-----------|-------|-------------|
-| `danger_threshold` | 0.40m | Triggers avoidance |
-| `backup_threshold` | 0.30m | Triggers backup |
-| `commit_duration` | 1.5s | Direction commitment time |
-| `grid_resolution` | 0.5m | Exploration grid cell size |
+| `backup_threshold` | 0.15m | Triggers backup |
+| `goal_reached_dist` | 0.40m | Distance to consider goal reached |
+| `min_goal_dist` | 0.5m | Minimum goal distance |
+| `max_goal_dist` | 2.0m | Maximum goal distance |
+| `grid_resolution` | 0.1m | Visited cell grid size |
 
 ### 3.7 Calibration Constants
 
@@ -355,7 +351,6 @@ Located in `mission/constants.py`:
 ugv_cont/
 ├── start_ros.sh              # Main startup wrapper
 ├── rviz.sh                   # Main RViz wrapper
-├── auto_scan.py              # Autonomous scanning entry point
 ├── ensure_slam.sh            # SLAM health monitor
 │
 ├── scripts/                  # Main operational scripts
@@ -364,10 +359,9 @@ ugv_cont/
 │   └── ensure_bringup.sh     # Bringup health check
 │
 ├── mission/                  # Core navigation algorithms
-│   ├── main.py               # Launcher
-│   ├── fsm_avoider.py        # FSM obstacle avoidance
-│   ├── simple_cost_nav.py    # NBV navigation
+│   ├── simple_cost_nav.py    # NBV navigation (main algorithm)
 │   ├── frontier.py           # Frontier detection
+│   ├── ros_interface.py      # ROS2 communication
 │   └── ...
 │
 ├── config/                   # Configuration files
