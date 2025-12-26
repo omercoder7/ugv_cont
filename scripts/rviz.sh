@@ -90,6 +90,45 @@ xhost + 2>/dev/null
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(dirname "${SCRIPT_DIR}")"
 
+# Function to cleanup duplicate processes
+cleanup_duplicate_nodes() {
+    echo "Checking for duplicate processes..."
+
+    # Check for duplicate rf2o processes
+    RF2O_PROCS=$(docker exec ${CONTAINER_NAME} bash -c "ps aux | grep -c '[r]f2o_laser_odometry_node --ros-args'" 2>/dev/null || echo "0")
+    if [ "${RF2O_PROCS}" -gt 1 ]; then
+        echo "  Found ${RF2O_PROCS} rf2o processes - killing all and letting bringup restart..."
+        docker exec ${CONTAINER_NAME} pkill -f rf2o 2>/dev/null
+        sleep 1
+    fi
+
+    # Check for duplicate slam_toolbox processes
+    SLAM_PROCS=$(docker exec ${CONTAINER_NAME} pgrep -c -f "slam_toolbox" 2>/dev/null || echo "0")
+    if [ "${SLAM_PROCS}" -gt 1 ]; then
+        echo "  Found ${SLAM_PROCS} slam_toolbox processes - killing all..."
+        docker exec ${CONTAINER_NAME} pkill -f slam_toolbox 2>/dev/null
+        sleep 1
+    fi
+
+    # Check for duplicate EKF processes
+    EKF_PROCS=$(docker exec ${CONTAINER_NAME} pgrep -c -f "ekf_node" 2>/dev/null || echo "0")
+    if [ "${EKF_PROCS}" -gt 1 ]; then
+        echo "  Found ${EKF_PROCS} EKF processes - killing all..."
+        docker exec ${CONTAINER_NAME} pkill -f ekf_node 2>/dev/null
+        sleep 1
+    fi
+
+    # Check for zombie processes
+    ZOMBIES=$(docker exec ${CONTAINER_NAME} ps aux 2>/dev/null | grep -c "<defunct>" || echo "0")
+    if [ "${ZOMBIES}" -gt 0 ]; then
+        echo "Warning: ${ZOMBIES} zombie processes found."
+        echo "  Consider running with 'new_map' option to restart container."
+    fi
+}
+
+# Always check for duplicates first
+cleanup_duplicate_nodes
+
 # Copy configs
 docker cp "${REPO_DIR}/config/view_slam_2d.rviz" ${CONTAINER_NAME}:/tmp/view_slam_2d.rviz 2>/dev/null
 docker cp "${REPO_DIR}/config/slam_toolbox_optimized.yaml" ${CONTAINER_NAME}:/tmp/slam_toolbox_optimized.yaml 2>/dev/null
