@@ -6,11 +6,9 @@
 #
 # Usage:
 #   ./start_ros.sh           # Start with EKF sensor fusion
-#   ./start_ros.sh new_map   # Restart container and start fresh
 
 CONTAINER_NAME="ugv_rpi_ros_humble"
 SLAM_MAX_RETRIES=3
-NEW_MAP=false
 
 # Colors for output
 RED='\033[0;31m'
@@ -34,21 +32,8 @@ log_err() {
     echo -e "[$(date '+%H:%M:%S')] ${RED}✗ $1${NC}"
 }
 
-# Parse arguments
-for arg in "$@"; do
-    case $arg in
-        new_map|new|--new-map)
-            NEW_MAP=true
-            shift
-            ;;
-    esac
-done
-
 echo "=== ROS2 Start Script (EKF Mode) ==="
 echo "Mode: EKF (IMU + Laser Odometry fusion)"
-if [ "$NEW_MAP" = true ]; then
-    echo "Option: NEW MAP (full restart)"
-fi
 echo ""
 
 # Check container

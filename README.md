@@ -246,7 +246,7 @@ Extended Kalman Filter combines multiple sensors for improved localization:
 ```bash
 cd ugv_cont
 ./start_ros.sh
-./rviz.sh new_map
+./rviz.sh
 python3 -m mission.simple_cost_nav --duration 300 --debug-marker
 ```
 
@@ -261,13 +261,8 @@ python3 -m mission.simple_cost_nav --duration 300 --debug-marker
 ### 3.3 start_ros.sh
 
 ```bash
-./start_ros.sh [new_map]
+./start_ros.sh
 ```
-
-| Option | Description |
-|--------|-------------|
-| (none) | Start with EKF sensor fusion (IMU + laser odometry) |
-| `new_map` | Restart container and start fresh |
 
 **What it does:**
 - Restarts Docker container to clear zombie processes
@@ -279,21 +274,15 @@ python3 -m mission.simple_cost_nav --duration 300 --debug-marker
 ### 3.4 rviz.sh
 
 ```bash
-./rviz.sh [new_map]
+./rviz.sh
 ```
 
-| Option | Description |
-|------|-------------|
-| (none) | Launch RViz only (assumes start_ros.sh already run) |
-| `new_map` | Restart container and start fresh map |
+Launches RViz visualization (assumes `start_ros.sh` already run).
 
-**Examples:**
+**Example:**
 ```bash
 # Start ROS then launch RViz
 ./start_ros.sh && ./rviz.sh
-
-# Full restart with fresh map
-./rviz.sh new_map
 ```
 
 ### 3.5 Navigation Parameters
@@ -429,7 +418,7 @@ ugv_cont/
 If RF2O nodes are duplicated (robot won't receive LiDAR information):
 
 ```bash
-./start_ros.sh --ekf
+./start_ros.sh
 ```
 
 This performs a full container restart to clear zombie processes.
@@ -438,8 +427,6 @@ This performs a full container restart to clear zombie processes.
 
 ```bash
 ./ensure_slam.sh
-# or start fresh:
-./rviz.sh slam-opt new_map
 ```
 
 #### Robot Spins Continuously
