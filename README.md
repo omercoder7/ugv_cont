@@ -211,12 +211,7 @@ Implements advanced obstacle avoidance with:
 
 ### 2.7 ROS2 Topic Flow
 
-**Standard Mode:**
-```
-LiDAR (/scan) → RF2O Laser Odometry → /odom → SLAM Toolbox → /map
-```
-
-**EKF Mode (Recommended):**
+**EKF Mode:**
 ```
 LiDAR (/scan) → RF2O → /odom_rf2o ─┐
                                     ├→ EKF Filter → /odom → SLAM → /map
