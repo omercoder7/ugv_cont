@@ -245,8 +245,8 @@ Extended Kalman Filter combines multiple sensors for improved localization:
 
 ```bash
 cd ugv_cont
-./start_ros.sh --ekf
-./rviz.sh slam-ekf new_map
+./start_ros.sh
+./rviz.sh new_map
 python3 -m mission.simple_cost_nav --duration 300 --debug-marker
 ```
 
@@ -254,55 +254,46 @@ python3 -m mission.simple_cost_nav --duration 300 --debug-marker
 
 | Script | Description |
 |--------|-------------|
-| `start_ros.sh` | Start ROS nodes (use `--ekf` for sensor fusion) |
+| `start_ros.sh` | Start ROS nodes with EKF sensor fusion |
 | `rviz.sh` | Launch RViz visualization |
 | `ensure_slam.sh` | SLAM health monitor and auto-restart |
 
-### 3.3 start_ros.sh Options
+### 3.3 start_ros.sh
 
 ```bash
-./start_ros.sh [--ekf]
+./start_ros.sh [new_map]
 ```
 
 | Option | Description |
 |--------|-------------|
-| (none) | Standard mode with RF2O laser odometry only |
-| `--ekf` | EKF mode with IMU + laser odometry fusion (recommended) |
+| (none) | Start with EKF sensor fusion (IMU + laser odometry) |
+| `new_map` | Restart container and start fresh |
 
 **What it does:**
 - Restarts Docker container to clear zombie processes
 - Clears FastDDS shared memory cache
-- Starts sensor drivers (LiDAR, IMU, motors)
+- Starts sensor drivers with EKF (LiDAR, IMU, motors)
 - Verifies TF tree, topics, and SLAM process
 - Duration: ~45 seconds for full startup
 
-### 3.4 rviz.sh Modes
+### 3.4 rviz.sh
 
 ```bash
-./rviz.sh <mode> [map_name] [options]
+./rviz.sh [new_map]
 ```
 
-| Mode | Description |
+| Option | Description |
 |------|-------------|
-| `slam-opt` | Optimized SLAM with tuned parameters (recommended) |
-| `slam-ekf` | SLAM with EKF sensor fusion |
-| `slam-carto` | Google Cartographer (best accuracy) |
-| `slam-simple` | SLAM without Nav2 |
-| `lidar` | LiDAR-only visualization |
-| `ekf` | EKF sensor fusion without SLAM |
-| `map` | Load existing map for navigation |
-| `nav` | Navigation mode |
+| (none) | Launch RViz only (assumes start_ros.sh already run) |
+| `new_map` | Restart container and start fresh map |
 
 **Examples:**
 ```bash
-# Start SLAM and create a new map called "office"
-./rviz.sh slam-opt office
+# Start ROS then launch RViz
+./start_ros.sh && ./rviz.sh
 
-# Start SLAM with EKF for better localization
-./rviz.sh slam-ekf kitchen
-
-# Load existing map for navigation
-./rviz.sh map office
+# Full restart with fresh map
+./rviz.sh new_map
 ```
 
 ### 3.5 Navigation Parameters
