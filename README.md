@@ -211,12 +211,7 @@ Implements advanced obstacle avoidance with:
 
 ### 2.7 ROS2 Topic Flow
 
-**Standard Mode:**
-```
-LiDAR (/scan) → RF2O Laser Odometry → /odom → SLAM Toolbox → /map
-```
-
-**EKF Mode (Recommended):**
+**EKF Mode:**
 ```
 LiDAR (/scan) → RF2O → /odom_rf2o ─┐
                                     ├→ EKF Filter → /odom → SLAM → /map
@@ -263,6 +258,10 @@ python3 -m mission.simple_cost_nav --duration 300 --debug-marker
 ```bash
 ./start_ros.sh
 ```
+
+| Option | Description |
+|--------|-------------|
+| `new_map` | Restart container and start fresh |
 
 **What it does:**
 - Restarts Docker container to clear zombie processes
