@@ -9,14 +9,14 @@ This manual describes how to use the scripts in `/home/ws/ugv_cont/` to control 
 ```bash
 cd /home/ws/ugv_cont
 
-# 1. Start the container
-./start_ugv_service.sh
+# 1. Start ROS nodes with EKF sensor fusion
+./start_ros.sh
 
-# 2. Control the robot with keyboard
-./keyboard_control.sh
+# 2. Launch RViz visualization
+./rviz.sh
 
-# 3. View sensors in RViz
-./rviz.sh lidar
+# 3. Run autonomous navigation
+python3 -m mission.simple_cost_nav --duration 300 --debug-marker
 ```
 
 ---
@@ -25,13 +25,176 @@ cd /home/ws/ugv_cont
 
 | Script | Description |
 |--------|-------------|
+| `start_ros.sh` | Start ROS nodes with EKF sensor fusion |
+| `rviz.sh` | Launch RViz visualization |
+| `ensure_slam.sh` | SLAM health monitor and auto-restart |
 | `start_ugv_service.sh` | Start the Docker container |
 | `enter_container.sh` | Enter the container shell |
 | `keyboard_control.sh` | Control robot movement with keyboard |
 | `stop_robot.sh` | Emergency stop the robot |
-| `rviz.sh` | Launch RViz with different visualization modes |
-| `auto_scan.py` | Autonomous scanning with obstacle avoidance |
 | `build_ugv_image.sh` | Build the Docker image |
+
+---
+
+## Starting ROS (`start_ros.sh`)
+
+Start all ROS nodes with EKF sensor fusion.
+
+### Usage
+
+```bash
+./start_ros.sh
+```
+
+### What It Does
+
+1. Restarts Docker container to clear zombie processes
+2. Clears FastDDS shared memory cache
+3. Starts sensor drivers with EKF (LiDAR, IMU, motors)
+4. Starts SLAM Toolbox for mapping
+5. Verifies TF tree, topics, and processes
+
+Duration: ~45 seconds for full startup.
+
+### Troubleshooting
+
+**SLAM not starting:**
+```bash
+./ensure_slam.sh
+```
+
+**Duplicate RF2O nodes:**
+```bash
+./start_ros.sh  # Full container restart clears zombies
+```
+
+---
+
+## RViz Visualization (`rviz.sh`)
+
+Launch RViz with SLAM and EKF visualization.
+
+### Usage
+
+```bash
+./rviz.sh
+```
+
+### Requirements
+
+- Run `./start_ros.sh` first to start all nodes
+- X11 server running on your PC (MobaXterm has this built-in)
+
+### X11 Display Setup
+
+The script automatically detects your SSH client IP and sets DISPLAY. If auto-detection fails, set it manually:
+
+```bash
+# Find your PC's IP (the one SSH connected from)
+echo $SSH_CONNECTION
+
+# Set DISPLAY manually if needed
+export DISPLAY=192.168.0.81:0.0  # Replace with your IP
+./rviz.sh
+```
+
+### Troubleshooting
+
+**RViz window doesn't appear:**
+- Check DISPLAY variable: `echo $DISPLAY`
+- Enable X11: `xhost +local:docker`
+- Make sure X11 forwarding is enabled in your SSH client
+
+**No data in RViz:**
+- Check if topics are publishing: `ros2 topic list`
+- Check specific topic: `ros2 topic echo /scan --once`
+
+---
+
+## Autonomous Navigation (`mission.simple_cost_nav`)
+
+NBV (Next-Best-View) navigation for autonomous exploration and mapping.
+
+### Usage
+
+```bash
+# Basic scan for 60 seconds
+python3 -m mission.simple_cost_nav
+
+# Scan for 5 minutes with debug markers
+python3 -m mission.simple_cost_nav --duration 300 --debug-marker
+
+# Custom speed (max 0.12 m/s for safety)
+python3 -m mission.simple_cost_nav --speed 0.08
+
+# Custom obstacle distance
+python3 -m mission.simple_cost_nav --min-dist 0.4
+```
+
+### Options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--duration`, `-d` | 60 | Scan duration in seconds (0 = unlimited) |
+| `--speed`, `-s` | 0.06 | Linear speed (max 0.12 m/s) |
+| `--min-dist`, `-m` | 0.35 | Minimum obstacle distance (meters) |
+| `--debug-marker` | off | Enable RViz goal markers |
+
+### Session Outputs
+
+Each run creates a timestamped output directory:
+
+```
+mission/outputs/
+└── YYYYMMDD_HHMMSS/
+    ├── logs/
+    │   └── navigation.log    # Full console output
+    └── maps/
+        ├── map.pgm           # Occupancy grid
+        ├── map.yaml          # Map metadata
+        └── map.png           # Map image
+```
+
+### Algorithm
+
+The NBV Navigator:
+- Scores frontier cells based on information gain, distance, and exploration history
+- Avoids recently visited areas with time-decay penalties
+- Uses virtual obstacles to prevent revisiting problematic areas
+- Handles stuck situations with automatic backup and recovery
+
+### Controls During Scan
+
+| Key | Action |
+|-----|--------|
+| `Ctrl+C` | Graceful stop (saves map) |
+
+### Best Practices
+
+1. **Start ROS first** before running navigation:
+   ```bash
+   ./start_ros.sh
+   ./rviz.sh &
+   python3 -m mission.simple_cost_nav --duration 300 --debug-marker
+   ```
+
+2. **Watch the map** in RViz while scanning to verify coverage
+
+3. **Use debug markers** to see where the robot is trying to go
+
+### Troubleshooting
+
+**Robot not moving:**
+- Check if ROS is running: `./start_ros.sh`
+- Check serial port: `ls -la /dev/ttyAMA0`
+
+**Robot drives into obstacles:**
+- Increase minimum distance: `--min-dist 0.5`
+- Check if LiDAR is publishing: `ros2 topic hz /scan`
+
+**Robot stuck in corners:**
+- The algorithm automatically backs up and adds virtual obstacles
+- If persistently stuck, Ctrl+C and reposition manually
 
 ---
 
@@ -98,113 +261,6 @@ Movement Keys:
 **Robot won't stop:**
 - Run `./stop_robot.sh` (sends stop directly to serial port)
 - If that fails, power cycle the robot
-
----
-
-## RViz Visualization (`rviz.sh`)
-
-Launch RViz with pre-configured views for different sensors and modes.
-
-### Usage
-
-```bash
-./rviz.sh [mode]
-```
-
-### Available Modes
-
-| Mode | Description |
-|------|-------------|
-| `lidar` | View LiDAR scan data only |
-| `bringup` | Basic robot view with lidar, odometry, and TF (default) |
-| `slam` | Start SLAM mapping and view 2D map |
-| `slam3d` | Start SLAM mapping and view 3D map |
-| `nav` | Navigation view (2D) with costmaps |
-| `nav3d` | Navigation view (3D) |
-| `camera` | Camera image view |
-| `imu` | IMU data visualization |
-| `robot` | Robot model (URDF) only |
-| `full` | Full sensor view |
-| `custom` | Use your own .rviz config file |
-| `help` | Show help message |
-
-### Examples
-
-```bash
-# View LiDAR data
-./rviz.sh lidar
-
-# Start SLAM and visualize mapping
-./rviz.sh slam
-
-# Basic sensor view (default)
-./rviz.sh bringup
-./rviz.sh           # same as above
-
-# Navigation view
-./rviz.sh nav
-
-# Use custom RViz config
-./rviz.sh custom /path/to/my_config.rviz
-
-# Show help
-./rviz.sh help
-```
-
-### Requirements
-
-- Container must be running (`./start_ugv_service.sh`)
-- X11 server running on your PC (MobaXterm has this built-in)
-- Sensors must be started (`bringup_lidar.launch.py` should be running)
-
-### X11 Display Setup
-
-The script automatically detects your SSH client IP and sets DISPLAY. If auto-detection fails, set it manually:
-
-```bash
-# Find your PC's IP (the one SSH connected from)
-echo $SSH_CONNECTION
-
-# Set DISPLAY manually if needed
-export DISPLAY=192.168.0.81:0.0  # Replace with your IP
-./rviz.sh lidar
-```
-
-### Starting Sensors
-
-Before using RViz, make sure sensors are running:
-
-```bash
-# Enter the container
-./enter_container.sh
-
-# Inside container, start sensors:
-export UGV_MODEL=ugv_beast
-export LDLIDAR_MODEL=ld19
-ros2 launch ugv_bringup bringup_lidar.launch.py
-```
-
-Or run from host:
-```bash
-docker exec -d ugv_rpi_ros_humble bash -c "
-source /opt/ros/humble/setup.bash && \
-source /root/ugv_ws/install/setup.bash && \
-export UGV_MODEL=ugv_beast && \
-export LDLIDAR_MODEL=ld19 && \
-ros2 launch ugv_bringup bringup_lidar.launch.py
-"
-```
-
-### Troubleshooting
-
-**RViz window doesn't appear:**
-- Check DISPLAY variable: `echo $DISPLAY`
-- Enable X11: `xhost +local:docker`
-- Make sure X11 forwarding is enabled in your SSH client
-
-**No data in RViz:**
-- Check if topics are publishing: `ros2 topic list`
-- Check specific topic: `ros2 topic echo /scan --once`
 
 ---
 
@@ -276,6 +332,32 @@ docker restart ugv_rpi_ros_humble
 
 ---
 
+## EKF Sensor Fusion
+
+The robot uses EKF (Extended Kalman Filter) sensor fusion combining LiDAR odometry and IMU data for improved localization accuracy.
+
+### How It Works
+
+```
+LiDAR (/scan) → RF2O → /odom_rf2o ─┐
+                                    ├→ EKF Filter → /odom → SLAM → /map
+IMU (/imu/data) ───────────────────┘
+```
+
+- **LiDAR odometry** (`/odom_rf2o`): Position (x, y) from laser scan matching
+- **IMU data** (`/imu/data`): Yaw orientation (authoritative) and angular velocity
+- **Fused output** (`/odom`): Combined odometry with improved accuracy
+
+### Configuration
+
+The EKF configuration is in `config/ekf_lidar_imu.yaml`:
+- Frequency: 50 Hz
+- 2D mode enabled
+- Single yaw source (IMU) prevents sensor fighting
+- Differential position integration reduces drift
+
+---
+
 ## ROS2 Topics Reference
 
 | Topic | Description |
@@ -283,9 +365,10 @@ docker restart ugv_rpi_ros_humble
 | `/cmd_vel` | Velocity commands (Twist) |
 | `/scan` | LiDAR scan data |
 | `/imu/data` | IMU orientation and angular velocity |
-| `/odom` | Odometry (position and velocity) |
+| `/odom` | Fused odometry (EKF output) |
+| `/odom_rf2o` | LiDAR odometry (RF2O) |
+| `/map` | SLAM occupancy grid |
 | `/tf` | Transform tree |
-| `/image_raw` | Camera image (if running) |
 
 ### Useful Commands (inside container)
 
@@ -305,38 +388,6 @@ ros2 topic hz /scan
 # List running nodes
 ros2 node list
 ```
-
----
-
-## Camera Setup
-
-The camera requires killing the main Python app first:
-
-```bash
-# Find and kill the main app
-ps aux | grep app.py
-sudo kill -9 <PID>
-
-# Start camera
-docker exec -d ugv_rpi_ros_humble bash -c "
-source /opt/ros/humble/setup.bash && \
-source /root/ugv_ws/install/setup.bash && \
-export UGV_MODEL=ugv_beast && \
-ros2 launch ugv_vision camera.launch.py
-"
-```
-
----
-
-## Environment Variables
-
-These are set automatically in the container:
-
-| Variable | Value | Description |
-|----------|-------|-------------|
-| `UGV_MODEL` | `ugv_beast` | Robot model type |
-| `LDLIDAR_MODEL` | `ld19` | LiDAR model |
-| `UGV_WS_DIR` | `/home/ws/ugv_ws` | Workspace directory |
 
 ---
 
@@ -373,116 +424,13 @@ The `ugv_driver` may have crashed. Run:
 This sends stop directly to serial.
 
 ### "SLAM not working"
-Make sure sensors are running first:
 ```bash
-./rviz.sh bringup  # Check if lidar works
-./rviz.sh slam     # Then try SLAM
+./ensure_slam.sh
 ```
+This checks SLAM health and restarts if needed.
 
----
-
-## EKF Sensor Fusion
-
-The robot supports EKF (Extended Kalman Filter) sensor fusion combining LiDAR odometry and IMU data for improved localization accuracy.
-
-### How It Works
-
-```
-/odom_rf2o (LiDAR odometry) + /imu/data (IMU) → EKF → /odom (fused odometry)
-```
-
-- **LiDAR odometry** (`/odom_rf2o`): Position (x, y) and yaw from laser scan matching
-- **IMU data** (`/imu/data`): Yaw rate and orientation
-- **Fused output** (`/odom`): Combined odometry with improved accuracy
-
-### Usage
-
+### "Duplicate RF2O nodes"
 ```bash
-# Start EKF sensor fusion only (no SLAM)
-./rviz.sh ekf
-
-# Start SLAM with EKF fusion
-./rviz.sh slam
+./start_ros.sh
 ```
-
-### Configuration
-
-The EKF configuration is in `ekf_lidar_imu.yaml`:
-- Frequency: 30 Hz
-- 2D mode enabled
-- Fuses position (x, y) and yaw from LiDAR
-- Fuses yaw rate from IMU
-
----
-
-## Autonomous Scanning (`auto_scan.py`)
-
-Autonomous scanning mode moves the robot around while avoiding obstacles, useful for mapping a room.
-
-### Usage
-
-```bash
-# Basic scan for 60 seconds
-./auto_scan.py
-
-# Scan for 120 seconds
-./auto_scan.py --duration 120
-
-# Custom speed (max 0.12 m/s for safety)
-./auto_scan.py --speed 0.08
-
-# Custom obstacle distance
-./auto_scan.py --distance 0.6
-```
-
-### Options
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| `--duration`, `-d` | 60 | Scan duration in seconds |
-| `--speed`, `-s` | 0.10 | Linear speed (max 0.12 m/s) |
-| `--distance`, `-m` | 0.5 | Minimum obstacle distance (meters) |
-
-### Controls During Scan
-
-| Key | Action |
-|-----|--------|
-| `Space` | Emergency stop |
-| `s` | Emergency stop |
-| `Ctrl+C` | Quit |
-
-### Algorithm
-
-The script uses sector-based obstacle avoidance:
-- Divides LiDAR scan into 12 sectors (30° each)
-- Finds the clearest direction to move
-- Avoids narrow passages (checks adjacent sectors)
-- Treats LiDAR blind spots as obstacles
-- Caps speed at 0.12 m/s for safety
-
-### Best Practices
-
-1. **Start SLAM first** to build a map while scanning:
-   ```bash
-   ./rviz.sh slam &
-   sleep 10
-   ./auto_scan.py --duration 120
-   ```
-
-2. **Watch the map** in RViz while scanning to verify coverage
-
-3. **Use emergency stop** if robot heads toward danger
-
-### Troubleshooting
-
-**Robot not moving:**
-- Check if container is running: `docker ps | grep ugv`
-- Check serial port: `ls -la /dev/ttyAMA0`
-
-**Robot drives into obstacles:**
-- Increase minimum distance: `./auto_scan.py --distance 0.7`
-- Check if LiDAR is publishing: `ros2 topic hz /scan`
-
-**Robot stuck in corners:**
-- The script automatically backs up and turns when stuck
-- If persistently stuck, press SPACE to stop and reposition manually
+Full container restart clears zombie processes.
